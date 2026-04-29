@@ -72,6 +72,33 @@ nginx/njs/
 - cache_key.js は副作用フリーな pure function に保つ。`r` (request) からの値抽出と純粋計算を分離して、計算側を単体テスト可能にする
 - 入口は `js_set` で nginx 変数 `$cf_cache_key` をセット。`proxy_cache_key $cf_cache_key;` でそれを使う
 
+### material 組み立てフォーマット (1-3 確定)
+
+`compute()` は以下の文字列を `\n` で join して sha256 を取り、hex 64 文字を返す。
+
+```
+v1
+<METHOD>
+<URI>
+h
+<sortedHeaderName>=<value>
+...
+c
+<sortedCookieName>=<value>
+...
+q
+<sortedQueryName>=<sortedJoinedValues>
+...
+a
+<gzip|br|identity|""(空)>
+```
+
+- セクション区切りは `h` / `c` / `q` / `a` の単一文字行（whitelist 適用後の sorted entries が直後に続く）
+- ヘッダ名は lower-cased で出力。cookie / query 名は case-sensitive 比較なのでそのまま出力
+- multi-value query は値を sort して `,` で join
+- `accept_encoding_normalize=false` の policy は `a\n` の後ろが空文字（フォーマット不変）
+- `v1` は format version。組み立て規則を変えたら bump して既存キャッシュを自然失効
+
 ### テストハーネスの分割（1-1 の結論待ち）
 
 - **(α) Go 外形テスト**: `tests/integration/cache_key_test.go`。`go test` から docker-compose 起動済みの nginx に対して HTTP リクエストを投げ、`X-Cache-Status` と（必要なら debug header 経由で漏らした）`X-Cache-Key` の同値性を検証

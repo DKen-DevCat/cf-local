@@ -23,7 +23,7 @@
 - [x] 1-0 nginx イメージを njs 対応版に切替（ngx_cache_purge は Phase 3 へ繰延）
 - [x] 1-1 njs 制約の実機検証 spike（結果は design doc "1-1 spike 結果" 節）
 - [x] 1-2 cache policy (JSON) スキーマ設計と `policies.json` サンプル整備
-- [ ] 1-3 `cache_key.js` 実装（テストファースト）
+- [x] 1-3 `cache_key.js` 実装（テストファースト / `tests/cache_key_test.sh` 16 件 PASS）
 - [ ] 1-4 `nginx.conf` で `js_set` → `proxy_cache_key` 注入
 - [ ] 1-5 Vary / Accept-Encoding 正規化の挙動確認
 - [ ] 1-6 テストハーネス整備（α Go 外形 + β njs 単体）
