@@ -72,6 +72,22 @@ nginx/njs/
 - cache_key.js は副作用フリーな pure function に保つ。`r` (request) からの値抽出と純粋計算を分離して、計算側を単体テスト可能にする
 - 入口は `js_set` で nginx 変数 `$cf_cache_key` をセット。`proxy_cache_key $cf_cache_key;` でそれを使う
 
+### Vary の扱い (1-5 確定)
+
+**結論**: `proxy_ignore_headers Vary;` を `location /` で適用し、**cache_key を cache identity の唯一の権威とする**。upstream の `Vary` ヘッダはそのまま viewer に転送するが、nginx 側の cache 判定には使わない。CloudFront の挙動に揃える。
+
+**根拠 (実機再現)**: Next.js が返す `Vary: rsc, …, Accept-Encoding` を素のまま尊重すると、cache_key が同一 (例: 両方 `K_gzip`) でも **raw `Accept-Encoding` 文字列が違う** だけで MISS になる。確認した具体ケース:
+
+| # | path | Accept-Encoding | 期待 | Vary 尊重時の実測 | Vary 無視後 |
+|---|---|---|---|---|---|
+| 1 | /api/health | `gzip` | MISS (warm) | MISS | MISS |
+| 2 | /api/health | `gzip` | HIT | HIT | HIT |
+| 3 | /api/health | `gzip, deflate` (同じ normalized=gzip) | HIT | **MISS** ❌ | **HIT** ✅ |
+| 4 | /api/health | `br` (異なる normalized) | MISS | MISS | MISS |
+| 5 | /api/health | `br` | HIT | HIT | HIT |
+
+**RSC など Accept-Encoding 以外の Vary**: Next.js は `rsc` / `next-router-state-tree` 等もVary に入れる。これらを cache key に含めたいユーザーは policy の `headers.whitelist` に明示する責任を持つ（CloudFront と同じ運用モデル）。
+
 ### material 組み立てフォーマット (1-3 確定)
 
 `compute()` は以下の文字列を `\n` で join して sha256 を取り、hex 64 文字を返す。
@@ -230,6 +246,6 @@ njs 側で `sha256(uri ⊕ headers ⊕ cookies ⊕ queries ⊕ ae)` まで行っ
 |---|---|
 | ~~njs の `crypto` モジュールが思ったとおり動かない~~ | **解消 (1-1)**: sha256 / sha1 / md5 を hex 文字列で取得可。1-3 では sha256 を採用 |
 | njs での JSON parse / sort のコストが想定外に高い | 1-3 実装後に必要なら計測。policies.json はモジュールトップレベルで一度だけパースする |
-| Vary を proxy_cache 標準機能と njs 計算で**二重に**扱ってしまう | 1-5 で挙動確認。Accept-Encoding は njs 側で正規化に寄せ、`proxy_cache_valid` 側の Vary 依存を切る方向 |
+| ~~Vary を proxy_cache 標準機能と njs 計算で**二重に**扱ってしまう~~ | **解消 (1-5)**: `proxy_ignore_headers Vary;` で nginx 側の Vary 依存を全切り。CloudFront 互換。詳細は本ドキュメント "Vary の扱い (1-5 確定)" 節 |
 | ~~njs 単体テストの実行手段が確定していない~~ | **解消 (1-1)**: docker-compose 上で nginx を立てて、テスト用 `js_content` endpoint に table-driven リクエストを投げる方式で行く ((α) と同じハーネスを共用) |
 | ~~`nginx-mod-http-js` の Alpine パッケージ名 / バージョン整合~~ | **解消 (1-0)**: 公式 `nginx:1.27-alpine` イメージで `apk add nginx-module-njs` が利用可能。`/etc/nginx/modules/ngx_http_js_module.so` に配置され、`load_module` で読み込み。`nginx -t` で動作確認済み |
