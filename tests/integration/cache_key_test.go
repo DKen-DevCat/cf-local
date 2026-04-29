@@ -21,7 +21,12 @@
 //     Phase 0's example origin (Next.js) satisfies this; any tiny HTTP server
 //     that 200s on /favicon.ico will do.
 //
-// Override the base URL with CF_LOCAL_BASE for non-default deployments.
+// Env vars:
+//   - CF_LOCAL_BASE: override the base URL (default http://localhost:8080)
+//   - CF_LOCAL_REQUIRE_ALPHA=1: when set, the α (proxy_cache HIT/MISS) tests
+//     FAIL instead of t.Skip when the origin isn't serving /favicon.ico.
+//     Set this in CI so silent "16/20 PASS, 4 SKIP" cannot pass for green.
+//     A proper test-controlled origin will land in task 2-6.
 package integration
 
 import (
@@ -258,7 +263,11 @@ const faviconPath = "/favicon.ico"
 func TestEndToEnd_HitMissAndKey(t *testing.T) {
 	requireUp(t)
 	if !originServesFavicon(t) {
-		t.Skipf("origin does not return 2xx for %s — start an upstream that does (e.g. Next.js examples/nextjs-basic) and re-run", faviconPath)
+		msg := fmt.Sprintf("origin does not return 2xx for %s — start an upstream that does (e.g. Next.js examples/nextjs-basic) and re-run", faviconPath)
+		if os.Getenv("CF_LOCAL_REQUIRE_ALPHA") == "1" {
+			t.Fatalf("%s. (CF_LOCAL_REQUIRE_ALPHA=1 set, refusing to skip)", msg)
+		}
+		t.Skipf("%s. (set CF_LOCAL_REQUIRE_ALPHA=1 to fail instead of skip)", msg)
 	}
 	// Bouncing the cache volume mid-test would require docker access; instead
 	// we use a unique cache-busting query string per test run so we always
