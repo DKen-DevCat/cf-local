@@ -35,7 +35,7 @@ DESIGN.md §3.1 の Data Plane 強化フェーズの第一弾。Phase 0 で立�
 
 | # | 項目 | 主対象ファイル | 備考 |
 |---|---|---|---|
-| 1-0 | nginx イメージ選定（njs / ngx_cache_purge 対応版へ切替） | `nginx/Dockerfile` | Phase 0 引継ぎ。候補: `nginx:1.27-alpine` + `nginx-mod-http-js` 追加 / `openresty/openresty:alpine` / カスタムビルド。実機 + 公式ドキュメントで再評価して決定 |
+| 1-0 | nginx イメージ選定（njs 対応版へ切替） | `nginx/Dockerfile`, `nginx/nginx.conf` | **決定**: `nginx:1.27-alpine` + `apk add nginx-module-njs` + `load_module modules/ngx_http_js_module.so;`。ngx_cache_purge は Phase 1 スコープ外なので Phase 3 で multi-stage build に切替（その時点で再評価） |
 | 1-1 | njs 制約の実機検証（**spike**） | `nginx/njs/spike/` 等 | hash 関数 (`crypto`)、JSON parse、文字列操作、`r.headersIn` / `r.args` / Vary 関連変数アクセス、`js_set` / `js_content` 挙動を確認。結果は本ドキュメントの「Phase完了時メモ」に追記 |
 | 1-2 | cache policy (JSON) スキーマ設計 | `nginx/njs/policies.json` (手書き) | CloudFront `CachePolicy` を最小限に簡略化。`headers.whitelist` / `cookies.whitelist` / `query_strings.whitelist` / `accept_encoding_normalize` を含む |
 | 1-3 | njs での cache key 計算実装 | `nginx/njs/cache_key.js` | DESIGN.md §4.1 の式: `URI ⊕ sort(headers) ⊕ sort(cookies) ⊕ sort(query_strings) ⊕ normalized(Accept-Encoding)` |
@@ -134,4 +134,4 @@ nginx/njs/
 | njs での JSON parse / sort のコストが想定外に高い | 1-1 spike で計測。policies.json の事前パース結果をモジュールトップレベルでキャッシュする等の最適化 |
 | Vary を proxy_cache 標準機能と njs 計算で**二重に**扱ってしまう | 1-5 で挙動確認。Accept-Encoding は njs 側で正規化に寄せ、`proxy_cache_valid` 側の Vary 依存を切る方向 |
 | njs 単体テストの実行手段が確定していない | 1-1 spike の結論で決める。最悪 (α) Go 外形テストだけでもカバレッジが取れる構成にする |
-| `nginx-mod-http-js` の Alpine パッケージ名 / バージョン整合 | 1-0 で公式ドキュメント確認 |
+| ~~`nginx-mod-http-js` の Alpine パッケージ名 / バージョン整合~~ | **解消 (1-0)**: 公式 `nginx:1.27-alpine` イメージで `apk add nginx-module-njs` が利用可能。`/etc/nginx/modules/ngx_http_js_module.so` に配置され、`load_module` で読み込み。`nginx -t` で動作確認済み |

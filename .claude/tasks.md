@@ -20,7 +20,7 @@
 
 ### サブタスク
 
-- [ ] 1-0 nginx イメージを njs / ngx_cache_purge 対応版に切替
+- [x] 1-0 nginx イメージを njs 対応版に切替（ngx_cache_purge は Phase 3 へ繰延）
 - [ ] 1-1 njs 制約の実機検証 spike（hash / JSON / 文字列 / r.headersIn / js_set）
 - [ ] 1-2 cache policy (JSON) スキーマ設計と `policies.json` サンプル整備
 - [ ] 1-3 `cache_key.js` 実装（テストファースト）
