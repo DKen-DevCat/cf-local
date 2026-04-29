@@ -28,32 +28,46 @@ cf-local のキャッシュキーは **cache policy** で制御する。AWS Clou
       "headers":       { "whitelist": [] },
       "cookies":       { "whitelist": [] },
       "query_strings": { "whitelist": [] },
-      "accept_encoding_normalize": true
+      "accept_encoding_normalize": true,
+      "min_ttl":     0,
+      "max_ttl":     31536000,
+      "default_ttl": 86400
     },
     "with-session": {
       "headers":       { "whitelist": [] },
       "cookies":       { "whitelist": ["session_id"] },
       "query_strings": { "whitelist": [] },
-      "accept_encoding_normalize": true
+      "accept_encoding_normalize": true,
+      "min_ttl":     0,
+      "max_ttl":     31536000,
+      "default_ttl": 86400
     },
     "with-locale": {
       "headers":       { "whitelist": ["Accept-Language"] },
       "cookies":       { "whitelist": [] },
       "query_strings": { "whitelist": ["lang"] },
-      "accept_encoding_normalize": true
+      "accept_encoding_normalize": true,
+      "min_ttl":     0,
+      "max_ttl":     31536000,
+      "default_ttl": 86400
     }
   }
 }
 ```
 
-各 policy は以下 4 フィールドすべて必須。空でも明示的に `[]` を書く。
+cache key 系 4 フィールドはすべて必須。空でも明示的に `[]` を書く。TTL 系 3 フィールドは省略可 (省略時は CloudFront のデフォルトが入る)。
 
-| フィールド | 型 | 意味 |
-|---|---|---|
-| `headers.whitelist` | string[] | cache key に含めるリクエストヘッダー名 |
-| `cookies.whitelist` | string[] | cache key に含める cookie 名 |
-| `query_strings.whitelist` | string[] | cache key に含める query string 名 |
-| `accept_encoding_normalize` | bool | true で `gzip`/`br`/`identity` に正規化して cache key に含める |
+| フィールド | 型 | デフォルト | 意味 |
+|---|---|---|---|
+| `headers.whitelist` | string[] | (必須) | cache key に含めるリクエストヘッダー名 |
+| `cookies.whitelist` | string[] | (必須) | cache key に含める cookie 名 |
+| `query_strings.whitelist` | string[] | (必須) | cache key に含める query string 名 |
+| `accept_encoding_normalize` | bool | (必須) | true で `gzip`/`br`/`identity` に正規化して cache key に含める |
+| `min_ttl` | int (秒) | `0` | `Cache-Control: no-store` 等の case 1 で適用される TTL |
+| `max_ttl` | int (秒) | `31536000` | `max-age=N` の上限 (clamp 用) |
+| `default_ttl` | int (秒) | `86400` | `Cache-Control` 不在時 (case 3) に適用される TTL |
+
+TTL 系フィールドの挙動詳細は [docs/ttl.md](ttl.md) を参照。
 
 ### 名前のマッチング規則
 

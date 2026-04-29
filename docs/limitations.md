@@ -27,8 +27,10 @@ cf-localと本物のCloudFrontとの違い。意図的に再現していない�
 
 ### TTL決定
 
-- `Expires` ヘッダーは未対応（`Cache-Control` のみ尊重）
+- `Cache-Control` の解釈は CF 互換の最小サブセット — `max-age` / `s-maxage` / `no-store` / `no-cache` / `private` のみを見る。`public` / `must-revalidate` / `stale-while-revalidate` / `stale-if-error` 等は読み捨てる (Phase 2)
+- `Expires` ヘッダーは未対応 (`Cache-Control` のみ尊重)
 - `Age` ヘッダーの扱いが本物と異なる可能性
+- TTL 注入は 2-hop パターン (outer cache 層 + inner `js_header_filter` で `X-Accel-Expires` 注入) で実装。1 リクエストにつき TCP self-loop が 1 回挟まる (sub-millisecond) — 詳細は `docs/ttl.md`
 
 ### Invalidation
 
