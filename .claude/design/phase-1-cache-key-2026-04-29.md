@@ -122,6 +122,45 @@ nginx/njs/
 - [ ] `docs/cache-policy.md` で書き方が説明されている（1-7）
 - [ ] 手動確認: 同一 URL で whitelist header の値違いで別キャッシュエントリ (`X-Cache-Status: MISS` 2 回 → 各々 HIT)
 
+## 1-1 spike 結果 (njs 0.8.10 / nginx 1.27.5 alpine)
+
+`nginx/njs/spike/probe.js` を `js_content` で公開し、各種ヘッダー / args / cookies を投げて挙動を実機確認した結果。
+
+### 動いたもの (採用方針)
+
+| 項目 | 結果 | cache_key.js への含意 |
+|---|---|---|
+| `import crypto from 'crypto'` | sha256 / sha1 / md5 すべて hex 文字列で返る | hash 化は **njs 側でできる**。生文字列を `proxy_cache_key` に渡しても nginx が内部で md5 するので、必ずしも njs で hash する必要はない（後述の判断）|
+| `JSON.parse` / `JSON.stringify` | 正常動作。`Object.keys(obj)` も配列で返る | `policies.json` のロードは標準 API でよい。トップレベルでパース結果をモジュール変数にキャッシュする方針 |
+| `Array.sort()` / `Array.map` / `String.indexOf` / `String.split` | 動作 | whitelist 値の整形に標準 API で十分 |
+| `r.headersIn[name]` の **case-insensitive lookup** | `['accept-encoding']` / `['Accept-Encoding']` / `['ACCEPT-ENCODING']` 全て同値 | 検索キーの大小文字を正規化する必要は **無い** |
+| `for (k in r.headersIn)` 反復 | 元のヘッダー名表記（Pascal-case 等）が key として返る | iterate 用途では小文字化は自前で行う必要あり |
+| `r.args` (query string) | object で利用可。**multi-value (`?k=a&k=b`) は配列**で返る (`["a","b"]`) | whitelist された query を取り出すとき、配列ケースを必ず処理する |
+| `r.variables.<name>` | `scheme` / `request_uri` 等読める | 必要な nginx 変数は素直に読める |
+| `js_set $var name.fn;` | 同期 string 関数で OK。`proxy_cache_key $var;` 等で消費可 | 1-4 のキー注入はこの形で確定 |
+| `js_content name.fn;` | `r.return(status, body)` / `r.headersOut[k] = v;` で完結 | 内部診断 endpoint や spike に有用 |
+
+### 引っかかった / 注意点
+
+1. **`Array.sort()` は ASCII 比較**: `['B','a','C','b'].sort()` → `['B','C','a','b']`。**lowercase してから sort** しないと whitelist の同一性判定が崩れる
+2. **Cookie 自動 parse は無し**: `r.headersIn['Cookie']` は生文字列 (`"a=1; b=2"`)。cache_key.js で `;` split + trim + `=` split を自前実装する
+3. **multi-value query** は値が配列か文字列かで型分岐が必要（型チェック→配列ならソート→join）
+4. **`process` / `njs.version` の存在**: `njs.version` は `"0.8.10"` で取れる。デバッグ時に `r.headersOut['X-NJS-Version'] = njs.version;` のように使える
+
+### hash 化の方針 (1-3 用)
+
+njs 側で `sha256(uri ⊕ headers ⊕ cookies ⊕ queries ⊕ ae)` まで行って固定長文字列を返す方が、nginx ログや `X-Cache-Key` 露出時のデバッグ性が高い。長すぎる cache_key を防ぐ意味でも **njs で sha256 ダイジェストして hex 文字列を返す**方針を採用する。
+
+### テスト方針 (1-6) への含意
+
+(β) njs 単体テストの手段は **「nginx を docker で立てて probe-style endpoint を叩く方式」が動くことが確認できた**。Go ランタイムや別の JS ランタイムでエミュレートする必要はなく、`tests/integration/` 配下の Go テストハーネス (α) と同じ docker-compose を共用できる。
+   - cache_key.js のロジックを直接 export し、テスト専用の `js_content` から table-driven に呼び出す形にする
+   - njs 0.8.x には `--test` モードのような単体実行手段は無い（公式リポジトリの `nginx-tests` は perl ベースで Phase 1 ではオーバーキル）
+
+### probe.js の扱い
+
+`nginx/njs/spike/probe.js` は再現性のために残す。`nginx.conf` 側の `js_import spike from spike/probe.js;` / `js_set $cf_ae_normalized` / location `/_probe` `/_jsset` は spike 用なので 1-1 完了に合わせて畳む。再実行手順は `probe.js` の冒頭コメントに記載。
+
 ## コミット粒度
 
 1 機能 1 コミット原則。本ドキュメント + tasks 更新を本ブランチのキックオフコミットとする。サブタスクは `1-0` → `1-1` → ... の順で、それぞれを 1〜数コミットに分ける。テストファースト対象（1-3）は **テストコミット → 実装コミット** に分割する。
@@ -130,8 +169,8 @@ nginx/njs/
 
 | リスク / 未決事項 | 想定される対応 |
 |---|---|
-| njs の `crypto` モジュールが思ったとおり動かない（hash 化が cache_key を圧縮するのに必要） | 1-1 spike で確認。代替として md5 を諦めて生文字列連結で `proxy_cache_key` に渡す（nginx 側で内部的に hash されるはず） |
-| njs での JSON parse / sort のコストが想定外に高い | 1-1 spike で計測。policies.json の事前パース結果をモジュールトップレベルでキャッシュする等の最適化 |
+| ~~njs の `crypto` モジュールが思ったとおり動かない~~ | **解消 (1-1)**: sha256 / sha1 / md5 を hex 文字列で取得可。1-3 では sha256 を採用 |
+| njs での JSON parse / sort のコストが想定外に高い | 1-3 実装後に必要なら計測。policies.json はモジュールトップレベルで一度だけパースする |
 | Vary を proxy_cache 標準機能と njs 計算で**二重に**扱ってしまう | 1-5 で挙動確認。Accept-Encoding は njs 側で正規化に寄せ、`proxy_cache_valid` 側の Vary 依存を切る方向 |
-| njs 単体テストの実行手段が確定していない | 1-1 spike の結論で決める。最悪 (α) Go 外形テストだけでもカバレッジが取れる構成にする |
+| ~~njs 単体テストの実行手段が確定していない~~ | **解消 (1-1)**: docker-compose 上で nginx を立てて、テスト用 `js_content` endpoint に table-driven リクエストを投げる方式で行く ((α) と同じハーネスを共用) |
 | ~~`nginx-mod-http-js` の Alpine パッケージ名 / バージョン整合~~ | **解消 (1-0)**: 公式 `nginx:1.27-alpine` イメージで `apk add nginx-module-njs` が利用可能。`/etc/nginx/modules/ngx_http_js_module.so` に配置され、`load_module` で読み込み。`nginx -t` で動作確認済み |
