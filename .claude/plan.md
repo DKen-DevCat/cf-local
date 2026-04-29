@@ -23,7 +23,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | Phase ID | 状態 | 内容 |
 |---|---|---|
 | `phase-0` | 完了 | nginx前段配置とPoC |
-| `phase-1` | 未着手 | cache key動的計算 |
+| `phase-1` | 完了 | cache key動的計算 |
 | `phase-2` | 未着手 | TTL正確化 |
 | `phase-3` | 未着手 | Invalidation API + 設定ファイル方式 |
 | `phase-4a` | 未着手 | Terraform対応・最小 |
@@ -49,32 +49,20 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-1: Cache Key動的計算
+## phase-1: Cache Key動的計算 (完了 2026-04-29)
 
-**到達状態**: cache policy概念を導入し、njsで動的に cache key を計算できるようにする。
-
-**ゴールイメージ**:
-
-- `policies.json` でcache policyを宣言できる
-- 同じURLでも、whitelistされたheaders/cookies/query stringsの値が違えば別キャッシュエントリになる
-- Accept-Encoding の正規化（gzip/br/identity）が動く
-
-**学びを反映する点**: Phase 0で発見したnjsの実際の制約に応じて、Goでの事前計算を併用するかを決める。
+**到達状態 (実機検証済み)**: cache policy 概念を導入し、njs で cache key を動的に計算できる状態になった。`policies.json` の whitelist によって header / cookie / query / Accept-Encoding の cache key 寄与が制御でき、`X-Cache-Status` / `X-Cache-Key` で挙動を確認できる。
 
 **完了条件**:
 
-- [ ] cache policy (JSON) のスキーマ設計
-- [ ] njsでのcache key計算実装
-- [ ] nginx.confでのpolicy_id受け渡し
-- [ ] Vary対応の確認
-- [ ] テストケース整備（whitelistパターンごと）
-- [ ] ドキュメント整備
+- [x] cache policy (JSON) のスキーマ設計 — `nginx/njs/policies.json` (default / with-session / with-locale)
+- [x] njsでのcache key計算実装 — `nginx/njs/cache_key.js` (sha256 hex / pure compute + forNginx adapter)
+- [x] nginx.confでのpolicy_id受け渡し — `set $cf_policy_id`; `js_set $cf_cache_key ck.forNginx;`; `proxy_cache_key $cf_cache_key;`
+- [x] Vary対応の確認 — `proxy_ignore_headers Vary;` で CloudFront 互換 (1-5)
+- [x] テストケース整備（whitelistパターンごと）— `tests/integration/cache_key_test.go` β 16 + α 4 = 20 件
+- [x] ドキュメント整備 — `docs/cache-policy.md` 新規 + `docs/limitations.md` / `examples/nextjs-basic/README.md` 反映
 
-**着手前にユーザーと相談する点**:
-
-- Phase 0で発見したnjsの実際の制約
-- cache_keyの計算ロジックを njs / Go のどちらに置くか
-- テストの書き方の方針（curlベースか、Goでのテストハーネスか）
+詳細仕様および完了時メモ: `.claude/design/phase-1-cache-key-2026-04-29.md`
 
 ---
 
