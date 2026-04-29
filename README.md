@@ -69,7 +69,7 @@ docker compose up -d
 
 ## ステータス
 
-このプロジェクトは段階的に開発中。詳細は `ROADMAP.md` を参照。
+このプロジェクトは段階的に開発中。詳細は `.claude/plan.md` を参照。
 
 | Phase | 状態 | 内容 |
 |---|---|---|
@@ -88,10 +88,10 @@ docker compose up -d
 開発を進める際は、以下を順に読むこと。
 
 1. `DESIGN.md` - 設計と判断理由
-2. `ROADMAP.md` - フェーズの全体像
+2. `.claude/plan.md` - フェーズの全体像
 3. `CLAUDE.md` - Claude Codeで作業する場合の指針
 4. `docs/conventions.md` - コーディング規約
-5. `tasks/PHASE-{N}.md` - 現在進行中のフェーズの詳細仕様
+5. `.claude/design/<active>.md` - 現在進行中のフェーズの設計ドキュメント
 
 ## ライセンス
 

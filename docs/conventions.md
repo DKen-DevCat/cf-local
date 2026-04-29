@@ -79,14 +79,14 @@ feat(api): add CreateCachePolicy endpoint
 Implements POST /2020-05-31/cache-policy with XML request/response.
 Stores policy in BoltDB and triggers nginx config regeneration.
 
-Refs: PHASE-4A
+Refs: phase-4a
 ```
 
 ## PR
 
 - 1PR = 1論理単位
 - description にどのPhaseのどのサブタスクかを明記
-- PHASE-{N}.md の completion checkbox に対応するならその旨を書く
+- `.claude/plan.md` の該当フェーズの completion checkbox に対応するならその旨を書く
 
 ## ファイル末尾
 

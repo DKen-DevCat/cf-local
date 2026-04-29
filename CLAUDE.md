@@ -8,9 +8,12 @@
 
 1. `README.md` - プロジェクト概要
 2. `DESIGN.md` - 設計と判断理由（**特に判断理由を理解することが重要**）
-3. `ROADMAP.md` - フェーズ全体の地図
-4. `tasks/PHASE-{現在のフェーズ}.md` - 着手中のフェーズ仕様
-5. `docs/conventions.md` - コーディング規約
+3. `.claude/plan.md` - フェーズレジストリ（全体の地図）
+4. `.claude/tasks.md` - 進行中フェーズの作業タスク
+5. `.claude/design/<active>.md` - 着手中フェーズの設計ドキュメント
+6. `docs/conventions.md` - コーディング規約
+
+`/phase-*` 系 skill はこの構造を前提に動く。
 
 ## このプロジェクトの作業哲学
 
@@ -61,7 +64,7 @@ cache key計算とTTL決定ロジックは、振る舞いが微妙で間違い�
 
 ## 現在の進捗状況
 
-`ROADMAP.md` の表を見て、今どのフェーズにいるかを確認すること。新しいフェーズに着手するときは、まず `tasks/PHASE-{N}.md` を確認する。詳細仕様がない場合（Phase 1以降は概要のみ）、ユーザーと相談しながら詳細仕様を作成してから着手する。
+`.claude/plan.md` のステータス表を見て、今どのフェーズにいるかを確認すること。新しいフェーズに着手するときは `/phase-kickoff` を使い、その時点で `.claude/design/<slug>-<date>.md` を起こす。詳細仕様が固まっていないフェーズ（Phase 1以降は概要のみ）は、ユーザーと相談しながら詳細仕様を作成してから着手する。
 
 ## ファイル/ディレクトリ規約（実装が始まったら）
 
@@ -79,7 +82,10 @@ nginx/                        # Data Plane (nginxイメージ用)
   njs/                        # nginx JavaScript
 docs/                         # ユーザ向けドキュメント
 examples/                     # 利用例
-tasks/                        # フェーズごとの実装タスク仕様
+.claude/                      # フェーズ管理 (skill が読み書きする)
+  plan.md                     # フェーズレジストリ
+  tasks.md                    # 進行中フェーズの作業タスク
+  design/                     # フェーズごとの設計ドキュメント
 tests/                        # 統合テスト・E2Eテスト
 ```
 
@@ -87,10 +93,11 @@ tests/                        # 統合テスト・E2Eテスト
 
 各フェーズ完了時に以下を更新すること。
 
-1. `ROADMAP.md` のステータス表
-2. `tasks/PHASE-{N}.md` の最後に「Phase完了時メモ」セクションを追加
+1. `.claude/plan.md` のステータス表（該当フェーズを「完了」へ）
+2. `.claude/design/<slug>-<date>.md` の最後に「Phase完了時メモ」セクションを追加
    - 想定外だった点
    - 次フェーズへの引き継ぎ事項
    - DESIGN.md更新が必要な点
+3. `.claude/tasks.md` の進行中セクションを片付け、必要なら次フェーズの予定だけ残す
 
 これらは将来の自分（と他のClaude Codeセッション）への手紙。

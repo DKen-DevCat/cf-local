@@ -56,4 +56,4 @@ curl -I http://localhost:8080/
 - Phase 3完了後: 設定ファイルによる複数distribution管理
 - Phase 4-A完了後: Terraformからローカルcf-localにapply可能
 
-詳細は `ROADMAP.md` を参照。
+詳細は `.claude/plan.md` を参照。

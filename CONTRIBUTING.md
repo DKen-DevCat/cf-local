@@ -4,7 +4,7 @@
 
 ## 始める前に
 
-1. `README.md` `DESIGN.md` `ROADMAP.md` を読む
+1. `README.md` `DESIGN.md` `.claude/plan.md` を読む
 2. 何を変えたいかをissueで提案する（大きな変更の場合）
 3. 小さな修正（typo、ドキュメント等）はissueなしでPRしてOK
 
