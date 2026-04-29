@@ -22,7 +22,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 | Phase ID | 状態 | 内容 |
 |---|---|---|
-| `phase-0` | 未着手 | nginx前段配置とPoC |
+| `phase-0` | 進行中 | nginx前段配置とPoC |
 | `phase-1` | 未着手 | cache key動的計算 |
 | `phase-2` | 未着手 | TTL正確化 |
 | `phase-3` | 未着手 | Invalidation API + 設定ファイル方式 |
