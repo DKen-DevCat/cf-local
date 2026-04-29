@@ -214,6 +214,8 @@ CloudFrontのTTL決定は3ケース。
 
 これをnjsで実装し、`X-Accel-Expires` ヘッダーで動的にnginxに伝える。`s-maxage` は `max-age` より優先される。
 
+**実装メモ (Phase 2 で確定)**: njs での TTL 注入は **2-hop パターン** (outer cache 層 + inner `js_header_filter`) で行う。1-hop では nginx の `js_header_filter` が cache 判定後に走り `X-Accel-Expires` injection が proxy_cache の TTL 決定に届かないことを Phase 2-1 spike で実機確認済 (詳細: `.claude/design/phase-2-ttl-2026-04-29.md` "2-1 spike 結果")。各 cacheable location は outer (`location /`) と inner (`/_cf_inner_<policy_id>/`) の対で実装され、`upstream self` 経由で TCP self-loop する。
+
 ### 4.3 Invalidation
 
 非同期実行モデル。
