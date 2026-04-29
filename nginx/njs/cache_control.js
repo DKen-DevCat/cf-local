@@ -58,15 +58,14 @@ function parse(raw) {
 }
 
 // `parseInt('60abc', 10)` は 60 を返してしまうので、整数としての厳密一致を要求する。
-// 負値も一応通すが、TTL 決定側 (`ttl.compute`) で MinTTL に clamp される想定。
+// RFC 9111 §1.2.2 は `delta-seconds = 1*DIGIT` で負値の表記を許容しないため、
+// `-N` (`-0` を含む) は reject して null を返す。下流の `ttl.compute()` の clamp
+// で吸収させる暗黙依存を排除する目的 (review concern REV-13)。
 function parseDeltaSeconds(s) {
     if (s === null || s === '') return null;
-    let i = 0;
-    if (s.charAt(0) === '-') i = 1;
-    if (i >= s.length) return null;   // `-` 単体や空文字を弾く
-    for (; i < s.length; i++) {
+    for (let i = 0; i < s.length; i++) {
         const c = s.charCodeAt(i);
-        if (c < 48 || c > 57) return null;   // 0-9 以外を含めば無効
+        if (c < 48 || c > 57) return null;   // 0-9 以外 (sign / 文字 / 空白) を含めば無効
     }
     const n = parseInt(s, 10);
     if (isNaN(n)) return null;
