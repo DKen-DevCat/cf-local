@@ -29,6 +29,6 @@
 - [x] 2-3 `cache_control.js` 実装 (テストファースト red → green) — 5 directive (`no-store` / `no-cache` / `private` / `max-age` / `s-maxage`) 対応、β 16 ケース全 PASS
 - [x] 2-4 `ttl.js` 実装 (テストファースト red → green) — case 1/2/3 + s-maxage 優先 + clamp、`getPolicyTtl` を `cache_key.js` に追加、`policies.json` に TTL フィールド + `_test-ttl-clamp` policy 追加、β 22 ケース全 PASS
 - [x] 2-5 `nginx.conf` を 2-hop に refactor (`upstream self` + `location /_cf_inner_default/` + `js_header_filter ttl.computeAndInject`) + outer の `proxy_ignore_headers Cache-Control` 撤去 + α テスト (`cache_key_test.go`) に Phase 2 cacheability probe 追加。実機で max-age=0 origin → 連続 MISS (X-Accel-Expires=0 honor) を確認。double slash gotcha (`/_cf_inner_default` + `proxy_pass http://origin/` で origin に `//<x>` が届き 308 ループ) を踏んだので location/proxy_pass の trailing slash を揃える形で修正、design doc の inner レイアウトに反映済み
-- [ ] 2-6 TTL α 統合テスト追加 (`tests/integration/ttl_test.go`) + cache_key α テスト用 mock origin 整備 (Phase 2 で max-age=0 origin だと cache_key α テストが skip になる前提を解消)
+- [x] 2-6 TTL α 統合テスト追加 + cache_key α 用 mock origin 整備 — `tests/integration/testserver/` に query 駆動の mock origin (`?cc=...`)、`TestMain` で起動。`ttl_alpha_test.go` に α 7 ケース (case 1/2/3 + s-maxage、`max-age=2` の 3 秒経過後 MISS 含む)。`cache_key_test.go` の skip ガード撤去 + `?cc=max-age=300` を buster に追加して cacheable を担保。実機: 68/68 PASS in 3.4s
 - [ ] 2-7 `docs/ttl.md` 整備 + `docs/cache-policy.md` の policy schema 章更新
 - [ ] 完了確認: 全テスト PASS / 手動で `max-age=60` origin → 60 秒 HIT 維持 → 経過後 MISS / plan.md ステータス更新
