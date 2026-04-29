@@ -17,10 +17,17 @@
 - [x] A. 設定ファイル配置: リソース別ディレクトリ分割 (`./cf-local/distributions/*.json` + `./cf-local/cache-policies/*.json`)、AWS SDK Go v2 型を JSON marshal した形
 - [x] B. nginx reload 戦略: 共有 named volume + nginx container 内 inotify sidecar (atomic rename + 500ms debounce)、Phase 3 では Control Plane 側 watch なし
 - [x] C. `ngx_cache_purge`: `nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化、3-2 spike で実機確認、NG なら debian source build (Plan B)
+- [x] Q1. List 型は flat array 簡略化 (loader が `Quantity` 自動算出)
+- [x] Q2. Phase 3 は `distributions/` 1 ファイル限定、複数は Phase 4-A 送り
+- [x] Q3. Cookie/QueryString の 4 behavior (`none` / `whitelist` / `allExcept` / `all`) を njs 全対応
+- [x] Q4. `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` 独立フラグ化
 
 ### コアスコープ
 
-- [ ] 3-1 設定ファイルスキーマ確定 (AWS SDK Go v2 `CachePolicyConfig` / `DistributionConfig` を JSON marshal した形)
+- [x] 3-1 設定ファイルスキーマ確定 + `docs/config-schema.md` 初版 (A 群 / B 群 / C 群 三分類)
+- [ ] 3-1a njs `cache_key.js` を 4 behavior 対応 (`none` / `whitelist` / `allExcept` / `all`) — TDD
+- [ ] 3-1b njs `cache_key.js` を `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` 独立フラグ化 — TDD
+- [ ] 3-1c 内部 `policies.json` schema 移行 (PascalCase + 3-1a/b 反映)
 - [ ] 3-2 nginx Dockerfile multi-stage 化 + `ngx_cache_purge` dynamic module 組込み (spike → 本実装)
 - [ ] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD)
 - [ ] 3-4 `internal/nginx` で `nginx.conf` + `policies.json` 生成器 (golden file テスト)

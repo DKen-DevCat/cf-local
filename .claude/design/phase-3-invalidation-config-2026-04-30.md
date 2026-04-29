@@ -25,6 +25,17 @@ DESIGN.md §3.1 の **Control Plane** の最初の実装フェーズ。これま
 
 A / B / C の 3 点は kickoff 時点でユーザと合意済 (commit `c65e6b1` の議論記録参照)。それぞれ判断理由を記録する。
 
+### Q1〜Q4 (3-1 の付随判断)
+
+スキーマ確定で出てきた追加判断点を kickoff 時に確定済 (commit `97c1bba` 後の議論):
+
+| # | 確定内容 | 判断理由 |
+|---|---|---|
+| Q1 | List 型は flat array で簡略化 (loader が `Quantity` 自動算出) | ユーザーが書く設定ファイルの ergonomics。Phase 4-A の AWS API 経路 (XML) からも同じ in-memory 表現に正規化 |
+| Q2 | Phase 3 では `distributions/` ファイル数 1 限定、複数は Phase 4-A 送り | 複数 distribution の routing (Host / port) は AWS API ハンドラ側 (CreateDistribution の DomainName 自動採番) と一緒に決める方が筋が良い。`CacheBehaviors` で path pattern は複数対応するため plan.md の意図は満たせる |
+| Q3 | Cookie/QueryString の 4 behavior (`none` / `whitelist` / `allExcept` / `all`) を njs 側で全対応 | AWS API 完全互換 + Managed Cache Policies (`Managed-CachingOptimized` 等) を Phase 4-A で読み込んだ際に即破綻しないため |
+| Q4 | `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` を独立フラグ化 | AWS API 互換 + njs `normalizeAcceptEncoding` の修正コストが小さい (~5 行) |
+
 ### A. 設定ファイル配置 → リソース別ディレクトリ分割
 
 ```
@@ -103,7 +114,10 @@ multi-stage Dockerfile 構成 (3-2 で実装):
 
 | # | 項目 | 主対象ファイル | 備考 |
 |---|---|---|---|
-| 3-1 | 設定ファイルスキーマ確定 (AWS SDK 型を JSON marshal した形) | (設計のみ → `docs/config-schema.md`) | `CachePolicyConfig` / `DistributionConfig` のうち Phase 3 で扱うフィールドの確定。Lambda 系・WAF 系は無視 |
+| 3-1 | 設定ファイルスキーマ確定 + `docs/config-schema.md` 初版 | `docs/config-schema.md` | A 群 (Phase 3 対応) / B 群 (Phase 4-A 以降) / C 群 (永久スコープ外) の三分類確定。AWS API 形式そのまま、List 型は flat array 簡略化 |
+| 3-1a | njs `cache_key.js` を 4 behavior 対応 (`none` / `whitelist` / `allExcept` / `all`) に拡張 + tests | `nginx/njs/cache_key.js`, `nginx/njs/cache_key.test.js` | TDD 必須。CookieBehavior / QueryStringBehavior に対応。Managed Cache Policies (Phase 4-A) で必須 |
+| 3-1b | njs `cache_key.js` を `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` 独立フラグ化 + tests | `nginx/njs/cache_key.js`, `nginx/njs/cache_key.test.js` | 旧 `accept_encoding_normalize` 単一フラグから移行。`normalizeAcceptEncoding` の出力テーブル拡張 |
+| 3-1c | 内部 `policies.json` schema 移行 (PascalCase + 上記 3-1a/b 反映) と `nginx/njs/policies.json` の更新 | `nginx/njs/policies.json` (内部表現) | renderer (3-4) が生成するファイルとしての表現を確定。手書き設定ではない (ユーザーは `cache-policies/*.json` を書く) |
 | 3-2 | nginx Dockerfile を multi-stage 化、`nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化 + spike | `nginx/Dockerfile`, `nginx/spike/` | Phase 0 の DESIGN コメント (`Dockerfile:5`) の伏線回収。spike 失敗時は debian source build (Plan B) に切替 |
 | 3-3 | Go プロジェクト基盤 (`cmd/cf-local/main.go`) + 設定 loader | `cmd/cf-local/main.go`, `internal/config/...` | TDD 必須 (CLAUDE.md §4)。malformed JSON / 必須欠落 / 未知フィールド は fail-fast |
 | 3-4 | `nginx.conf` + `nginx/njs/policies.json` の生成器 | `internal/nginx/...`, `internal/managed/...` | Phase 1〜2 の現行 `nginx.conf` を template 化。outer/inner location ペア (Phase 2 §2-2) を policy 数だけ展開 |
