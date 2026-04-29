@@ -77,7 +77,9 @@ nginx/njs/
 - **(α) Go 外形テスト**: `tests/integration/cache_key_test.go`。`go test` から docker-compose 起動済みの nginx に対して HTTP リクエストを投げ、`X-Cache-Status` と（必要なら debug header 経由で漏らした）`X-Cache-Key` の同値性を検証
 - **(β) njs 単体テスト**: njs ロジックの table-driven test。1-1 で挙動を確認して具体策決定（候補: nginx + njs を CI で短命起動 / `r.subrequest` で expose したテスト用 endpoint / njs 互換の node ランタイム）
 
-### policies.json スキーマ案（叩き台）
+### policies.json スキーマ（1-2 確定版）
+
+ファイル: `nginx/njs/policies.json`
 
 ```json
 {
@@ -88,9 +90,15 @@ nginx/njs/
       "query_strings": { "whitelist": [] },
       "accept_encoding_normalize": true
     },
-    "with-auth": {
-      "headers":       { "whitelist": ["Authorization"] },
+    "with-session": {
+      "headers":       { "whitelist": [] },
       "cookies":       { "whitelist": ["session_id"] },
+      "query_strings": { "whitelist": [] },
+      "accept_encoding_normalize": true
+    },
+    "with-locale": {
+      "headers":       { "whitelist": ["Accept-Language"] },
+      "cookies":       { "whitelist": [] },
       "query_strings": { "whitelist": ["lang"] },
       "accept_encoding_normalize": true
     }
@@ -98,9 +106,33 @@ nginx/njs/
 }
 ```
 
-- AWS CloudFront `CachePolicy` の `ParametersInCacheKeyAndForwardedToOrigin` 構造を最小限に削った形
-- `whitelist` のみ。`allExcept` 等は Phase 3 以降で必要なら追加
-- 1-2 で実装に向けて確定する
+#### フィールド定義
+
+| パス | 型 | 必須 | 意味 |
+|---|---|---|---|
+| `policies` | object | yes | policy id → policy のマップ。njs 側で id 文字列で O(1) lookup する |
+| `policies.<id>` | object | yes | 個別 policy。id は location ↔ policy の紐付けキー（Phase 1 では `nginx.conf` で固定。Phase 3 で動的化） |
+| `policies.<id>.headers.whitelist` | string[] | yes | cache key に含める request header 名の配列。空配列で「含めない」を明示 |
+| `policies.<id>.cookies.whitelist` | string[] | yes | cache key に含める cookie 名の配列。空配列で「含めない」を明示 |
+| `policies.<id>.query_strings.whitelist` | string[] | yes | cache key に含める query string 名の配列。空配列で「含めない」を明示 |
+| `policies.<id>.accept_encoding_normalize` | bool | yes | `true` で `gzip` / `br` / `identity` のいずれかに正規化して cache key に含める。`false` で AE を完全に除外 |
+
+#### マッチング規則（cache_key.js が実装する）
+
+| 対象 | 大小文字区別 | 根拠 |
+|---|---|---|
+| header 名 | **case-insensitive** | RFC 9110 §5.1 + AWS CloudFront 互換 |
+| cookie 名 | **case-sensitive** | RFC 6265 + AWS CloudFront 互換 |
+| query string 名 | **case-sensitive** | RFC 3986 + AWS CloudFront 互換 |
+| 値（headers / cookies / queries の値） | そのまま使う | normalize はしない（whitelist された名前と一致するエントリの値を素直に key 材料に入れる） |
+
+whitelist 値はユーザーがファイルに記述した表記そのまま保存し、cache_key.js 側で必要に応じて lower 化する（header だけ）。multi-value query (`?k=a&k=b`) は 1-1 spike で確認したとおり配列で来るので、値ソートして join する。
+
+#### スコープ外（Phase 3 以降）
+
+- `allExcept` / `none` のような `whitelist` 以外の behavior（AWS の `HeaderBehavior` 全列挙）
+- policy → location のマッピング自体（Phase 1 は nginx.conf 内で固定、Phase 3 で動的化）
+- `$schema` / `version` フィールド（フォーマット変更時に導入）
 
 ## テスト方針
 

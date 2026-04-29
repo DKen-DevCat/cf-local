@@ -1,0 +1,22 @@
+{
+  "policies": {
+    "default": {
+      "headers":       { "whitelist": [] },
+      "cookies":       { "whitelist": [] },
+      "query_strings": { "whitelist": [] },
+      "accept_encoding_normalize": true
+    },
+    "with-session": {
+      "headers":       { "whitelist": [] },
+      "cookies":       { "whitelist": ["session_id"] },
+      "query_strings": { "whitelist": [] },
+      "accept_encoding_normalize": true
+    },
+    "with-locale": {
+      "headers":       { "whitelist": ["Accept-Language"] },
+      "cookies":       { "whitelist": [] },
+      "query_strings": { "whitelist": ["lang"] },
+      "accept_encoding_normalize": true
+    }
+  }
+}
