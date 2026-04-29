@@ -24,7 +24,7 @@
 - [x] 1-1 njs 制約の実機検証 spike（結果は design doc "1-1 spike 結果" 節）
 - [x] 1-2 cache policy (JSON) スキーマ設計と `policies.json` サンプル整備
 - [x] 1-3 `cache_key.js` 実装（テストファースト / `tests/cache_key_test.sh` 16 件 PASS）
-- [ ] 1-4 `nginx.conf` で `js_set` → `proxy_cache_key` 注入
+- [x] 1-4 `nginx.conf` で `js_set` → `proxy_cache_key` 注入（HIT/MISS smoke 通過）
 - [ ] 1-5 Vary / Accept-Encoding 正規化の挙動確認
 - [ ] 1-6 テストハーネス整備（α Go 外形 + β njs 単体）
 - [ ] 1-7 `docs/cache-policy.md` 整備 + `examples/` 拡充
