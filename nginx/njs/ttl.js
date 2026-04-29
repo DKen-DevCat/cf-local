@@ -15,10 +15,22 @@
 import cacheControl from 'cache_control.js';
 import ck from 'cache_key.js';
 
-// 2-4 a stub: 任意の入力に対して期待値と一致しない sentinel を返して red にする。
-// 2-4 b で本実装する。
+// case 1 が case 2 より優先される (CloudFront 互換): no-store / no-cache /
+// private のいずれかが立っていれば max-age や s-maxage の値に関係なく MinTTL。
+// case 2 の clamp は CF docs §"Managing how long content stays in the cache":
+// MaxTTL/DefaultTTL より max-age を尊重しつつ、MinTTL で下限を保証する。
 function compute(cc, p) {
-    return 999999999;
+    if (cc.noStore || cc.noCache || cc.private) return p.min_ttl;
+
+    const explicit = cc.sMaxage !== null ? cc.sMaxage : cc.maxAge;
+    if (explicit !== null) {
+        let v = explicit;
+        if (v < p.min_ttl) v = p.min_ttl;
+        if (v > p.max_ttl) v = p.max_ttl;
+        return v;
+    }
+
+    return p.default_ttl;
 }
 
 // 2-5 で inner location に `js_header_filter ttl.computeAndInject` として配線する。
