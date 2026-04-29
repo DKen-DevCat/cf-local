@@ -98,9 +98,29 @@ function byFirst(a, b) {
 
 function normalizeAcceptEncoding(raw) {
     if (!raw) return 'identity';
-    const lower = String(raw).toLowerCase();
-    if (lower.indexOf('br') >= 0) return 'br';
-    if (lower.indexOf('gzip') >= 0) return 'gzip';
+    // RFC 9110 §12.5.3 tokenization. `q=0` means "explicitly refuse".
+    // Substring matches like `xbr` / `x-gzip` must NOT count as br/gzip.
+    let hasBr = false;
+    let hasGzip = false;
+    const tokens = String(raw).split(',');
+    for (let i = 0; i < tokens.length; i++) {
+        const parts = tokens[i].split(';');
+        const name = parts[0].trim().toLowerCase();
+        if (!name) continue;
+        let q = 1;
+        for (let j = 1; j < parts.length; j++) {
+            const p = parts[j].trim();
+            if (p.indexOf('q=') === 0) {
+                const parsed = parseFloat(p.substring(2));
+                if (!isNaN(parsed)) q = parsed;
+            }
+        }
+        if (q <= 0) continue;
+        if (name === 'br') hasBr = true;
+        else if (name === 'gzip') hasGzip = true;
+    }
+    if (hasBr) return 'br';
+    if (hasGzip) return 'gzip';
     return 'identity';
 }
 
@@ -112,7 +132,8 @@ function parseCookieHeader(raw) {
         const p = pairs[i].trim();
         if (!p) continue;
         const idx = p.indexOf('=');
-        if (idx < 0) continue;
+        // idx < 0: no `=` at all. idx === 0: empty name (`=foo` form). Drop both.
+        if (idx <= 0) continue;
         out[p.substring(0, idx)] = p.substring(idx + 1);
     }
     return out;

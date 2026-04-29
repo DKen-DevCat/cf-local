@@ -273,6 +273,15 @@ njs 側で `sha256(uri ⊕ headers ⊕ cookies ⊕ queries ⊕ ae)` まで行っ
 
 完了日: 2026-04-29 / コミット範囲: `c7e49ee..54b42c1` (kickoff `c7e49ee` を含む)。
 
+### コードレビューで追加判明した点 (post-merge fix)
+
+PR の code-review (commit `68cd8f7` のディベート要約) で判明した 2 件を red→green pair で本 PR 内に追加修正済み:
+
+- **AE 正規化の `indexOf` 実装が RFC 9110 違反** — `Accept-Encoding: br;q=0, gzip` で `br` を返す / `xbr` のような substring が `br` にマッチする欠陥。`,` でトークン化 → `;q=` パラメータ尊重 → 完全一致名でマッチに修正。T17 / T18 が永続 regression guard。
+- **`parseCookieHeader` が空 cookie 名 (`=foo` 形式) を `out['']` に取り込む** — 空名 whitelist (`""`) を持つ policy で意図しない値が cache key に混入する可能性。`idx <= 0` で parse 時に drop に修正。`_test-empty-cookie` policy + T19 が回帰防止。
+
+ディベートで C 行きとなった項目 (multi-value query の `,` 衝突 / セクション区切り 1 文字 / `/_cache_key_test` の overlay 分離) は **Phase 3 kickoff の議題** に持ち越し。B 行き (`fs.readFileSync` の safe-default / α テストの silent skip) は **Phase 2 着手前タスク**。
+
 ### 想定外だった点
 
 - **Go の `http.DefaultTransport` が Accept-Encoding 未指定時に黙って `gzip` を inject する** (1-6)。`Header.Set("Accept-Encoding", "")` でも未指定扱いで auto-add される。AE 正規化の差分テスト (T06: AE=gzip vs absent) が silent-pass する形で初回の Go 移植時に T06 だけ red になって発覚。`http.Client{Transport: &http.Transport{DisableCompression: true}}` を専用 client にして回避。`docs/cache-policy.md` には影響しないが、テストハーネスを別言語に移植する場合は必ず引っかかる罠なので design doc に記録済み。

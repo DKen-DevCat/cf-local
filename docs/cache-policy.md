@@ -67,13 +67,24 @@ cf-local のキャッシュキーは **cache policy** で制御する。AWS Clou
 
 ### Accept-Encoding の挙動
 
-`accept_encoding_normalize: true` のとき:
+`accept_encoding_normalize: true` のとき、RFC 9110 §12.5.3 に従って Accept-Encoding をトークン化し、`q` パラメータを尊重した上で以下の優先順で 1 つに畳む:
 
-- リクエストの `Accept-Encoding` に `br` を含めば → `br`
-- 含まなくて `gzip` を含めば → `gzip`
-- どちらも含まない / 未指定 → `identity`
+1. `br` トークン (q > 0) を含めば → `br`
+2. なくて `gzip` トークン (q > 0) を含めば → `gzip`
+3. どちらも含まない / `q=0` で明示拒否 / 未指定 → `identity`
 
-この値が cache key に入る。`Accept-Encoding: gzip, deflate` と `Accept-Encoding: gzip` は **同じ** key になる (両方 `gzip` に正規化されるため)。
+例:
+
+| Accept-Encoding | normalized |
+|---|---|
+| `gzip, br` | `br` |
+| `gzip;q=1, br;q=0.5` | `br` (br 優先) |
+| `br;q=0, gzip` | `gzip` (br を q=0 で拒否) |
+| `gzip, deflate` | `gzip` |
+| `xbr` | `identity` (substring match しない) |
+| (未指定) | `identity` |
+
+cache key の AE セクションにはこの正規化後の値が入る。同じ正規化値になるリクエストは同じ cache slot を共有する。
 
 `accept_encoding_normalize: false` の場合は Accept-Encoding を一切 cache key に含めない (圧縮しない静的アセットなど)。
 
