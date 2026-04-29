@@ -105,6 +105,14 @@ func TestCacheControl_Parse(t *testing.T) {
 		// ignoring the field-name list (out of scope for Phase 2).
 		{"P16 qualified no-cache treated as flag", `no-cache="Set-Cookie"`, true,
 			parsedCC{NoCache: true}},
+
+		// REV-13: RFC 9111 §1.2.2 — `delta-seconds = 1*DIGIT` には負値の
+		// 表記は存在しない。parser 側で reject するのが筋 (現状は parser
+		// が通して compute() 側の clamp に吸収させていて RFC 違反が silent
+		// に通る)。
+		{"P17 max-age=-5 rejected per RFC 9111", "max-age=-5", true, parsedCC{}},
+		{"P18 s-maxage=-1 rejected per RFC 9111", "s-maxage=-1", true, parsedCC{}},
+		{"P19 max-age=-0 retained as 0 (sign discarded)", "max-age=-0", true, parsedCC{}},
 	}
 
 	for _, c := range cases {
