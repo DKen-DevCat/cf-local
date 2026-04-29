@@ -1,0 +1,23 @@
+# Phase 0: 最小構成
+# nginxだけ起動。originは別途ホスト側で起動する前提
+#
+# Phase 4-A以降では Control Plane (Go) のサービスも追加される
+# Phase 4-D以降では Lambda RIE 連携用の docker-compose.lambda.yml が増える
+
+services:
+  nginx:
+    build: ./nginx
+    container_name: cf-local-nginx
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-cache:/var/cache/nginx
+    extra_hosts:
+      # Linux で host.docker.internal を有効にする
+      # macOS / Windows では無視されるが書いて問題ない
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  nginx-cache:
