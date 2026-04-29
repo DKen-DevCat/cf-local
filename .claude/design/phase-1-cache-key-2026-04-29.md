@@ -4,7 +4,7 @@ title: Cache Key動的計算
 date: 2026-04-29
 branch: feat/phase-1-cache-key
 base: develop @ 871ddf8
-status: draft
+status: complete
 ---
 
 # Phase 1: Cache Key動的計算
@@ -268,3 +268,31 @@ njs 側で `sha256(uri ⊕ headers ⊕ cookies ⊕ queries ⊕ ae)` まで行っ
 | ~~Vary を proxy_cache 標準機能と njs 計算で**二重に**扱ってしまう~~ | **解消 (1-5)**: `proxy_ignore_headers Vary;` で nginx 側の Vary 依存を全切り。CloudFront 互換。詳細は本ドキュメント "Vary の扱い (1-5 確定)" 節 |
 | ~~njs 単体テストの実行手段が確定していない~~ | **解消 (1-1)**: docker-compose 上で nginx を立てて、テスト用 `js_content` endpoint に table-driven リクエストを投げる方式で行く ((α) と同じハーネスを共用) |
 | ~~`nginx-mod-http-js` の Alpine パッケージ名 / バージョン整合~~ | **解消 (1-0)**: 公式 `nginx:1.27-alpine` イメージで `apk add nginx-module-njs` が利用可能。`/etc/nginx/modules/ngx_http_js_module.so` に配置され、`load_module` で読み込み。`nginx -t` で動作確認済み |
+
+## Phase 完了時メモ
+
+完了日: 2026-04-29 / コミット範囲: `c7e49ee..54b42c1` (kickoff `c7e49ee` を含む)。
+
+### 想定外だった点
+
+- **Go の `http.DefaultTransport` が Accept-Encoding 未指定時に黙って `gzip` を inject する** (1-6)。`Header.Set("Accept-Encoding", "")` でも未指定扱いで auto-add される。AE 正規化の差分テスト (T06: AE=gzip vs absent) が silent-pass する形で初回の Go 移植時に T06 だけ red になって発覚。`http.Client{Transport: &http.Transport{DisableCompression: true}}` を専用 client にして回避。`docs/cache-policy.md` には影響しないが、テストハーネスを別言語に移植する場合は必ず引っかかる罠なので design doc に記録済み。
+- **Next.js の `Vary` ヘッダが `Accept-Encoding` を含む path / 含まない path で挙動が分かれる** (1-5)。`/favicon.ico` の Vary には AE が無いので「Vary 二重カウント」問題は再現しない。`/api/health` のような圧縮交渉する path で初めて顕在化。最初に `/favicon.ico` で確認していたら Vary 問題を見落とすところだった。
+- **njs `Array.sort()` が ASCII 順** (1-1 spike)。`['B','a']` → `['B','a']` ではなく `['B','a']` (B<a in ASCII)。直感的に「lower-case 比較しているはず」と誤読しないよう、cache_key.js では明示的に `toLowerCase()` してから sort している。bash テストを最初に書いていたので影響は無かったが、Go でテストする時 `slices.Sort` のデフォルトと混同しないこと。
+- **njs `r.headersIn` の case-insensitive lookup と for-in iterate のキー casing が違う** (1-1 spike)。`r.headersIn['accept-encoding']` でも引けるが、`for k in r.headersIn` でのキーは元送信時の casing (`Accept-Encoding`)。cache_key.js は iterate 側を信用せず lookup 用には小文字化して保持するパターン。
+
+### 次フェーズへの引き継ぎ事項
+
+- **Phase 2 (TTL 正確化)** へ:
+  - `proxy_ignore_headers Cache-Control` を `nginx.conf` に残してある (Phase 0 の暫定処置)。Phase 2 で Cache-Control の正規パースに置き換えるとき外す。同じ `proxy_ignore_headers` 行に Vary も入っているので、Vary の方は **残す** こと (1-5 確定)
+  - njs 側で `r.headersIn['Cache-Control']` を読むタイミングは `js_set` ではなく `js_header_filter` 等の応答ヘッダ書き換えフェーズ。Phase 2 で実装する `ttl.js` は `cache_key.js` と同居させるディレクトリレイアウトをそのまま使える
+- **Phase 3 (Invalidation + 設定ファイル方式)** へ:
+  - 1-0 で繰延した `ngx_cache_purge` 導入を Phase 3 のキックオフで再評価。multi-stage build か community image かは当時の状況で再判断
+  - Phase 1 では `policies.json` は手書き。Phase 3 で「設定ファイル → policies.json 自動生成」の Go ジェネレータを書くとき、現在の schema (`docs/cache-policy.md` に記載) を入力フォーマットの内側に埋める形で互換維持できる
+  - location ↔ policy の動的マッピングは Phase 3 から。現状 `set $cf_policy_id "default";` で 1 location 1 policy 固定 — Phase 3 では `map` directive か Go 生成テンプレートで動的化
+- **Phase 4-A (Terraform 対応)** へ:
+  - `go.mod` は repo root で `github.com/DKen-DevCat/cf-local` で初期化済み。`cmd/cf-local/` `internal/api/` `internal/store/` 等を新規追加する形で進める
+  - 統合テストは `tests/integration/` パッケージ。Phase 4-A の Go HTTP Server も同パッケージの test を増やす形でカバーできる
+
+### DESIGN.md 更新が必要な点
+
+無し。§4.1 の式 (`URI ⊕ sort(headers) ⊕ sort(cookies) ⊕ sort(queries) ⊕ normalized(AE)`) を素直に実装しただけで、設計判断にズレなし。Vary を完全に無視する点も §4.1 と矛盾しない (むしろ「cache key が cache identity の唯一の権威」という DESIGN.md の前提を強化)。
