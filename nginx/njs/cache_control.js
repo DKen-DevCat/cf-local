@@ -8,12 +8,69 @@
 // `parse()` は副作用フリーの pure function。string | null | undefined を受けて
 // 下記 shape を返す:
 //   { noStore: bool, noCache: bool, private: bool, maxAge: int|null, sMaxage: int|null }
-// 未指定の数値フィールドは null (= "directive 不在"); `0` は有効値として保持する。
-// `ttl.compute()` (task 2-4) が下流で消費する。
+// 未指定の数値フィールドは null (= "directive 不在"); `0` は有効値として保持する
+// — 下流の `ttl.compute()` (task 2-4) が "max-age 不在 (case 3)" と "max-age=0
+// (case 2 → MinTTL clamp)" を区別するため。
 
-// 2-3 a: 全部デフォルトを返す stub。意図的に red にして 2-3 b で本実装する。
 function parse(raw) {
-    return { noStore: false, noCache: false, private: false, maxAge: null, sMaxage: null };
+    const out = { noStore: false, noCache: false, private: false, maxAge: null, sMaxage: null };
+    if (!raw) return out;
+
+    const tokens = String(raw).split(',');
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i].trim();
+        if (!t) continue;
+
+        let name;
+        let value;
+        const eq = t.indexOf('=');
+        if (eq < 0) {
+            name = t.toLowerCase();
+            value = null;
+        } else {
+            name = t.substring(0, eq).trim().toLowerCase();
+            value = t.substring(eq + 1).trim();
+            // RFC 9111 §5.2 では delta-seconds に quoted-string 形を許す。
+            // クライアント / 中間プロキシによっては `max-age="60"` のように送ってくる。
+            if (value.length >= 2 && value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') {
+                value = value.substring(1, value.length - 1);
+            }
+        }
+
+        if (name === 'no-store') {
+            out.noStore = true;
+        } else if (name === 'no-cache') {
+            // qualified no-cache (`no-cache="Set-Cookie"`) は値を捨てて単なる flag として扱う。
+            // フィールド単位の選択保持は Phase 2 のスコープ外。
+            out.noCache = true;
+        } else if (name === 'private') {
+            out.private = true;
+        } else if (name === 'max-age') {
+            const n = parseDeltaSeconds(value);
+            if (n !== null) out.maxAge = n;
+        } else if (name === 's-maxage') {
+            const n = parseDeltaSeconds(value);
+            if (n !== null) out.sMaxage = n;
+        }
+        // 未知の directive は黙って無視。
+    }
+    return out;
+}
+
+// `parseInt('60abc', 10)` は 60 を返してしまうので、整数としての厳密一致を要求する。
+// 負値も一応通すが、TTL 決定側 (`ttl.compute`) で MinTTL に clamp される想定。
+function parseDeltaSeconds(s) {
+    if (s === null || s === '') return null;
+    let i = 0;
+    if (s.charAt(0) === '-') i = 1;
+    if (i >= s.length) return null;   // `-` 単体や空文字を弾く
+    for (; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c < 48 || c > 57) return null;   // 0-9 以外を含めば無効
+    }
+    const n = parseInt(s, 10);
+    if (isNaN(n)) return null;
+    return n;
 }
 
 export default { parse };
