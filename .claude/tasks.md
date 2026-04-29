@@ -14,5 +14,3 @@
 - [ ] origin (Next.js等) を別途立てた状態で、ブラウザから `http://localhost:8080` にアクセスしてページが表示される
 - [ ] curlで同じURLに2回アクセスすると、2回目はキャッシュヒットする (`X-Cache-Status: HIT`)
 - [ ] 設定変更時に `docker compose restart` で反映できる
-- [ ] 実機 (iOS Safari等) からアクセス可能 (Tailscale等で接続)
-- [ ] 進行中のiOSバグの再現可否を確認した

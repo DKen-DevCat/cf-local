@@ -12,7 +12,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 | マイルストーン | 達成条件 |
 |---|---|
-| **M1** | iOSバグの調査が始められる（Phase 0完了） |
+| **M1** | Phase 0 PoC 完成（基本キャッシュが動く最小構成。後続フェーズの基盤） |
 | **M2** | 他プロジェクトに流用可能（Phase 3完了） |
 | **M3** | Terraform連携が動く（Phase 4-A〜C完了） |
 | **M4** | Lambda@Edge含めた完全構成（Phase 4-D完了） |
@@ -36,7 +36,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ## phase-0: PoC
 
-**到達状態**: nginx を Next.js の前段に置き、固定configでキャッシュが動く。iOSバグの再現調査が可能になる。
+**到達状態**: nginx を Next.js の前段に置き、固定configでキャッシュが動く最小構成を確認。Phase 1 以降の基盤として nginx Dockerfile / nginx.conf / docker-compose の叩き台が想定どおり動くことを保証する。
 
 **完了条件**:
 
@@ -44,8 +44,6 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - [ ] origin (Next.js等) を別途立てた状態で、ブラウザから `http://localhost:8080` にアクセスしてページが表示される
 - [ ] curlで同じURLに2回アクセスすると、2回目はキャッシュヒットする (`X-Cache-Status: HIT`)
 - [ ] 設定変更時に `docker compose restart` で反映できる
-- [ ] 実機 (iOS Safari等) からアクセス可能 (Tailscale等で接続)
-- [ ] 進行中のiOSバグの再現可否を確認した
 
 詳細仕様はキックオフ時に `.claude/design/phase-0-poc-<date>.md` に展開する。
 
