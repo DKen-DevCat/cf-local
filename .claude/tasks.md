@@ -12,11 +12,11 @@
 
 設計: [`.claude/design/phase-3-invalidation-config-2026-04-30.md`](design/phase-3-invalidation-config-2026-04-30.md)
 
-### 着手前相談 (要議論)
+### 着手前決定事項 (kickoff で確定)
 
-- [ ] A. 設定ファイル配置 (分割 `./cf-local/distribution.json` + `./cf-local/cache-policies/*.json` 案で良いか)
-- [ ] B. nginx reload 戦略 (docker socket / inotify / `POST /_reload` 手動 のいずれか)
-- [ ] C. `ngx_cache_purge` を dynamic module でビルドできるか — 3-2 spike で実機確認
+- [x] A. 設定ファイル配置: リソース別ディレクトリ分割 (`./cf-local/distributions/*.json` + `./cf-local/cache-policies/*.json`)、AWS SDK Go v2 型を JSON marshal した形
+- [x] B. nginx reload 戦略: 共有 named volume + nginx container 内 inotify sidecar (atomic rename + 500ms debounce)、Phase 3 では Control Plane 側 watch なし
+- [x] C. `ngx_cache_purge`: `nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化、3-2 spike で実機確認、NG なら debian source build (Plan B)
 
 ### コアスコープ
 

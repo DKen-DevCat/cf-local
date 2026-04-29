@@ -21,27 +21,93 @@ DESIGN.md §3.1 の **Control Plane** の最初の実装フェーズ。これま
 
 ただし BoltDB 永続化と AWS API 互換は Phase 4-A の責務。Phase 3 は **ファイルベース** で完結させる。
 
-## 着手前相談ポイント (要議論)
+## 着手前決定事項 (kickoff で確定)
 
-実装に入る前に以下 3 点をユーザと合意する:
+A / B / C の 3 点は kickoff 時点でユーザと合意済 (commit `c65e6b1` の議論記録参照)。それぞれ判断理由を記録する。
 
-| # | 相談点 | 仮の方針 |
-|---|---|---|
-| A | 設定ファイルの配置と粒度 (単一 `cf-local.json` / 分割 `distribution.json` + `cache-policies/*.json`) | 分割案で開始。Phase 4-A で BoltDB に統合する際にも一覧性が高い。`./cf-local/` ディレクトリ配下 |
-| B | nginx reload 戦略 (Control Plane と nginx の連携方法) | docker-compose 内で nginx container を `nginx -s reload` 起動できる経路の確認 spike (3-2 と同時)。第一候補は Control Plane → docker socket 経由で `kill -HUP` を nginx PID へ送る形式 |
-| C | `ngx_cache_purge` を dynamic module としてビルドできるか | spike 必須 (3-2 の冒頭)。FRiCKLE 版は `--add-dynamic-module` 対応済みのはずだが nginx 1.27 / alpine ベースで実機確認 |
+### A. 設定ファイル配置 → リソース別ディレクトリ分割
 
-加えて、設定ファイルのスキーマは **AWS SDK Go v2 の `CachePolicyConfig` / `DistributionConfig` を `encoding/json` で marshal した形** を採用 (DESIGN.md §3.3 の決め手と一貫)。最終 commit までに schema sample を `examples/` に置く。
+```
+./cf-local/
+  distributions/
+    main.json          # 1 distribution = 1 ファイル
+    api.json           # 複数 distribution が必要なら追加
+  cache-policies/
+    html.json          # 1 cache policy = 1 ファイル
+    api-with-auth.json
+```
+
+スキーマは **AWS SDK Go v2 の `CachePolicyConfig` / `DistributionConfig` を `encoding/json` で marshal した形** (DESIGN.md §3.3 の決め手と一貫)。
+
+採用理由:
+
+1. CloudFront 本物の API では `aws_cloudfront_distribution` と `aws_cloudfront_cache_policy` は独立リソースで、distribution 側は cache policy を ID 参照する。Terraform でも別 `resource` ブロック。設定ファイルもこの構造を反映するのが「本番の Terraform コードを変えずに動く」(DESIGN.md §1) に最も近い
+2. Phase 4-A で BoltDB の bucket は当然リソース単位 (`distributions` / `cache_policies`)。Phase 3 のディレクトリをそのまま流し込めば変換層不要
+3. Terraform の慣行 (`cloudfront-distribution.tf` / `cache-policies.tf`) と一致し、後続の `examples/terraform-integration/` 説明が 1:1 対応
+
+`distributions/` は最初からディレクトリ化 (実装は「ディレクトリ内全 JSON を順に load」のループでファイル数 1 でも動く)。`origin-request-policies/` は Phase 3 完了条件 (plan.md) に含まれていないため Phase 4-A に持ち越し。
+
+### B. nginx reload 戦略 → 共有 volume + inotify sidecar
+
+```
+[Control Plane container]                     [nginx container]
+  /work/cf-local-conf  ←── named volume ───→  /etc/nginx/conf.d/cf-local/
+
+  Go renderer:                                  entrypoint:
+    write tmpfile + rename (atomic)             1) inotifywait -m -e moved_to (background)
+                                                   → debounce 500ms → nginx -s reload
+                                                2) nginx -g 'daemon off;' (foreground)
+```
+
+採用理由:
+
+1. **追加権限不要**: docker socket mount が必要な経路を避ける (OSS 配布時に `/var/run/docker.sock` mount は地雷、k8s / Podman / colima で動かない)
+2. **DESIGN.md §3.1 のプロセス独立性遵守**: Control Plane と nginx を別 container に保つ (同一 container / 親子プロセス案は連鎖死リスクで却下)
+3. **Phase 4-A への連続性**: AWS API ハンドラが reload を発火する経路でも、最終的に file rename → inotify → reload で同じ仕組み
+4. **Race 回避**: tmpfile + `rename(2)` で原子的更新、inotify は `MOVED_TO` のみ watch
+5. **DESIGN.md §5 のリスク対策**: debounce 500ms を sidecar 側で実装 (連続変更をまとめる)
+
+Phase 3 では **Control Plane 側の設定ファイル watch は実装しない**。起動時 load + `docker compose restart cf-local` で再 load。auto-watch は race を二重に踏むため Phase 4-A 以降に必要が出てから検討。
+
+### C. ngx_cache_purge → `nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化
+
+採用理由:
+
+1. **fork 選定**: 元祖 FRiCKLE 版は maintenance ほぼ停止 (最近の nginx で issue 累積)。`nginx-modules/ngx_cache_purge` は active fork で nginx 1.25+ に追従し dynamic module 対応
+2. **ABI 互換**: `nginx:1.27-alpine` の apk パッケージは `--with-compat` 付きビルド。同一バージョンの nginx source を `--with-compat --add-dynamic-module=...` で別ビルドすれば `.so` が `load_module` で組み込める (nginx 1.11.5+ の compat 機能)
+
+multi-stage Dockerfile 構成 (3-2 で実装):
+
+```
+[builder stage]  FROM nginx:1.27-alpine AS builder
+  - 同一バージョンの nginx source 取得
+  - ngx_cache_purge (nginx-modules fork) 取得
+  - ./configure --with-compat --add-dynamic-module=../ngx_cache_purge && make modules
+  - 出力: ngx_http_cache_purge_module.so
+
+[final stage]    FROM nginx:1.27-alpine
+  - apk add --no-cache nginx-module-njs inotify-tools
+  - COPY --from=builder /.../ngx_http_cache_purge_module.so /etc/nginx/modules/
+  - nginx.conf で load_module
+```
+
+**Spike 必須項目** (3-2 冒頭、推測で進めない原則 CLAUDE.md §3):
+
+1. `--with-compat --add-dynamic-module` で `.so` が生成できる
+2. apk nginx に `load_module` で読み込め、version mismatch エラーが出ない
+3. `proxy_cache_purge` が Phase 1〜2 の outer/inner location 構造で動作する (発火位置を outer/inner どちらにすべきかも spike で決定)
+
+**Plan B** (spike 失敗時): `nginx:1.27` (debian) からの完全 source build に切替。alpine の image size 軽量さを諦め、debian ベースで image を再構築。Phase 3 では invalidation が必須機能なので妥協する。
 
 ## スコープ
 
 | # | 項目 | 主対象ファイル | 備考 |
 |---|---|---|---|
 | 3-1 | 設定ファイルスキーマ確定 (AWS SDK 型を JSON marshal した形) | (設計のみ → `docs/config-schema.md`) | `CachePolicyConfig` / `DistributionConfig` のうち Phase 3 で扱うフィールドの確定。Lambda 系・WAF 系は無視 |
-| 3-2 | nginx Dockerfile を multi-stage 化、`ngx_cache_purge` を dynamic module として組み込み + 動作 spike | `nginx/Dockerfile`, `nginx/spike/` | Phase 0 の DESIGN コメント (`Dockerfile:5`) の伏線回収。alpine の `nginx:1.27-alpine` ベースで apk 取得した nginx と ABI 一致するビルドが必要 |
+| 3-2 | nginx Dockerfile を multi-stage 化、`nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化 + spike | `nginx/Dockerfile`, `nginx/spike/` | Phase 0 の DESIGN コメント (`Dockerfile:5`) の伏線回収。spike 失敗時は debian source build (Plan B) に切替 |
 | 3-3 | Go プロジェクト基盤 (`cmd/cf-local/main.go`) + 設定 loader | `cmd/cf-local/main.go`, `internal/config/...` | TDD 必須 (CLAUDE.md §4)。malformed JSON / 必須欠落 / 未知フィールド は fail-fast |
 | 3-4 | `nginx.conf` + `nginx/njs/policies.json` の生成器 | `internal/nginx/...`, `internal/managed/...` | Phase 1〜2 の現行 `nginx.conf` を template 化。outer/inner location ペア (Phase 2 §2-2) を policy 数だけ展開 |
-| 3-5 | nginx reload トリガー (debounce 500ms — DESIGN.md §5 のリスク対策) | `internal/nginx/reloader.go` | B の spike 結果に依存 |
+| 3-5 | nginx reload 経路: Control Plane 側 atomic rename + nginx container 内 inotify sidecar (`inotify-tools` + 500ms debounce shell loop) | `internal/nginx/renderer.go` (atomic write 担当), `nginx/Dockerfile` (sidecar entrypoint), `nginx/scripts/reload-watcher.sh` | DESIGN.md §5 リスク対策。共有 named volume で conf 配信 |
 | 3-6 | `POST /_invalidate` ハンドラ + `ngx_cache_purge` 連携 | `internal/api/invalidation/...`, `nginx.conf` | 完全一致のみ。CFAPI 形式互換ではなく cf-local 独自 path (Phase 4-B で `CreateInvalidation` に格上げ) |
 | 3-7 | α 統合テスト追加 (config → generated nginx.conf → docker up → invalidate → MISS) | `tests/integration/invalidation_test.go` | 設定ファイル経由の起動が初なので smoke test 厚め |
 | 3-8 | examples/ 拡充 (microCMS webhook 連携サンプル含む) + `docs/config-schema.md` + CMS 連携ドキュメント | `examples/`, `docs/` | M2 達成のためのドキュメント |
@@ -64,18 +130,20 @@ DESIGN.md §3.1 の **Control Plane** の最初の実装フェーズ。これま
 
 ```
 [user-edited config files]
-    └─ ./cf-local/distribution.json
-    └─ ./cf-local/cache-policies/*.json
+    ./cf-local/distributions/*.json
+    ./cf-local/cache-policies/*.json
               │
-              ▼ load (startup) + watch (file change)
-[Go Control Plane] (cmd/cf-local)
-    │
-    ├─ render nginx.conf      → /etc/nginx/conf.d/cf-local.conf
-    ├─ render policies.json   → /etc/nginx/njs/policies.json
-    └─ trigger nginx reload   (debounce 500ms)
-              │
-              ▼
-[Data Plane] nginx + njs (Phase 0〜2 の延長)
+              ▼ load (startup のみ; watch なし)
+[Go Control Plane] (cmd/cf-local)        named volume: cf-local-conf
+    │                                            │
+    ├─ render nginx.conf      ────atomic rename──▶ /etc/nginx/conf.d/cf-local/cf-local.conf
+    └─ render policies.json   ────atomic rename──▶ /etc/nginx/conf.d/cf-local/policies.json
+                                                 │
+                                                 ▼ inotify (MOVED_TO) + debounce 500ms
+                                          [nginx container sidecar]
+                                                 │
+                                                 ▼ nginx -s reload
+                                          [Data Plane] nginx + njs (Phase 0〜2 の延長)
 ```
 
 Phase 3 では Control Plane の HTTP listener は **`POST /_invalidate` のみ**。AWS API 互換 (CreateDistribution 等) は Phase 4-A に持ち越す。
@@ -149,10 +217,10 @@ nginx/spike/                      # 3-2 / 3-5 spike 用 (一時)
 
 ## リスク・未決事項
 
-- **ngx_cache_purge dynamic module ビルドの ABI 整合**: 公式 `nginx:1.27-alpine` パッケージとビルド済み module の互換性が取れるか。3-2 spike で確認。NG の場合 → multi-stage で `nginx:1.27` を source build する重い経路 (Phase 0 では避けた選択肢) になる
-- **nginx reload 経路**: docker-compose 内で Control Plane container から nginx container にシグナルを送る一般解がない。docker socket mount は OSS として配布する際に推奨しがたい。代替: nginx container に SIGHUP listener (inotify on conf 変更) を仕込む形を検討
-- **設定ファイル watch vs 起動時 load のみ**: ローカル開発の体験としては watch + auto reload が望ましいが、ファイル更新中の中間状態を読む race を踏みうる。Phase 3 では **起動時 load + `POST /_reload` 手動トリガー** の最小形に留め、watch は Phase 4-A に持ち越し可
+- **ngx_cache_purge dynamic module ビルドの ABI 整合 (C で部分対応済)**: `nginx-modules/ngx_cache_purge` + `--with-compat` で dynamic module 化を採用済 (本ドキュメント「C」セクション)。ただし spike (3-2 冒頭) で実機検証必須。NG の場合は debian source build (Plan B) に切替
+- **inotify sidecar の reload 競合**: 連続変更時に reload 中に次の `MOVED_TO` が来た場合の挙動。debounce 500ms で大半は吸収されるが、reload 完了より早く次が来た場合の test を 3-5 で追加
 - **microCMS webhook 連携サンプル**: 実 webhook 仕様に合わせるか、generic webhook 形にするかは 3-8 着手時にユーザーと最終確認
+- **複数 distribution の routing**: 1 nginx で複数 distribution を扱う場合の経路分け方針 (Host header / port / path prefix のいずれか)。DESIGN.md にも記述なし。3-1 のスキーマ確定時にユーザーと相談
 
 ## 参考
 
