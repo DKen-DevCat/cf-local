@@ -24,7 +24,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 |---|---|---|
 | `phase-0` | 完了 | nginx前段配置とPoC |
 | `phase-1` | 完了 | cache key動的計算 |
-| `phase-2` | 未着手 | TTL正確化 |
+| `phase-2` | 完了 | TTL正確化 |
 | `phase-3` | 未着手 | Invalidation API + 設定ファイル方式 |
 | `phase-4a` | 未着手 | Terraform対応・最小 |
 | `phase-4b` | 未着手 | Invalidation API互換 |
@@ -66,30 +66,26 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-2: TTL正確化
+## phase-2: TTL正確化 (完了 2026-04-30)
 
-**到達状態**: CloudFrontと同じTTL決定ロジックをnjsで実装する。
-
-**ゴールイメージ**:
-
-- `Cache-Control` ヘッダーを正確にパースできる
-- CFのTTL決定3ケース（DESIGN.md参照）が動作する
-- `X-Accel-Expires` でTTLを動的に注入できる
+**到達状態 (実機検証済み)**: CloudFront 互換の TTL 決定ロジック (case 1/2/3 + s-maxage 優先 + clamp) を njs で実装し、2-hop パターン経由で `X-Accel-Expires` を注入することで proxy_cache の TTL を動的に駆動できる状態になった。`policies.json` に `min_ttl` / `max_ttl` / `default_ttl` を追加。`Cache-Control: max-age=2` origin → 3 秒経過後 EXPIRED を α テストで実機検証。
 
 **完了条件**:
 
-- [ ] Cache-Controlパーサー（njs）
-- [ ] TTL決定ロジック（njs、3ケース）
-- [ ] nginx.confでのX-Accel-Expires制御
-- [ ] `Cache-Control: no-store` + `MinTTL > 0` の挙動検証
-- [ ] テーブル駆動テスト（モックoriginで各パターン検証）
-- [ ] ドキュメント整備
+- [x] Cache-Controlパーサー（njs）— `nginx/njs/cache_control.js` (5 directive 対応 / β 16 PASS)
+- [x] TTL決定ロジック（njs、3ケース）— `nginx/njs/ttl.js` (case 1/2/3 + s-maxage + clamp / β 22 PASS)
+- [x] nginx.conf での `X-Accel-Expires` 制御 — 2-hop パターン (outer + inner) + `js_header_filter ttl.computeAndInject`
+- [x] `Cache-Control: no-store` + `MinTTL > 0` の挙動検証 — β TT06/07/08 + α AT03 で確認
+- [x] テーブル駆動テスト — β 計 38 (cache_control 16 + ttl 22) + α 計 11 (TTL 7 + cache_key 4) PASS
+- [x] ドキュメント整備 — `docs/ttl.md` 新規 + `docs/cache-policy.md` schema 拡張 + `docs/limitations.md` 補強
 
-**着手前にユーザーと相談する点**:
+**着手前相談の結果**:
 
-- `Cache-Control` パースの厳密さ（s-maxage、no-cacheの扱い）
-- `X-Accel-Expires` の挙動確認
-- TTL=0のときキャッシュしないようにする実装手段
+- `Cache-Control` パースは 5 directive (`max-age` / `s-maxage` / `no-store` / `no-cache` / `private`) のみ最小実装。`public` 等は読み捨て
+- `X-Accel-Expires` の TTL=0 挙動は 2-1 spike で実機確認 → 1-hop 不可、2-hop パターン採用
+- TTL=0 でキャッシュしない手段は `X-Accel-Expires: 0` で実現 (proxy_no_cache 経路は不要)
+
+詳細仕様および完了時メモ: `.claude/design/phase-2-ttl-2026-04-29.md`
 
 ---
 
@@ -120,6 +116,17 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - 設定ファイルのスキーマ（CFのAPI形式そのままか、簡略化するか）
 - nginx.conf生成スクリプトをGoで書くかシェル/Nodeで書くか
 - ngx_cache_purge or alternative の選定
+
+**Phase 2 review からの繰越し** (本 phase の kickoff design で扱う):
+
+- **REV-5** AT02 sleep の余裕確保 (`tests/integration/ttl_alpha_test.go:60-74`): 3 秒 sleep が CI 遅延で逆転するリスク。sleep 値を 3.5s に増やす or 各リクエスト wall clock を log 出力。Phase 3 でテスト構造を見直す際に併せて。
+- **REV-7** `policies.json` schema validation: 負値 / `min_ttl > max_ttl` / 非数値 が silent に通る (`cache_key.js:181-188` の `getPolicyTtl`)。本 phase では `getPolicyTtl` 内で `min_ttl > max_ttl` を検出 → `r.error` で warn + 片方を default 値に倒す形で対応 (Phase 4-A の terraform 互換時に強制 validation へ昇格)。
+- **REV-10** `ttl.computeAndInject` error path observability (`ttl.js:46-48`): 毎リクエスト error log の洪水可能性。`X-Cf-Ttl-Error: <reason>` sentinel header を出して outer 側で `proxy_no_cache $cf_ttl_error;` で no-cache する経路を確立。これで REV-2 の inner failure 時の policy 違反経路 (現在は `proxy_cache_valid 200 86400s` セーフティネットに退化) が完全に閉じる。
+- **REV-3** policy 別 α テスト: `_test-ttl-clamp` policy が α では検証不能 (default policy 固定)。本 phase の多 policy 対応で複数 outer/inner location が動的生成されるようになったら、`_test-ttl-clamp` を割り当てた location を α に追加して clamp が proxy_cache に届くことを実機検証。
+- **REV-9** testserver malformed query 検出 (`tests/integration/testserver/server.go:54-58`): `?status=abc` を silent 200 fallback。テスト ergonomics 改善で 400 Bad Request を返す形に。
+- **REV-14** `max-age=` (値空) drop の test 無 (`cache_control.js`): RFC 9111 違反値の境界ケース 1 件追加。
+
+詳細: `.claude/design/phase-2-ttl-2026-04-29.md` の Phase 完了時メモ + commit `440ffc8` (pro/con レビュー記録)。
 
 ---
 
@@ -154,6 +161,13 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - AWS SDK for Go の型をそのまま使うか、ラッパーを作るか
 - XMLマーシャリングでハマる点の想定
 - どのTerraform versionで動作確認するか
+
+**Phase 2 review からの繰越し**:
+
+- **REV-1** inner location の loopback 制限を unix socket に置換: 現状 `allow 127.0.0.1; deny all;` (`nginx.conf:107-119`) は同ホスト 127.0.0.1 経由でバイパス可能。Phase 4-A で control plane が同居するタイミングで `upstream self { server unix:/run/cf-local-inner.sock; }` に切り替えて、`listen unix:/run/cf-local-inner.sock;` の inner-only server block を分離する (Phase 2 design doc 2-2 で「unix socket 化までの暫定」と記載済)。
+- **REV-11** 2-hop TCP self-loop の高並列検証: `upstream self` は keepalive 未設定で各リクエスト TCP connect が立つ。`worker_connections 1024` のうち outer + inner で実質半減。Phase 4-A で stress test (例: vegeta 1000 RPS / 1 分) を入れて connection 枯渇 / accept queue 飽和を観測。unix socket 化 (REV-1) 後の再計測で確定。
+
+詳細: commit `440ffc8` (Phase 2 pro/con レビュー記録)。
 
 ---
 
