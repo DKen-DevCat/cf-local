@@ -11,28 +11,33 @@
 //       `location /` and asserts on `X-Cache-Status` / `X-Cache-Key`. Verifies
 //       that the njs key actually drives proxy_cache's HIT/MISS decisions and
 //       that the Vary fix from task 1-5 keeps "same normalized AE / different
-//       raw AE" in the same slot.
+//       raw AE" in the same slot. Phase 2-6 wires α through testserver (mock
+//       origin) so cacheability is no longer at the mercy of whatever happens
+//       to be running on host port 3000.
 //
 // Prerequisites:
 //   - `docker compose up -d` has been run from the repo root (so nginx + njs
 //     are listening on :8080)
-//   - An origin is reachable at host.docker.internal:3000 returning 200 for
-//     /favicon.ico (the integration tests use it as the cacheable upstream).
-//     Phase 0's example origin (Next.js) satisfies this; any tiny HTTP server
-//     that 200s on /favicon.ico will do.
+//   - Host port 3000 is free. TestMain binds the testserver mock origin
+//     there; nginx reaches it via `host.docker.internal:3000` (works on
+//     macOS by default and on Linux via the `extra_hosts: host-gateway`
+//     entry in docker-compose.yml). Stop any standalone origin (e.g. the
+//     examples/nextjs-basic dev server) before running the suite.
 //
 // Env vars:
 //   - CF_LOCAL_BASE: override the base URL (default http://localhost:8080)
-//   - CF_LOCAL_REQUIRE_ALPHA=1: when set, the α (proxy_cache HIT/MISS) tests
-//     FAIL instead of t.Skip when the origin isn't serving /favicon.ico.
-//     Set this in CI so silent "16/20 PASS, 4 SKIP" cannot pass for green.
-//     A proper test-controlled origin will land in task 2-6.
+//   - CF_LOCAL_MOCK_ORIGIN=skip: do not start the mock origin in TestMain;
+//     point at an external origin running on :3000. Rare; useful for
+//     ad-hoc browser debugging, not for CI.
+//   - CF_LOCAL_MOCK_ORIGIN_ADDR=:N: bind the mock on a different port
+//     (and update nginx upstream to match before running). Default :3000.
 package integration
 
 import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -254,51 +259,35 @@ func TestComputeKey_TableDriven(t *testing.T) {
 
 // --- (α) end-to-end via proxy_cache ----------------------------------------
 
-// faviconPath is what we use to exercise the real proxy_cache path. It needs
-// to be cacheable on the upstream (status in `proxy_cache_valid` and not
-// passed through). /favicon.ico is the conventional choice; tests will be
-// skipped (with a clear message) if origin doesn't serve a 2xx for it.
-const faviconPath = "/favicon.ico"
+// alphaPath is the path α tests issue through the 2-hop pipeline. mock
+// origin (testserver) ignores the path and serves whatever Cache-Control
+// we ask it to via the `cc` query, so any unique path works. We keep it
+// stable per run (PID-suffixed below via the buster) so concurrent suites
+// don't share cache slots.
+const alphaPath = "/_cache_key_alpha"
 
 func TestEndToEnd_HitMissAndKey(t *testing.T) {
 	requireUp(t)
-	if !originServesFavicon(t) {
-		msg := fmt.Sprintf("origin does not return 2xx for %s — start an upstream that does (e.g. Next.js examples/nextjs-basic) and re-run", faviconPath)
-		if os.Getenv("CF_LOCAL_REQUIRE_ALPHA") == "1" {
-			t.Fatalf("%s. (CF_LOCAL_REQUIRE_ALPHA=1 set, refusing to skip)", msg)
-		}
-		t.Skipf("%s. (set CF_LOCAL_REQUIRE_ALPHA=1 to fail instead of skip)", msg)
-	}
-	// Phase 2-5: cache_key α tests assume the response is cacheable through
-	// the 2-hop pipeline. Phase 2 correctly refuses to cache responses with
-	// `Cache-Control: max-age=0` / `no-store` / `no-cache` / `private`, so
-	// origins like Next.js dev (which sends max-age=0 for /favicon.ico) make
-	// HIT/MISS partitioning unobservable here. A controlled mock origin is
-	// the proper fix and lands in task 2-6 — until then, skip with an
-	// actionable message instead of silently flipping every assertion to
-	// MISS.
-	if !originCachesFavicon(t) {
-		msg := fmt.Sprintf("origin returns a non-cacheable Cache-Control for %s under Phase 2 — point cf-local at an origin that sends a positive max-age (or wait for task 2-6 mock origin) and re-run", faviconPath)
-		if os.Getenv("CF_LOCAL_REQUIRE_ALPHA") == "1" {
-			t.Fatalf("%s. (CF_LOCAL_REQUIRE_ALPHA=1 set, refusing to skip)", msg)
-		}
-		t.Skipf("%s. (set CF_LOCAL_REQUIRE_ALPHA=1 to fail instead of skip)", msg)
-	}
-	// Bouncing the cache volume mid-test would require docker access; instead
-	// we use a unique cache-busting query string per test run so we always
-	// observe a clean MISS → HIT lifecycle. The default policy has empty
-	// query whitelist, so the buster doesn't enter the cache key (we still
-	// assert on key stability below).
-	buster := fmt.Sprintf("?cf_test_run=%d", os.Getpid())
+	// Pin upstream Cache-Control to a TTL that comfortably outlives the
+	// test wall clock (5 min). With Phase 2-5 in effect, ttl.compute reads
+	// this and writes X-Accel-Expires=300 on the inner hop, so the outer
+	// proxy_cache caches each AE-partitioned slot for the full duration of
+	// this suite. Without it the suite would fall into the same silent-skip
+	// trap as before 2-6 (Next.js dev sends max-age=0).
+	cc := url.QueryEscape("max-age=300")
+	// Default policy's query whitelist is empty, so neither cf_test_run nor
+	// cc enters the cache_key — they're free-form busters/knobs. PID keeps
+	// the slot fresh across re-runs without needing to flush the volume.
+	buster := fmt.Sprintf("?cf_test_run=%d&cc=%s", os.Getpid(), cc)
 
 	t.Run("warm MISS then HIT same AE", func(t *testing.T) {
 		// First request warms the cache. Second request must HIT and have the
 		// same X-Cache-Key.
-		first := head(t, faviconPath+buster, map[string]string{"Accept-Encoding": "gzip"})
+		first := head(t, alphaPath+buster, map[string]string{"Accept-Encoding": "gzip"})
 		if first.status != http.StatusOK {
 			t.Fatalf("warm: status=%d X-Cache-Status=%s", first.status, first.cacheStatus)
 		}
-		second := head(t, faviconPath+buster, map[string]string{"Accept-Encoding": "gzip"})
+		second := head(t, alphaPath+buster, map[string]string{"Accept-Encoding": "gzip"})
 		if second.cacheStatus != "HIT" {
 			t.Fatalf("expected HIT on round 2, got %s (key1=%s key2=%s)",
 				second.cacheStatus, first.cacheKey, second.cacheKey)
@@ -310,9 +299,9 @@ func TestEndToEnd_HitMissAndKey(t *testing.T) {
 		// 1-5 verification: gzip vs gzip,deflate normalize to the same key.
 		// Without proxy_ignore_headers Vary, round 2 would MISS even with the
 		// same X-Cache-Key.
-		_ = head(t, faviconPath+buster+"&vary=t", map[string]string{"Accept-Encoding": "gzip"})
-		gzip := head(t, faviconPath+buster+"&vary=t", map[string]string{"Accept-Encoding": "gzip"})
-		gzipDeflate := head(t, faviconPath+buster+"&vary=t", map[string]string{"Accept-Encoding": "gzip, deflate"})
+		_ = head(t, alphaPath+buster+"&vary=t", map[string]string{"Accept-Encoding": "gzip"})
+		gzip := head(t, alphaPath+buster+"&vary=t", map[string]string{"Accept-Encoding": "gzip"})
+		gzipDeflate := head(t, alphaPath+buster+"&vary=t", map[string]string{"Accept-Encoding": "gzip, deflate"})
 		eq(t, gzip.cacheKey, gzipDeflate.cacheKey)
 		if gzipDeflate.cacheStatus != "HIT" {
 			t.Fatalf("Vary fix regressed: same key %s but status=%s", gzipDeflate.cacheKey, gzipDeflate.cacheStatus)
@@ -320,8 +309,8 @@ func TestEndToEnd_HitMissAndKey(t *testing.T) {
 	})
 
 	t.Run("different normalized AE → different slots", func(t *testing.T) {
-		gzip := head(t, faviconPath+buster+"&aedif=1", map[string]string{"Accept-Encoding": "gzip"})
-		br := head(t, faviconPath+buster+"&aedif=1", map[string]string{"Accept-Encoding": "br"})
+		gzip := head(t, alphaPath+buster+"&aedif=1", map[string]string{"Accept-Encoding": "gzip"})
+		br := head(t, alphaPath+buster+"&aedif=1", map[string]string{"Accept-Encoding": "br"})
 		neq(t, gzip.cacheKey, br.cacheKey)
 		// br MISSes the first time and would HIT on a second request, but we
 		// don't repeat to keep this case focused on key separation.
@@ -329,14 +318,14 @@ func TestEndToEnd_HitMissAndKey(t *testing.T) {
 
 	t.Run("X-Cache-Key matches β endpoint output for the same logical inputs", func(t *testing.T) {
 		// β computes the key against /_cache_key_test/<path> — i.e. URI is
-		// /_cache_key_test/favicon.ico, NOT /favicon.ico — so we expect the
-		// hashes to differ. What we *can* assert is that different AEs through
-		// the production path follow the same partition rule as β (br vs gzip
-		// produce different keys in both layers).
-		alphaGzip := head(t, faviconPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "gzip"}).cacheKey
-		alphaBr := head(t, faviconPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "br"}).cacheKey
-		betaGzip := computeKey(t, "default", faviconPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "gzip"})
-		betaBr := computeKey(t, "default", faviconPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "br"})
+		// /_cache_key_test/_cache_key_alpha, NOT /_cache_key_alpha — so the
+		// hashes differ between layers. What we assert is that different
+		// AEs through the production path follow the same partition rule
+		// as β (br vs gzip produce different keys in both layers).
+		alphaGzip := head(t, alphaPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "gzip"}).cacheKey
+		alphaBr := head(t, alphaPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "br"}).cacheKey
+		betaGzip := computeKey(t, "default", alphaPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "gzip"})
+		betaBr := computeKey(t, "default", alphaPath+buster+"&xkey=1", map[string]string{"Accept-Encoding": "br"})
 		// The key SETS are partitioned the same way under both layers.
 		neq(t, alphaGzip, alphaBr)
 		neq(t, betaGzip, betaBr)
@@ -361,28 +350,6 @@ func head(t *testing.T, path string, headers map[string]string) cacheResp {
 		cacheStatus: resp.Header.Get("X-Cache-Status"),
 		cacheKey:    resp.Header.Get("X-Cache-Key"),
 	}
-}
-
-func originServesFavicon(t *testing.T) bool {
-	t.Helper()
-	r := head(t, faviconPath+"?cf_test_origin_check=1", map[string]string{"Accept-Encoding": "gzip"})
-	return r.status >= 200 && r.status < 300
-}
-
-// originCachesFavicon probes whether origin's response for faviconPath is
-// cacheable through the running pipeline. Warms once with a probe-specific
-// query buster (kept distinct from the buster the actual sub-tests use to
-// avoid priming their slot) and re-requests; only round 2 == HIT counts as
-// "cacheable". Used by TestEndToEnd_HitMissAndKey to skip cleanly when origin
-// signals no-cache (Next.js dev's max-age=0 for favicon.ico is the common
-// case under Phase 2 — see comment at the call site).
-func originCachesFavicon(t *testing.T) bool {
-	t.Helper()
-	probe := fmt.Sprintf("?cf_test_cacheability_probe=%d", os.Getpid())
-	headers := map[string]string{"Accept-Encoding": "gzip"}
-	_ = head(t, faviconPath+probe, headers)
-	r := head(t, faviconPath+probe, headers)
-	return r.cacheStatus == "HIT"
 }
 
 // --- assertion helpers ------------------------------------------------------
