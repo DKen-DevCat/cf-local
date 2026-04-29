@@ -14,8 +14,32 @@ import fs from 'fs';
 
 const POLICIES_PATH = '/etc/nginx/njs/policies.json';
 
-// 各 worker で 1 度だけパースして閉じ込める。
-const POLICIES = JSON.parse(fs.readFileSync(POLICIES_PATH)).policies;
+// policies.json が壊れていたり消えていたりしても worker を起動継続させるための fallback。
+// 全 whitelist 空 / AE 正規化 ON のため、cache key は URI + method + AE のみで決まる。
+const SAFE_DEFAULT = {
+    headers:       { whitelist: [] },
+    cookies:       { whitelist: [] },
+    query_strings: { whitelist: [] },
+    accept_encoding_normalize: true,
+};
+
+// 各 worker で 1 度だけパース。失敗時は SAFE_DEFAULT のみで起動継続し、
+// 全リクエストが同一 cache slot に潰れる事故を回避する (review concern #4)。
+// 起動時のエラーは _loadError に保存して、最初のリクエスト時に r.log 経由で
+// 出す (njs module init 時点では nginx error log API が安定して使えない)。
+let _loadError = null;
+const POLICIES = (function () {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(POLICIES_PATH));
+        if (!parsed || typeof parsed.policies !== 'object' || parsed.policies === null) {
+            throw new Error('policies.json: top-level "policies" object missing or not an object');
+        }
+        return parsed.policies;
+    } catch (e) {
+        _loadError = String(e.message || e);
+        return { default: SAFE_DEFAULT };
+    }
+})();
 
 // material 組み立てフォーマットのバージョン。組み立て規則を変えたらここを bump して
 // 既存キャッシュを自然失効させる。
@@ -146,6 +170,11 @@ function getPolicy(id) {
 // js_set entry. nginx.conf 側で `set $cf_policy_id "<id>";` を location に置けば
 // その policy で計算する。1-4 で / location に配線する。
 function forNginx(r) {
+    // 起動時の policies.json load 失敗を最初のリクエスト時に 1 回だけ error log に出す。
+    if (_loadError !== null) {
+        r.error('[cache_key] policies.json load failed at startup: ' + _loadError + ' — using SAFE_DEFAULT only');
+        _loadError = null;
+    }
     try {
         const id = r.variables.cf_policy_id || 'default';
         const policy = getPolicy(id);
