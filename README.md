@@ -73,7 +73,7 @@ docker compose up -d
 
 | Phase | 状態 | 内容 |
 |---|---|---|
-| 0 | 未着手 | nginx前段配置とPoC |
+| 0 | 進行中 | nginx前段配置とPoC |
 | 1 | 未着手 | cache key動的計算 |
 | 2 | 未着手 | TTL正確化 |
 | 3 | 未着手 | Invalidation API + 設定ファイル方式 |
