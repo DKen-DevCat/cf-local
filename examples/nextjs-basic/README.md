@@ -44,13 +44,13 @@ curl -I http://localhost:8080/
 # X-Cache-Status: HIT
 ```
 
-## iOS実機からアクセスする
+## 実機（任意）からアクセスする
 
-進行中のiOSバグの調査が目的の場合、実機からcf-localにアクセスする必要がある。
+iPhone / iPad 等の実機からも cf-local にアクセスしたい場合の手順。Phase 0 では必須ではない。
 
-### 同一WiFi接続の場合
+### 同一 WiFi 接続の場合
 
-開発機のローカルIPを確認:
+開発機のローカル IP を確認:
 
 ```bash
 # macOS
@@ -58,20 +58,20 @@ ipconfig getifaddr en0
 # 例: 192.168.1.10
 ```
 
-iPhoneから `http://192.168.1.10:8080` にアクセス。
+実機ブラウザから `http://192.168.1.10:8080` にアクセス。
 
-### Tailscale経由の場合
+### Tailscale 経由の場合
 
-開発機のTailscale IPを使う:
+開発機の Tailscale IP を使う:
 
 ```bash
 tailscale ip -4
 # 例: 100.64.0.1
 ```
 
-iPhoneから `http://100.64.0.1:8080` にアクセス（事前にiPhoneにTailscaleアプリを入れて同じtailnetに参加）。
+実機から `http://100.64.0.1:8080` にアクセス（事前に実機に Tailscale アプリを入れて同じ tailnet に参加）。
 
 ## 既知の問題
 
-- Next.jsの`Cache-Control`ヘッダーがcf-localで無視される（Phase 0時点では意図的）
-- Phase 2でCloudFront同等のTTL決定ロジックに置き換わる予定
+- Next.js の `Cache-Control` ヘッダーが cf-local で無視される（Phase 0 時点では意図的）
+- Phase 2 で CloudFront 同等の TTL 決定ロジックに置き換わる予定
