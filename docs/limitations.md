@@ -20,8 +20,10 @@ cf-localと本物のCloudFrontとの違い。意図的に再現していない�
 
 ### Cache Key計算
 
-- Accept-Encoding の正規化アルゴリズムが本物と完全一致するかは未検証
-- 一部のヘッダー名で大文字小文字の扱いが異なる可能性
+- Accept-Encoding の正規化は `br > gzip > identity` の優先順で 1 つに畳む。CloudFront の `EnableAcceptEncoding{Gzip,Brotli}` 相当だが、各クライアントが送る生の `Accept-Encoding` 文字列レベルでの完全互換は未検証
+- 1 location につき 1 cache policy を `set $cf_policy_id "<id>";` で固定する方式 (Phase 1)。location ↔ policy の動的マッピングは Phase 3 以降
+- `policies.json` は手書き。CloudFront の `CreateCachePolicy` API 経由での管理は Phase 4-A 以降
+- `headers.whitelist` などは `whitelist` のみ対応。CloudFront の `allViewer` / `allExcept` は未対応 (Phase 3 以降検討)
 
 ### TTL決定
 

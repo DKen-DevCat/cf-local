@@ -38,11 +38,19 @@ open http://localhost:8080
 # 1回目: MISS
 curl -I http://localhost:8080/
 # X-Cache-Status: MISS
+# X-Cache-Key: <64文字 hex>
 
-# 2回目: HIT  
+# 2回目: HIT (同じ X-Cache-Key)
 curl -I http://localhost:8080/
 # X-Cache-Status: HIT
+# X-Cache-Key: <同上>
+
+# Accept-Encoding を変えると別エントリ (default policy が AE 正規化を有効化しているため)
+curl -I http://localhost:8080/ -H "Accept-Encoding: br"
+# X-Cache-Status: MISS, X-Cache-Key は br 用に変わる
 ```
+
+cache key の組み立てルールと、whitelist による per-policy 制御は [`docs/cache-policy.md`](../../docs/cache-policy.md) を参照。
 
 ## 実機（任意）からアクセスする
 
@@ -73,5 +81,5 @@ tailscale ip -4
 
 ## 既知の問題
 
-- Next.js の `Cache-Control` ヘッダーが cf-local で無視される（Phase 0 時点では意図的）
-- Phase 2 で CloudFront 同等の TTL 決定ロジックに置き換わる予定
+- Next.js の `Cache-Control` ヘッダーが cf-local で無視される（Phase 0 時点では意図的）。Phase 2 で CloudFront 同等の TTL 決定ロジックに置き換わる予定
+- Next.js の `Vary: rsc, …` は Phase 1 以降 nginx 側で無視される。RSC 別エントリにしたい場合は cache policy の `headers.whitelist` に `rsc` を追加する。詳細は [`docs/cache-policy.md`](../../docs/cache-policy.md)
