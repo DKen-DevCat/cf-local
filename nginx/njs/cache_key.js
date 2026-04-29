@@ -167,6 +167,25 @@ function getPolicy(id) {
     return POLICIES[id || 'default'] || POLICIES['default'] || null;
 }
 
+// CloudFront `CachePolicy` 互換のデフォルト値。policies.json に該当フィールドが
+// 欠落していても `ttl.compute` が落ちないよう、ここで埋める。本フェーズで
+// policies.json は全 policy に explicit に書く方針 (design doc 2-2) だが、
+// 後続フェーズで Go テンプレ生成に切り替わったときの保険。
+const DEFAULT_TTL_CONFIG = {
+    min_ttl:     0,
+    max_ttl:     31536000,   // 1 year (CF default MaxTTL)
+    default_ttl: 86400,      // 1 day  (CF default DefaultTTL)
+};
+
+function getPolicyTtl(policy) {
+    if (!policy) return DEFAULT_TTL_CONFIG;
+    return {
+        min_ttl:     typeof policy.min_ttl     === 'number' ? policy.min_ttl     : DEFAULT_TTL_CONFIG.min_ttl,
+        max_ttl:     typeof policy.max_ttl     === 'number' ? policy.max_ttl     : DEFAULT_TTL_CONFIG.max_ttl,
+        default_ttl: typeof policy.default_ttl === 'number' ? policy.default_ttl : DEFAULT_TTL_CONFIG.default_ttl,
+    };
+}
+
 // js_set entry. nginx.conf 側で `set $cf_policy_id "<id>";` を location に置けば
 // その policy で計算する。1-4 で / location に配線する。
 function forNginx(r) {
@@ -193,4 +212,4 @@ function forNginx(r) {
     }
 }
 
-export default { compute, normalizeAcceptEncoding, parseCookieHeader, getPolicy, forNginx };
+export default { compute, normalizeAcceptEncoding, parseCookieHeader, getPolicy, getPolicyTtl, forNginx };
