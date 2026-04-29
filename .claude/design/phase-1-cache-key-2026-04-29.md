@@ -115,10 +115,29 @@ a
 - `accept_encoding_normalize=false` の policy は `a\n` の後ろが空文字（フォーマット不変）
 - `v1` は format version。組み立て規則を変えたら bump して既存キャッシュを自然失効
 
-### テストハーネスの分割（1-1 の結論待ち）
+### テストハーネス確定 (1-6)
 
-- **(α) Go 外形テスト**: `tests/integration/cache_key_test.go`。`go test` から docker-compose 起動済みの nginx に対して HTTP リクエストを投げ、`X-Cache-Status` と（必要なら debug header 経由で漏らした）`X-Cache-Key` の同値性を検証
-- **(β) njs 単体テスト**: njs ロジックの table-driven test。1-1 で挙動を確認して具体策決定（候補: nginx + njs を CI で短命起動 / `r.subrequest` で expose したテスト用 endpoint / njs 互換の node ランタイム）
+**Go 1 本に集約。** `tests/integration/cache_key_test.go` (package `integration`) で β と α の両方を担う。リポジトリルート `go.mod` (`module github.com/DKen-DevCat/cf-local`).
+
+- **(β) cache_key 単体相当**: `TestComputeKey_TableDriven` 16 ケース。`/_cache_key_test` (cache_key.test.js の `js_content`) を `X-Test-Policy` ヘッダ付きで叩いて返ってきた hex sha256 を assert。determinism / non-WL ignored / case-sensitivity / multi-value / Accept-Encoding 正規化 / hash format をカバー。
+- **(α) E2E via proxy_cache**: `TestEndToEnd_HitMissAndKey` 4 ケース。`/favicon.ico?cf_test_run=<pid>&...` を叩いて `X-Cache-Status` (HIT/MISS) と `X-Cache-Key` を assert。
+  - warm MISS → 同じ AE で HIT
+  - **Vary 修正の永続検証**: 同じ normalized AE / 異なる raw AE で同じ slot に HIT
+  - 異なる normalized AE で別 slot
+  - α と β の key 分離規則が一致することの確認
+
+#### 前提
+
+- `docker compose up -d` 済み（テスト先頭で `requireUp` が health check）
+- (α) のみ origin が `/favicon.ico` で 2xx を返す必要あり (Phase 0 の Next.js 例で OK)。未供給時は `t.Skip` で明示
+
+#### 既知の落とし穴 (Go 側)
+
+- Go の `http.DefaultTransport` は Accept-Encoding 未指定時に自動で `gzip` を足す。`Header.Set("Accept-Encoding", "")` でも「未指定」と判定されて auto-add されるため、AE 正規化テストが silently 壊れる。専用 `httpClient` で `DisableCompression: true` を入れて回避済み
+
+#### 1-3 の bash 版 (`tests/cache_key_test.sh`) は 1-6 で削除
+
+bash 版は 1-3 TDD のために最速で書いた throwaway。Go 版が同じ 16 ケースを内包しているので維持コスト削減のため除去。Phase 4-A 以降に必要になった場合は、当時のコミット (`b3c0ce2` `test(phase-1): land cache_key table-driven harness ...`) から復元可能。
 
 ### policies.json スキーマ（1-2 確定版）
 

@@ -26,6 +26,6 @@
 - [x] 1-3 `cache_key.js` 実装（テストファースト / `tests/cache_key_test.sh` 16 件 PASS）
 - [x] 1-4 `nginx.conf` で `js_set` → `proxy_cache_key` 注入（HIT/MISS smoke 通過）
 - [x] 1-5 Vary / Accept-Encoding 正規化の挙動確認（`proxy_ignore_headers Vary;` で CloudFront 互換に）
-- [ ] 1-6 テストハーネス整備（α Go 外形 + β njs 単体）
+- [x] 1-6 テストハーネス整備（Go 1 本: β 16 + α 4 = 20 件 PASS）
 - [ ] 1-7 `docs/cache-policy.md` 整備 + `examples/` 拡充
 - [ ] 完了確認: 全テスト PASS / 手動で whitelist 違いの別キャッシュ化を確認 / plan.md ステータス更新
