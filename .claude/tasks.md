@@ -27,7 +27,7 @@
 - [x] 2-1 `Cache-Control` パース + `X-Accel-Expires` TTL=0 挙動 spike (重大発見: 1-hop では injection 効かず、2-hop パターン要採用 — design doc "2-1 spike 結果" 節)
 - [x] 2-2 TTL 決定ロジックと `policies.json` schema 拡張 (`min_ttl` / `max_ttl` / `default_ttl`) の設計確定 (2-hop 採用、design doc "2-2 アーキテクチャ確定" 節)
 - [x] 2-3 `cache_control.js` 実装 (テストファースト red → green) — 5 directive (`no-store` / `no-cache` / `private` / `max-age` / `s-maxage`) 対応、β 16 ケース全 PASS
-- [ ] 2-4 `ttl.js` 実装 (テストファースト red → green)
+- [x] 2-4 `ttl.js` 実装 (テストファースト red → green) — case 1/2/3 + s-maxage 優先 + clamp、`getPolicyTtl` を `cache_key.js` に追加、`policies.json` に TTL フィールド + `_test-ttl-clamp` policy 追加、β 22 ケース全 PASS
 - [ ] 2-5 `nginx.conf` で `X-Accel-Expires` 配線 + `proxy_ignore_headers Cache-Control` 撤去
 - [ ] 2-6 TTL α 統合テスト追加 (`tests/integration/ttl_test.go`)
 - [ ] 2-7 `docs/ttl.md` 整備 + `docs/cache-policy.md` の policy schema 章更新
