@@ -156,6 +156,8 @@ curl -sS -H "X-Test-Policy: with-locale" \
 
 自分のサイトに合わせて新しい policy を追加してよい。policy id は任意の文字列。
 
+> **`_` で始まる policy id は cf-local の内部予約**: 例 `_test-empty-cookie` / `_test-ttl-clamp` のような `_` prefix の policy は cf-local 自体のテストハーネスから参照される目的で `policies.json` に同居している (production location には map されていない)。ユーザ用途では `_` から始まる policy id は使わないこと。policy 名衝突や、cf-local が将来 internal-only 挙動を入れる際の互換性のため。
+
 ## 上流の Vary ヘッダは無視される
 
 cf-local は `proxy_ignore_headers Vary;` を入れているので、上流が返す `Vary` レスポンスヘッダは nginx 側のキャッシュ判定に使わない (CloudFront と同じ挙動)。cache identity は cache policy だけで決まる。

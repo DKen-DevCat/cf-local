@@ -45,6 +45,22 @@ case 2 で `max-age=N` を policy の `min_ttl` / `max_ttl` で挟む。
 | `min=60, max=120` | `max-age=200` | `120` (上限到達) |
 | `min=60, max=120` | `max-age=0` | `60` (下限引き上げ — `max-age=0` でも `min_ttl` で持ち上がる CF 互換挙動) |
 
+> **`max-age=0` + `min_ttl > 0` の根拠**: AWS 公式ドキュメント [Managing how long content stays in the cache (expiration)](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html#ExpirationDownloadDist) の "Specifying the amount of time that CloudFront caches objects" にある「Minimum TTL: …If you specify a minimum TTL value greater than 0, CloudFront uses your minimum TTL value when the value is greater than the value of `Cache-Control: max-age`」(2025 年時点) に従う。本実装は **CloudFront の API 仕様準拠の文書記載に従っており、実機 CF での網羅検証は未実施**。Phase 4 以降で互換差分が出れば調整する (review concern REV-8)。
+
+## 無視するレスポンスヘッダ
+
+cf-local の TTL 決定は **`Cache-Control` のみ**を見る。以下のヘッダは現バージョン (Phase 2) では一切無視する。
+
+| ヘッダ | 扱い | 備考 |
+|---|---|---|
+| `Expires` | 無視 | RFC 7234 で `Cache-Control` より優先順位低。Phase 4-C 以降で要求が出たら検討 |
+| `Pragma: no-cache` | 無視 | HTTP/1.0 互換ヘッダ。`Cache-Control: no-cache` を使うこと |
+| `Vary` | 無視 (Phase 1-5 で確定) | cache key 識別は cache policy 単独で決まる (CloudFront 互換) |
+| `Age` | 透過 | nginx が転送するが TTL 決定には使わない |
+| `Last-Modified` / `ETag` | 透過 | 条件付きリクエスト相当の re-validation は未対応 |
+
+これらはすべて `docs/limitations.md` にも反映済。
+
 ## サポートされている directive
 
 `Cache-Control` パーサ (`nginx/njs/cache_control.js`) は以下 5 directive のみを見る。それ以外 (`public` / `must-revalidate` / `stale-while-revalidate` 等) は読み捨てる。
