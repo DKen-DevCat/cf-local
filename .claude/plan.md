@@ -22,7 +22,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 | Phase ID | 状態 | 内容 |
 |---|---|---|
-| `phase-0` | 進行中 | nginx前段配置とPoC |
+| `phase-0` | 完了 | nginx前段配置とPoC |
 | `phase-1` | 未着手 | cache key動的計算 |
 | `phase-2` | 未着手 | TTL正確化 |
 | `phase-3` | 未着手 | Invalidation API + 設定ファイル方式 |
@@ -34,18 +34,18 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-0: PoC
+## phase-0: PoC ✅ 完了 (2026-04-29)
 
 **到達状態**: nginx を Next.js の前段に置き、固定configでキャッシュが動く最小構成を確認。Phase 1 以降の基盤として nginx Dockerfile / nginx.conf / docker-compose の叩き台が想定どおり動くことを保証する。
 
 **完了条件**:
 
-- [ ] `docker compose up` で nginx (port 8080) が起動する
-- [ ] origin (Next.js等) を別途立てた状態で、ブラウザから `http://localhost:8080` にアクセスしてページが表示される
-- [ ] curlで同じURLに2回アクセスすると、2回目はキャッシュヒットする (`X-Cache-Status: HIT`)
-- [ ] 設定変更時に `docker compose restart` で反映できる
+- [x] `docker compose up` で nginx (port 8080) が起動する
+- [x] origin (Next.js等) を別途立てた状態で、ブラウザから `http://localhost:8080` にアクセスしてページが表示される
+- [x] curlで同じURLに2回アクセスすると、2回目はキャッシュヒットする (`X-Cache-Status: HIT`)
+- [x] 設定変更時に `docker compose restart` で反映できる
 
-詳細仕様はキックオフ時に `.claude/design/phase-0-poc-<date>.md` に展開する。
+詳細仕様および完了時メモ: `.claude/design/phase-0-poc-2026-04-29.md`
 
 ---
 
