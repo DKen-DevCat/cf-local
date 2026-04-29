@@ -34,7 +34,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-0: PoC ✅ 完了 (2026-04-29)
+## phase-0: PoC (完了 2026-04-29)
 
 **到達状態**: nginx を Next.js の前段に置き、固定configでキャッシュが動く最小構成を確認。Phase 1 以降の基盤として nginx Dockerfile / nginx.conf / docker-compose の叩き台が想定どおり動くことを保証する。
 
