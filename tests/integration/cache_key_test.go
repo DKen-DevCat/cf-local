@@ -219,6 +219,27 @@ func TestComputeKey_TableDriven(t *testing.T) {
 			b := computeKey(t, "with-locale", "/a?lang=en&lang=ja", nil)
 			eq(t, a, b)
 		}},
+
+		// Code-review feedback (commit 68cd8f7) concern #1: AE q=0 must be honored,
+		// substring matches must be excluded.
+		{"T17 default: AE br;q=0,gzip → normalized gzip (q=0 honored)", func(t *testing.T) {
+			a := computeKey(t, "default", "/a", map[string]string{"Accept-Encoding": "br;q=0, gzip"})
+			b := computeKey(t, "default", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			eq(t, a, b)
+		}},
+		{"T18 default: AE xbr (substring) → normalized identity", func(t *testing.T) {
+			a := computeKey(t, "default", "/a", map[string]string{"Accept-Encoding": "xbr"})
+			b := computeKey(t, "default", "/a", nil)
+			eq(t, a, b)
+		}},
+
+		// Code-review feedback concern #5: empty cookie name (`=foo`) must be dropped at parse time
+		// so it cannot pollute a policy that whitelists "" (defensive — no production policy does).
+		{"T19 _test-empty-cookie: =garbage prefix dropped at parse", func(t *testing.T) {
+			a := computeKey(t, "_test-empty-cookie", "/a", map[string]string{"Cookie": "theme=dark"})
+			b := computeKey(t, "_test-empty-cookie", "/a", map[string]string{"Cookie": "=garbage; theme=dark"})
+			eq(t, a, b)
+		}},
 	}
 
 	for _, c := range cases {

@@ -17,6 +17,13 @@
       "cookies":       { "whitelist": [] },
       "query_strings": { "whitelist": ["lang"] },
       "accept_encoding_normalize": true
+    },
+    "_test-empty-cookie": {
+      "_comment": "Phase 1 test-only — exists solely to exercise parseCookieHeader's handling of empty cookie names. No location maps to this policy.",
+      "headers":       { "whitelist": [] },
+      "cookies":       { "whitelist": [""] },
+      "query_strings": { "whitelist": [] },
+      "accept_encoding_normalize": false
     }
   }
 }
