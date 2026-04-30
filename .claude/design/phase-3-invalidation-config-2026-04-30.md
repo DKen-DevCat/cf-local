@@ -66,7 +66,7 @@ A / B / C の 3 点は kickoff 時点でユーザと合意済 (commit `c65e6b1` 
 
   Go renderer:                                  entrypoint:
     write tmpfile + rename (atomic)             1) inotifywait -m -e moved_to (background)
-                                                   → debounce 500ms → nginx -s reload
+                                                   → debounce 1s → nginx -s reload
                                                 2) nginx -g 'daemon off;' (foreground)
 ```
 
@@ -76,7 +76,7 @@ A / B / C の 3 点は kickoff 時点でユーザと合意済 (commit `c65e6b1` 
 2. **DESIGN.md §3.1 のプロセス独立性遵守**: Control Plane と nginx を別 container に保つ (同一 container / 親子プロセス案は連鎖死リスクで却下)
 3. **Phase 4-A への連続性**: AWS API ハンドラが reload を発火する経路でも、最終的に file rename → inotify → reload で同じ仕組み
 4. **Race 回避**: tmpfile + `rename(2)` で原子的更新、inotify は `MOVED_TO` のみ watch
-5. **DESIGN.md §5 のリスク対策**: debounce 500ms を sidecar 側で実装 (連続変更をまとめる)
+5. **DESIGN.md §5 のリスク対策**: debounce **1 秒** を sidecar 側で実装 (連続変更をまとめる)。spike で 500ms → 1 秒に確定 (busybox sh + inotify-tools の `-t` が秒単位整数のため。500ms に戻すなら sidecar を Go/C で書き直す必要あり、Phase 3 ではスコープ外)
 
 Phase 3 では **Control Plane 側の設定ファイル watch は実装しない**。起動時 load + `docker compose restart cf-local` で再 load。auto-watch は race を二重に踏むため Phase 4-A 以降に必要が出てから検討。
 
@@ -121,7 +121,7 @@ multi-stage Dockerfile 構成 (3-2 で実装):
 | 3-2 | nginx Dockerfile を multi-stage 化、`nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化 + spike | `nginx/Dockerfile`, `nginx/spike/` | Phase 0 の DESIGN コメント (`Dockerfile:5`) の伏線回収。**spike PASS** (2026-04-30, `nginx/spike/README.md`) — nginx 1.27.5-alpine + ngx_cache_purge v2.5.5 で MISS → HIT → PURGE → MISS 動作確認済 |
 | 3-3 | Go プロジェクト基盤 (`cmd/cf-local/main.go`) + 設定 loader | `cmd/cf-local/main.go`, `internal/config/...` | TDD 必須 (CLAUDE.md §4)。malformed JSON / 必須欠落 / 未知フィールド は fail-fast |
 | 3-4 | `nginx.conf` + `nginx/njs/policies.json` の生成器 | `internal/nginx/...`, `internal/managed/...` | Phase 1〜2 の現行 `nginx.conf` を template 化。outer/inner location ペア (Phase 2 §2-2) を policy 数だけ展開 |
-| 3-5 | nginx reload 経路: Control Plane 側 atomic rename + nginx container 内 inotify sidecar (`inotify-tools` + 500ms debounce shell loop) | `internal/nginx/renderer.go` (atomic write 担当), `nginx/Dockerfile` (sidecar entrypoint), `nginx/scripts/reload-watcher.sh` | DESIGN.md §5 リスク対策。共有 named volume で conf 配信 |
+| 3-5 | nginx reload 経路: Control Plane 側 atomic rename + nginx container 内 inotify sidecar (`inotify-tools` + **1 秒** debounce shell loop) | `internal/nginx/renderer.go` (atomic write 担当), `nginx/Dockerfile` (sidecar entrypoint), `nginx/scripts/reload-watcher.sh` | DESIGN.md §5 リスク対策。共有 named volume で conf 配信。**spike PASS** (2026-04-30, `nginx/spike/README.md`) — burst 3 連続変更が 1 reload に集約されることを実機確認。busybox sh の `-t` 制約により debounce は 500ms → 1 秒に確定 |
 | 3-6 | `POST /_invalidate` ハンドラ + `ngx_cache_purge` 連携 | `internal/api/invalidation/...`, `nginx.conf` | 完全一致のみ。CFAPI 形式互換ではなく cf-local 独自 path (Phase 4-B で `CreateInvalidation` に格上げ) |
 | 3-7 | α 統合テスト追加 (config → generated nginx.conf → docker up → invalidate → MISS) | `tests/integration/invalidation_test.go` | 設定ファイル経由の起動が初なので smoke test 厚め |
 | 3-8 | examples/ 拡充 (microCMS webhook 連携サンプル含む) + `docs/config-schema.md` + CMS 連携ドキュメント | `examples/`, `docs/` | M2 達成のためのドキュメント |
@@ -153,7 +153,7 @@ multi-stage Dockerfile 構成 (3-2 で実装):
     ├─ render nginx.conf      ────atomic rename──▶ /etc/nginx/conf.d/cf-local/cf-local.conf
     └─ render policies.json   ────atomic rename──▶ /etc/nginx/conf.d/cf-local/policies.json
                                                  │
-                                                 ▼ inotify (MOVED_TO) + debounce 500ms
+                                                 ▼ inotify (MOVED_TO) + debounce 1s (3-5 spike 確定)
                                           [nginx container sidecar]
                                                  │
                                                  ▼ nginx -s reload
@@ -232,7 +232,7 @@ nginx/spike/                      # 3-2 / 3-5 spike 用 (一時)
 ## リスク・未決事項
 
 - **ngx_cache_purge dynamic module ビルドの ABI 整合 (C で部分対応済)**: `nginx-modules/ngx_cache_purge` + `--with-compat` で dynamic module 化を採用済 (本ドキュメント「C」セクション)。ただし spike (3-2 冒頭) で実機検証必須。NG の場合は debian source build (Plan B) に切替
-- **inotify sidecar の reload 競合**: 連続変更時に reload 中に次の `MOVED_TO` が来た場合の挙動。debounce 500ms で大半は吸収されるが、reload 完了より早く次が来た場合の test を 3-5 で追加
+- **inotify sidecar の reload 競合 (3-5 spike で部分検証済)**: 1 秒 debounce で連続 burst (3 件) は 1 reload に集約されることを確認。reload 完了より早く次の `MOVED_TO` が来るシナリオ (Control Plane の高頻度書き込み) は本実装でも observable な負荷として残るが、Phase 3 で実装する Control Plane は起動時 1 回 + invalidation の 1 イベントしか conf を書かないため、実用上は問題にならない
 - **microCMS webhook 連携サンプル**: 実 webhook 仕様に合わせるか、generic webhook 形にするかは 3-8 着手時にユーザーと最終確認
 - **複数 distribution の routing**: 1 nginx で複数 distribution を扱う場合の経路分け方針 (Host header / port / path prefix のいずれか)。DESIGN.md にも記述なし。3-1 のスキーマ確定時にユーザーと相談
 

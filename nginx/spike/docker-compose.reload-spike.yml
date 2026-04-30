@@ -1,0 +1,29 @@
+# Phase 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証用 compose。
+#
+# 構成:
+#   - nginx: nginx + reload-watcher (sidecar) を 1 container 内で起動。/shared を named volume で受ける
+#   - writer: alpine、tail -f /dev/null で待機。`docker compose exec writer <cmd>` で
+#             /shared/active.conf を atomic rename で書き換えるオペレーションを行う
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.reload-nginx
+    container_name: cf-local-spike-reload-nginx
+    ports:
+      - "8083:8083"
+    volumes:
+      - cf-local-spike-shared:/shared
+    restart: "no"
+
+  writer:
+    image: alpine:3.20
+    container_name: cf-local-spike-reload-writer
+    command: tail -f /dev/null
+    volumes:
+      - cf-local-spike-shared:/shared
+    restart: "no"
+
+volumes:
+  cf-local-spike-shared:

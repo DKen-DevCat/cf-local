@@ -32,7 +32,8 @@
 - [ ] 3-2 本実装: 同構造を `nginx/Dockerfile` に展開 + nginx.conf に `load_module` 追加 + 内部 purge endpoint 設計 (cache_key と purge key の整合)
 - [ ] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD)
 - [ ] 3-4 `internal/nginx` で `nginx.conf` + `policies.json` 生成器 (golden file テスト)
-- [ ] 3-5 nginx reload トリガー (debounce 500ms)
+- [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
+- [ ] 3-5 本実装: sidecar スクリプト + entrypoint を `nginx/scripts/` に配置、`internal/nginx/renderer.go` で atomic rename を実装
 - [ ] 3-6 `POST /_invalidate` ハンドラ + `ngx_cache_purge` 連携 (完全一致のみ)
 - [ ] 3-7 α 統合テスト追加 (config → docker up → invalidate → MISS)
 - [ ] 3-8 `examples/` 拡充 + `docs/config-schema.md` + CMS 連携ドキュメント
