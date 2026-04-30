@@ -1,0 +1,17 @@
+{
+    "CallerReference": "ae-flags-2026-04-30",
+    "Comment": "Phase 3 A.4 ae-flags fixture",
+    "Enabled": true,
+    "Origins": [
+        {
+            "Id": "next-app",
+            "DomainName": "host.docker.internal",
+            "CustomOriginConfig": { "HTTPPort": 3000 }
+        }
+    ],
+    "DefaultCacheBehavior": {
+        "TargetOriginId":       "next-app",
+        "ViewerProtocolPolicy": "allow-all",
+        "CachePolicyId":        "both-on"
+    }
+}
