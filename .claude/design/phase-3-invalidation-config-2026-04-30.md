@@ -387,6 +387,86 @@ golden 比較は `bytes.Equal` (CRLF/LF 揺れがないので diff で十分)。
 
 各サブタスク = 1 コミット原則 (CLAUDE.md §5)。A.4.0〜A.4.7 は Go-only で β レベル、A.4.8〜A.4.13 は image / compose / α regression に踏み込むので慎重に。
 
+### A.5 詳細設計 (3-2 残 + 3-6 invalidation handler)
+
+A.4 で renderer 配線が終わり、Control Plane は「render → idle」する状態。A.5 では cf-local main を **HTTP listener (`POST /_invalidate`) を持つ常駐サーバ**に格上げし、`ngx_cache_purge` と連携して完全一致パスのキャッシュを消せるようにする。
+
+#### スコープ最小化 (Phase 3 では MVP、後半で拡充)
+
+| 項目 | Phase 3 (A.5) | 後半拡充 (Phase 4-B 等) |
+|---|---|---|
+| API スキーマ | cf-local 独自 simple JSON `{"paths": ["/foo"]}` | AWS `CreateInvalidation` XML + `Quantity`/`Items` 形式 |
+| マッチング | 完全一致のみ | wildcard `/foo/*`、suffix wildcard 等 |
+| variants 処理 | "default policy + 空 headers/cookies/queries + AE=identity" の 1 variant のみ purge | cookie/header/AE 違いの全 slot を消す (multi-variant) |
+| 実行モード | 同期 (受信 → ngx_cache_purge → 結果返却) | 非同期 (goroutine + status fields)、`GetInvalidation`/`ListInvalidations` |
+| 永続化 | なし | invalidation 履歴 (BoltDB) |
+| HTTP port | `:4566` (Phase 4-A の AWS API 互換 listener と同 port を流用予定) | 同上 |
+
+variants 制約は **既知の罠**として `docs/limitations.md` に明記する。CMS webhook で「`/posts/abc` を更新したら invalidate」する一般的 use case は MVP でカバーできる (default policy 単一 distribution の前提)。
+
+#### purge key と cache key の整合 (3-2 残)
+
+現状 renderer 出力 (`internal/nginx/conf.go:270`) の purge location は `proxy_cache_purge cf_cache $1` (path をそのまま purge key) で、cache key (`$cf_cache_key` = sha256 hex) と一致しないため **動かない実装**になっている。
+
+修正案: nginx.conf 側で **計算用 URI を override する変数**を導入し、cache_key.js の `forNginx` がそれを優先する形にする。
+
+```nginx
+location ~ ^/_cf_purge(/.*)$ {
+    allow 127.0.0.1;
+    deny all;
+
+    set $cf_policy_id "default";
+    set $cf_purge_uri  $1;    # 内部 purge endpoint がキャプチャした「外部 path」
+
+    proxy_cache_purge cf_cache $cf_cache_key;
+}
+```
+
+```js
+// cache_key.js (forNginx) — purge override 対応
+const overrideUri = r.variables.cf_purge_uri;
+const uri = overrideUri && overrideUri.length > 0 ? overrideUri : r.uri;
+```
+
+これで Control Plane が `GET http://nginx:8080/_cf_purge/foo` を内部発行すれば、njs が `/foo` の cache key (variant: 空 headers/cookies/queries + AE=identity) を計算 → ngx_cache_purge が当該 1 slot を消す。
+
+#### HTTP listener と既存配線の同居
+
+`cmd/cf-local/main.go` は現状「render → `waitForSignal()` で idle」。A.5 で:
+
+1. render 後に `internal/api/invalidation` の handler を取り付けた `http.Server` を `ListenAndServe`
+2. SIGINT/SIGTERM 受信で `srv.Shutdown(ctx)` (graceful shutdown 5s timeout)
+3. listen は `:4566` (DESIGN.md の AWS API 互換 listener と同 port、Phase 4-A で流用)
+
+#### 内部 nginx purge への HTTP 呼び出し
+
+Control Plane → nginx 間は同 docker network。host name は service 名 `nginx` (compose の DNS 解決)。
+
+- 単一 path: `GET http://nginx:8080/_cf_purge<path>`
+- multi paths: paths の順に逐次発行 (並列化は Phase 4-B で必要なら、今は order を保つ + 実装単純さを優先)
+- レスポンス: ngx_cache_purge は purge 成功で 200、対象 slot 不在で 404 を返す。MVP では 404 も「キャッシュは既に無い」とみなして success カウントに含める
+
+#### A.5 サブタスク分解
+
+| # | 内容 | 主対象ファイル | 備考 |
+|---|---|---|---|
+| A.5.1 | renderer の `_cf_purge` location を cache_key 経由に修正 + `cache_key.js` の `forNginx` に `cf_purge_uri` override 対応 + golden test 更新 | `internal/nginx/conf.go`, `nginx/njs/cache_key.js`, `internal/nginx/testdata/*/cf-local.conf` | 全 fixture の cf-local.conf golden を更新 |
+| A.5.2 | `internal/api/invalidation/` package + handler skeleton + table-driven test (path validation / JSON schema / 不正リクエスト 400) | `internal/api/invalidation/handler.go`, `internal/api/invalidation/handler_test.go` | upstream nginx 呼び出しは interface で抽象化、test は fake で |
+| A.5.3 | `cmd/cf-local/main.go` を ListenAndServe 化 + `:4566` listen + graceful shutdown | `cmd/cf-local/main.go` | flag に `--addr :4566` 追加 (override 可) |
+| A.5.4 | nginx 内部 purge への HTTP client 実装 + handler に配線 | `internal/api/invalidation/purger.go` (新規) | docker network 内通信 (`http://nginx:8080/_cf_purge<path>`) |
+| A.5.5 | α 統合テスト追加 (config → up → curl で HIT → `POST /_invalidate` → curl で MISS) | `tests/integration/invalidation_alpha_test.go` (新規) | testserver の cc query で TTL を長めに設定して HIT を確実に |
+| A.5.6 | variants 制約 / API 仕様を `docs/limitations.md` + `docs/config-schema.md` に記載 | `docs/limitations.md`, `docs/config-schema.md` | 「default policy 1 variant のみ purge」を明記 |
+
+#### Phase 4-B / 後半に持ち越すタスク (起こすだけ、本フェーズでは触らない)
+
+- **後半-1** AWS API 互換 (`POST /2020-05-31/distribution/{Id}/invalidation` の XML 形式) 対応 — Phase 4-B
+- **後半-2** wildcard サポート (`/foo/*` 等) — Phase 4-B
+- **後半-3** multi-variant invalidation (cookie/header/AE 違いの全 slot を消す) — Phase 4-B
+- **後半-4** 非同期実行 + status (`InProgress`/`Completed`) + `GetInvalidation`/`ListInvalidations` — Phase 4-B
+- **後半-5** invalidation 履歴の永続化 (BoltDB) — Phase 4-B
+
+各サブタスク = 1 コミット原則。A.5.1 だけは renderer + njs + golden を一緒に動かすので 1 コミット。A.5.5 (α 統合テスト) で実機 PASS が出た時点で 3-6 + 3-7 完了とみなす。3-8 (examples + docs) は別途。
+
 ### TDD 対象
 
 - `internal/config/loader_test.go` — schema 違反検出 (AWS SDK 型へのデコード境界)

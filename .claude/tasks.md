@@ -30,7 +30,21 @@
 - [x] 3-1c 内部 `policies.json` schema 移行 (PascalCase + 3-1a/b 反映) + `ttl.js` の連動修正
 - [x] 3-2 spike: `nginx-modules/ngx_cache_purge` v2.5.5 を `--with-compat` で dynamic module ビルド検証 — PASS (`nginx/spike/README.md`)
 - [x] 3-2 本実装 (A.1): multi-stage Dockerfile + ngx_cache_purge v2.5.5 dynamic module + nginx.conf に `load_module` 追加 (実発火 location は A.5 で追加、α regression PASS)
-- [ ] 3-2 残: 内部 purge endpoint 設計 (cache_key と purge key の整合) — A.5 で扱う
+- [ ] 3-2 残 + 3-6 + 3-7 (A.5 詳細設計): MVP は「default policy / 空 headers/cookies/queries / AE=identity の 1 variant のみ purge、完全一致、同期実行、cf-local 独自 JSON `{"paths":[]}`」。詳細: 設計ドキュメント §「A.5 詳細設計」
+    - [ ] A.5.1 renderer の `_cf_purge` location を cache_key 経由に修正 (`proxy_cache_purge cf_cache $cf_cache_key`) + `cache_key.js` の `forNginx` に `cf_purge_uri` override 対応 + 全 fixture の `cf-local.conf` golden 更新
+    - [ ] A.5.2 `internal/api/invalidation/` package + handler skeleton + table-driven test (path validation / JSON schema / 不正リクエスト 400)。upstream nginx 呼び出しは interface で抽象化、test は fake で
+    - [ ] A.5.3 `cmd/cf-local/main.go` を ListenAndServe 化 + `:4566` listen + graceful shutdown (`--addr` flag override)
+    - [ ] A.5.4 nginx 内部 purge への HTTP client 実装 (`internal/api/invalidation/purger.go`) + handler に配線
+    - [ ] A.5.5 α 統合テスト (`tests/integration/invalidation_alpha_test.go`): config → docker up → curl で HIT → `POST /_invalidate` → curl で MISS
+    - [ ] A.5.6 variants 制約 / API 仕様を `docs/limitations.md` + `docs/config-schema.md` に記載 (「default policy 1 variant のみ purge」を明記)
+
+### Phase 4-B / 後半に持ち越すタスク (A.5 で起こすだけ、本フェーズでは触らない)
+
+- [ ] 後半-1 AWS API 互換 (`POST /2020-05-31/distribution/{Id}/invalidation` の XML 形式) — Phase 4-B
+- [ ] 後半-2 wildcard サポート (`/foo/*` 等) — Phase 4-B
+- [ ] 後半-3 multi-variant invalidation (cookie/header/AE 違いの全 slot を消す) — Phase 4-B
+- [ ] 後半-4 非同期実行 + status (`InProgress`/`Completed`) + `GetInvalidation`/`ListInvalidations` — Phase 4-B
+- [ ] 後半-5 invalidation 履歴の永続化 (BoltDB) — Phase 4-B
 - [x] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD) — A.3a/A.3b の 2 コミットで完了。独自 Schema 型 (flat array) → AWS SDK Go v2 cloudfront/types 変換 + Phase 3 制約 (distributions 1 ファイル限定) + cross-ref validation。テーブル駆動テストで Happy 6 + Error 14 ケース。REV-7 (MinTTL 負値 / MinTTL > MaxTTL) は Go loader 側でも fail-fast (njs 側は別タスクで残置)
 - [ ] 3-4 / A.4 `internal/nginx` renderer + Control Plane 常駐化 + named volume 経由配信 (3-4 + 3-5 残)
     - 詳細: 設計ドキュメント §「A.4 詳細設計 (3-4 + 3-5 残)」
@@ -55,8 +69,6 @@
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
 - [x] 3-5 本実装 (A.2): sidecar スクリプト `nginx/scripts/` 配置 + Dockerfile に inotify-tools + nginx.conf を `include /etc/nginx/cf-local/*.conf` 化 + bind mount 追加 (α regression PASS、macOS bind mount + inotify は VirtioFS 制約で動かないが A.4 で named volume に切替後解決)
 - [x] 3-5 残: Control Plane で atomic rename 実装 — A.4.7 (`internal/nginx/writer.go` の `WriteAtomic`: tmp → fsync → rename → parent dir fsync) + A.4.8 (`cmd/cf-local/main.go` の `run()` で `policies.json` / `cf-local.conf` 両方に配線) で吸収済み
-- [ ] 3-6 `POST /_invalidate` ハンドラ + `ngx_cache_purge` 連携 (完全一致のみ)
-- [ ] 3-7 α 統合テスト追加 (config → docker up → invalidate → MISS)
 - [ ] 3-8 `examples/` 拡充 + `docs/config-schema.md` + CMS 連携ドキュメント
 
 ### Phase 3 review 対応 (A.4 着地レビューより)
