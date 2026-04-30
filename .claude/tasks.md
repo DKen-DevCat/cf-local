@@ -43,7 +43,7 @@
     - [x] A.4.5 loader 側 PathPattern 受理規則 (prefix `/path/*` / `*` のみ) + `pathpattern-reject` テスト 4 ケース追加 (suffix wildcard / middle wildcard / exact / no leading `/`)。renderer 側 (pathPatternToLocation) は二重防衛として残置
     - [x] A.4.6 `disabled` ケース (Distribution.Enabled=false で空出力) + golden PASS — A.4.3 で先取り実装。Render() の switch case で disabled comment を返す経路を分けた
     - [x] A.4.7 `internal/nginx/writer.go` の `WriteAtomic` 実装 + unit test (3-5 残)。tmp file (`.<name>.tmp`) + O_TRUNC + fsync + rename(2)。stale tmp / overwrite / path separator reject / empty name / nonexistent dir のテスト 6 ケース PASS
-    - [ ] A.4.8 `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` 追加 + render → write → sleep) — A.3b の dump コード撤去
+    - [x] A.4.8 `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` 追加 + render → write → sleep) — A.3b の dump コード撤去。smoke で min fixture 出力が golden と完全一致 (`go run ./cmd/cf-local --config-dir ./internal/nginx/testdata/min --out-dir /tmp/x` → diff CONF MATCH / POLICIES MATCH)
     - [ ] A.4.9 `nginx/njs/cache_key.js` の policies.json path を `/etc/nginx/cf-local/policies.json` に変更
     - [ ] A.4.10 `nginx/cf-local/cf-local.conf` を `nginx/cf-local-tests/cf-local-tests.conf` に β test endpoint だけ抜き出して再配置
     - [ ] A.4.11 repo root `Dockerfile` 新規 + `docker-compose.yml` 改修 (cf-local service 追加 + named volume + nginx mount 切替) + `docker-compose.test.yml` (β test override)

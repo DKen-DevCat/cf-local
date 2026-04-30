@@ -1,19 +1,23 @@
 // Package main is the cf-local Control Plane entry point.
 //
-// Phase 3 A.3b: --config-dir 配下を internal/config.Load() で読み込み、
-// CachePolicy / Distribution の概要を stdout にダンプする。renderer (A.4)
-// と invalidation handler (A.5) は未配線なので、本コマンドはまだ nginx
-// に何も伝えない (loader の出力検証用)。
+// Phase 3 A.4.8: --config-dir 配下を internal/config.Load() で読み込み、
+// internal/nginx.Render() で `cf-local.conf` + `policies.json` を生成して
+// --out-dir に atomic rename で書き出す。書き出し後は SIGINT/SIGTERM を待って
+// idle する (docker container を生かしておくため)。
+//
+// HTTP listener (POST /_invalidate) は A.5 (3-6) で追加。本コマンドは現時点
+// では「起動時に 1 回 render → idle」の最小構成。
 //
 // 起動例:
 //
-//	cf-local --config-dir ./cf-local
+//	cf-local --config-dir ./cf-local --out-dir /work/cf-local-conf
 //
 // `./cf-local/cache-policies/*.json` と `./cf-local/distributions/main.json`
-// が配置されている前提。
+// が事前に配置されている前提。
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,36 +25,41 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"sort"
+	"os/signal"
+	"syscall"
 
 	"github.com/DKen-DevCat/cf-local/internal/config"
+	cfnginx "github.com/DKen-DevCat/cf-local/internal/nginx"
 )
 
 const (
 	defaultConfigDir = "./cf-local"
-	version          = "0.0.0-phase3-a3b"
+	defaultOutDir    = "/work/cf-local-conf"
+	version          = "0.0.0-phase3-a4.8"
 )
 
 func main() {
 	configDir := flag.String("config-dir", defaultConfigDir, "directory containing cache-policies/ and distributions/ JSON files")
+	outDir := flag.String("out-dir", defaultOutDir, "directory to write cf-local.conf and policies.json (named volume mount in docker compose)")
 	flag.Parse()
 
-	if err := run(*configDir, os.Stdout); err != nil {
-		log.SetFlags(0)
+	log.SetFlags(0)
+	if err := run(*configDir, *outDir, os.Stdout); err != nil {
 		log.Fatalf("cf-local: %v", err)
 	}
+
+	// docker container として常駐するため、render 完了後は signal を待って idle。
+	// HTTP listener が来る A.5 以降は ListenAndServe + signal 受信で graceful shutdown
+	// する形に置き換える。
+	waitForSignal()
 }
 
-func run(configDir string, stdout io.Writer) error {
-	info, err := os.Stat(configDir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("config dir %q does not exist", configDir)
-		}
-		return fmt.Errorf("config dir %q: %w", configDir, err)
+func run(configDir, outDir string, stdout io.Writer) error {
+	if err := requireDir(configDir, "config-dir"); err != nil {
+		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("config dir %q is not a directory", configDir)
+	if err := requireDir(outDir, "out-dir"); err != nil {
+		return err
 	}
 
 	res, err := config.Load(configDir)
@@ -58,77 +67,58 @@ func run(configDir string, stdout io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "cf-local %s — config dir: %s\n", version, configDir)
-	dumpResult(stdout, res)
-	fmt.Fprintln(stdout, "(phase 3 A.3b: loader only; renderer / invalidation not yet wired)")
+	out, err := cfnginx.Render(res)
+	if err != nil {
+		return fmt.Errorf("render: %w", err)
+	}
+
+	// policies.json は常に書き出す (空マップ {"policies":{}} でも nginx の
+	// fallback ロード対象として有効)。cf-local.conf は Distribution が
+	// 完全に未登録のときだけ skip する (`include` の glob が空に振る舞う)。
+	if err := cfnginx.WriteAtomic(outDir, "policies.json", out.Policies); err != nil {
+		return fmt.Errorf("write policies.json: %w", err)
+	}
+	if out.Conf != nil {
+		if err := cfnginx.WriteAtomic(outDir, "cf-local.conf", out.Conf); err != nil {
+			return fmt.Errorf("write cf-local.conf: %w", err)
+		}
+	}
+
+	fmt.Fprintf(stdout, "cf-local %s — rendered (config-dir=%s, out-dir=%s)\n", version, configDir, outDir)
+	fmt.Fprintf(stdout, "  cache policies: %d\n", len(res.CachePolicies))
+	fmt.Fprintf(stdout, "  distribution  : %s\n", distributionSummary(res))
+	fmt.Fprintln(stdout, "(phase 3 A.4.8: rendered once; idling until SIGINT/SIGTERM. HTTP listener arrives in A.5.)")
 	return nil
 }
 
-// dumpResult は LoadResult のサマリを stdout にプリントする。loader 単独
-// での動作確認用。renderer 配線後 (A.4) は本関数を撤去する。
-func dumpResult(w io.Writer, res *config.LoadResult) {
-	fmt.Fprintf(w, "  cache policies: %d\n", len(res.CachePolicies))
-	names := make([]string, 0, len(res.CachePolicies))
-	for n := range res.CachePolicies {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		p := res.CachePolicies[n]
-		fmt.Fprintf(w, "    - %s (MinTTL=%d, MaxTTL=%s, DefaultTTL=%s)\n",
-			n,
-			derefInt64(p.MinTTL),
-			optInt64(p.MaxTTL),
-			optInt64(p.DefaultTTL),
-		)
-	}
-
-	if res.Distribution == nil {
-		fmt.Fprintln(w, "  distribution: (none)")
-		return
-	}
-	d := res.Distribution
-	fmt.Fprintf(w, "  distribution: %s (Enabled=%t, file=%s)\n",
-		derefString(d.CallerReference), derefBool(d.Enabled), res.DistributionFile)
-	if d.Origins != nil {
-		for _, o := range d.Origins.Items {
-			port := int32(0)
-			if o.CustomOriginConfig != nil && o.CustomOriginConfig.HTTPPort != nil {
-				port = *o.CustomOriginConfig.HTTPPort
-			}
-			fmt.Fprintf(w, "    - origin %s -> %s:%d\n",
-				derefString(o.Id), derefString(o.DomainName), port)
+func requireDir(path, label string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("--%s %q does not exist", label, path)
 		}
+		return fmt.Errorf("--%s %q: %w", label, path, err)
 	}
-	if d.CacheBehaviors != nil && d.CacheBehaviors.Quantity != nil {
-		fmt.Fprintf(w, "    cache behaviors: 1 default + %d additional\n", *d.CacheBehaviors.Quantity)
+	if !info.IsDir() {
+		return fmt.Errorf("--%s %q is not a directory", label, path)
 	}
+	return nil
 }
 
-func derefString(p *string) string {
-	if p == nil {
-		return ""
+func distributionSummary(res *config.LoadResult) string {
+	if res.Distribution == nil {
+		return "(none)"
 	}
-	return *p
+	enabled := res.Distribution.Enabled != nil && *res.Distribution.Enabled
+	caller := ""
+	if res.Distribution.CallerReference != nil {
+		caller = *res.Distribution.CallerReference
+	}
+	return fmt.Sprintf("%s (Enabled=%t, file=%s)", caller, enabled, res.DistributionFile)
 }
 
-func derefBool(p *bool) bool {
-	if p == nil {
-		return false
-	}
-	return *p
-}
-
-func derefInt64(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
-func optInt64(p *int64) string {
-	if p == nil {
-		return "(unset)"
-	}
-	return fmt.Sprintf("%d", *p)
+func waitForSignal() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
 }
