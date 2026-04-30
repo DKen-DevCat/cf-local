@@ -25,7 +25,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-0` | 完了 | nginx前段配置とPoC |
 | `phase-1` | 完了 | cache key動的計算 |
 | `phase-2` | 完了 | TTL正確化 |
-| `phase-3` | 未着手 | Invalidation API + 設定ファイル方式 |
+| `phase-3` | 完了 (2026-04-30) | Invalidation API + 設定ファイル方式 |
 | `phase-4a` | 未着手 | Terraform対応・最小 |
 | `phase-4b` | 未着手 | Invalidation API互換 |
 | `phase-4c` | 未着手 | 仕上げ |
@@ -89,44 +89,26 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-3: Invalidation API + 設定ファイル方式
+## phase-3: Invalidation API + 設定ファイル方式 (完了 2026-04-30)
 
-**到達状態**: 設定ファイル(JSON)から複数のdistribution / cache policyを管理可能にし、HTTPでinvalidationを発火できるようにする。
+**到達状態 (実機検証済み)**: ユーザー設定 `./cf-local/cache-policies/*.json` + `./cf-local/distributions/main.json` を Control Plane (Go) が読み込み、renderer が `cf-local.conf` + `policies.json` を生成 → 共有 named volume 経由で nginx に配布 → inotify sidecar が atomic rename を catch して `nginx -s reload` を発火、という data plane 駆動経路が完成。`POST /_invalidate {"paths":["/foo"]}` で完全一致パスの cache slot を消す MVP も `:4566` で待ち受け、`HIT → invalidate → MISS` のフルパスを α 統合テストで検証済。
 
-**ここでM2達成（他プロジェクトに流用可能）**
-
-**ゴールイメージ**:
-
-- `cf-local/distribution.json` と `cf-local/cache-policies/*.json` から nginx.conf 自動生成
-- 複数のdistribution / behavior（path pattern）を宣言的に管理
-- `POST /_invalidate` で完全一致パスのキャッシュパージ
-- CMS（microCMS等）のwebhookと連携可能
+**M2 達成 (他プロジェクトに流用可能)**: ローカル開発で「設定ファイルから cf-local を起動 → アプリの前段に置く → CMS webhook と連動」が機能する状態。
 
 **完了条件**:
 
-- [ ] 設定ファイルスキーマ設計
-- [ ] Goでnginx.conf生成
-- [ ] ngx_cache_purge組込み（or 代替手段）
-- [ ] `POST /_invalidate` (完全一致のみ)
-- [ ] CMS連携の使い方ドキュメント
-- [ ] examples/ 拡充
+- [x] 設定ファイルスキーマ設計 (AWS SDK Go v2 型 + List 型 flat array 簡略化、`docs/config-schema.md`)
+- [x] Goでnginx.conf生成 (`internal/nginx/renderer.go`、golden file テスト 4 fixture)
+- [x] ngx_cache_purge組込み（multi-stage build、`--with-compat` で dynamic module 化、v2.5.5）
+- [x] `POST /_invalidate` (完全一致のみ、cf-local 独自 simple JSON、`:4566` listen)
+- [x] CMS連携の使い方ドキュメント (`docs/invalidation-api.md` §「CMS webhook との連携」)
+- [x] examples/ 拡充 (`examples/nextjs-basic/README.md` を Phase 3 構成 + invalidation 項に更新)
 
-**着手前にユーザーと相談する点**:
+**着手前決定事項 (kickoff で確定)**: 設定ファイルは AWS SDK Go v2 型 + List 型 flat array 簡略化 (リソース別 dir 分割) / nginx reload は共有 named volume + inotify sidecar (1s debounce) / ngx_cache_purge は `nginx-modules/ngx_cache_purge` を `--with-compat` で dynamic module 化。詳細は設計 doc。
 
-- 設定ファイルのスキーマ（CFのAPI形式そのままか、簡略化するか）
-- nginx.conf生成スクリプトをGoで書くかシェル/Nodeで書くか
-- ngx_cache_purge or alternative の選定
+**Phase 2 review 繰越し (3-Rv) 全 5 件消化済**: REV-3 / REV-5 / REV-7 / REV-9 / REV-14 (REV-10 は A.0 で先行消化済)。詳細: `.claude/design/phase-3-invalidation-config-2026-04-30.md` §「Phase 完了時メモ」。
 
-**Phase 2 review からの繰越し** (本 phase の kickoff design で扱う):
-
-- **REV-5** AT02 sleep の余裕確保 (`tests/integration/ttl_alpha_test.go:60-74`): 3 秒 sleep が CI 遅延で逆転するリスク。sleep 値を 3.5s に増やす or 各リクエスト wall clock を log 出力。Phase 3 でテスト構造を見直す際に併せて。
-- **REV-7** `policies.json` schema validation: 負値 / `min_ttl > max_ttl` / 非数値 が silent に通る (`cache_key.js:181-188` の `getPolicyTtl`)。本 phase では `getPolicyTtl` 内で `min_ttl > max_ttl` を検出 → `r.error` で warn + 片方を default 値に倒す形で対応 (Phase 4-A の terraform 互換時に強制 validation へ昇格)。
-- **REV-10** `ttl.computeAndInject` error path observability (`ttl.js:46-48`): 毎リクエスト error log の洪水可能性。`X-Cf-Ttl-Error: <reason>` sentinel header を出して outer 側で `proxy_no_cache $cf_ttl_error;` で no-cache する経路を確立。これで REV-2 の inner failure 時の policy 違反経路 (現在は `proxy_cache_valid 200 86400s` セーフティネットに退化) が完全に閉じる。
-- **REV-3** policy 別 α テスト: `_test-ttl-clamp` policy が α では検証不能 (default policy 固定)。本 phase の多 policy 対応で複数 outer/inner location が動的生成されるようになったら、`_test-ttl-clamp` を割り当てた location を α に追加して clamp が proxy_cache に届くことを実機検証。
-- **REV-9** testserver malformed query 検出 (`tests/integration/testserver/server.go:54-58`): `?status=abc` を silent 200 fallback。テスト ergonomics 改善で 400 Bad Request を返す形に。
-- **REV-14** `max-age=` (値空) drop の test 無 (`cache_control.js`): RFC 9111 違反値の境界ケース 1 件追加。
-
-詳細: `.claude/design/phase-2-ttl-2026-04-29.md` の Phase 完了時メモ + commit `440ffc8` (pro/con レビュー記録)。
+詳細仕様および完了時メモ: `.claude/design/phase-3-invalidation-config-2026-04-30.md`
 
 ---
 

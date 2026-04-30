@@ -536,3 +536,54 @@ Control Plane → nginx 間は同 docker network。host name は service 名 `ng
 - DESIGN.md §3.1 (Control Plane / Data Plane), §3.3 (Go 採用理由), §3.4 (BoltDB は Phase 4-A), §4.3 (Invalidation), §5 (リスク)
 - `.claude/design/phase-2-ttl-2026-04-29.md` (Phase 2 完了時メモ + REV-* 一覧)
 - 直近コミット `e60787c` (Phase 2 マージ点)
+
+---
+
+## Phase 完了時メモ (2026-04-30)
+
+Phase 3 完了。33 コミット。M2 (他プロジェクトに流用可能) 達成。
+
+### 想定外だった点
+
+- **A.4.13 α regression 確認で β test の loose ends 2 件発覚** — A.4.9〜10 の renderer 移行で (L1) `cf-local-tests.conf` への test 用 `js_import` (ck_test/cc_test/ttl_test) が抜けて 8081 が常に 500 / (L2) `cache_key.js` が renderer 出力 `policies.json` のみ読むようになり β 用合成 policy (`with-session` / `with-locale` / `_test-*`) を引き継げなくなる、という 2 種の取りこぼし。前者は js_import 3 行追加で解決、後者は本番と test を別 path に分離 (`nginx/njs/test-policies.json`) して `cache_key.js` で merge する設計に再構築。**教訓**: image 焼き込みファイル群の責務分離は移行 PR の最後に α regression を必ず通して確認する
+- **A.5.5 統合テストで Go HTTP Transport の AE=gzip 自動付与で cache_key variant がズレる bug** — `NginxPurger` が `Accept-Encoding` 未設定でリクエストすると Go の `http.Transport` が `gzip` を自動付与し、njs の cache_key 計算で gzip variant が選ばれて本番リクエスト (AE 無し → identity) と別 slot を purge してしまう。`Accept-Encoding: identity` を明示的に立てて解決。**教訓**: cache key を sha256 で組み立てる設計では「同じ logical 入力でも HTTP client の都合で別 variant に化ける」リスクがあるので、purge 経路では明示的に variant を固定する
+- **A.5.3 配線で control plane → nginx の source IP が docker network private (172.x) で `allow 127.0.0.1` only に弾かれる** — 127.0.0.1 only allow は host loopback には届くが、別 container からは別 IP source。RFC1918 private CIDR (10/8 + 172.16/12 + 192.168/16) を allow に追加して暫定対応。**Phase 4-A の REV-1 (unix socket 化)** で根本解決予定
+- **ngx_cache_purge v2.5.5 の対象 slot 不在時の応答が 404 ではなく 412 Precondition Failed** — RFC 規約からの逸脱だが事実そう。`NginxPurger` 側で 404 / 412 とも success として扱う実装にした
+- **macOS Docker Desktop bind mount + inotify が VirtioFS で動かない件** — A.2 段階で発覚、3-5 spike で named volume 経由なら動くことを確認 → A.4 で named volume 切替時に全環境で auto reload が効くようになった (期待通り)
+
+### 次フェーズへの引き継ぎ事項
+
+**Phase 4-A (Terraform 対応・最小)**:
+
+- **REV-1 unix socket 化**: 現状 `/_cf_purge` は loopback + RFC1918 private CIDR allow で受けているが、host から `:8080` に来る同 IP からは bypass 可能 (本来は外部から叩かれない設計が前提)。Phase 4-A で control plane が同居するタイミングで `upstream self { server unix:/run/cf-local-inner.sock; }` + `listen unix:/run/cf-local-inner.sock;` の inner-only server block 分離に切り替えて allow 制限の暫定処置を撤廃する
+- **REV-11 stress test**: `upstream self` は keepalive 未設定で各リクエスト TCP connect が立つ。worker_connections のうち outer + inner で実質半減。Phase 4-A で高並列検証 (vegeta 1000 RPS / 1 分等) で connection 枯渇 / accept queue 飽和を観測。unix socket 化後の再計測で確定
+- **rename 順序 race の根本解決**: 現状 `policies.json` と `cf-local.conf` を順次 atomic rename するため、debounce 1 秒の隙間で「片方だけ反映」の中間状態が短時間発生しうる。Phase 3 では起動時 1 回 + invalidation の 1 イベントしか conf を書かないため実害は出ないが、Phase 4-A の API CRUD で頻繁に書き換える時は問題化する。staging dir に 2 ファイル書き終わってから dir 単位で atomic rename する方式 / `cf-local.conf` だけを reload trigger にし `policies.json` は起動時 1 回読みに変更、のいずれかを Phase 4-A で実装
+- **P3→P4A-1 PathPattern 拡張**: Phase 3 では prefix wildcard (`/path/*` / `*`) のみ受理。Phase 4-A の renderer に regex location 変換を追加して suffix wildcard (`*.jpg`) / middle wildcard (`/api/*/foo`) / exact path (`/index.html`) / 複数 wildcard を解禁する。優先順位の規則 (より具体的な PathPattern が優先) も Phase 4-A で正式設計
+- **3-Rv で残る判断**: REV-7 の sanitize は njs 側 defense-in-depth として実装したが、Phase 4-A の Go loader (`internal/config`) では Terraform からの API 入力に対して同等の validation を再実装する必要がある (njs 側はあくまで安全網)
+
+**Phase 4-B (Invalidation API 互換) — 後半-1〜5 として tasks.md に起こし済**:
+
+- 後半-1 AWS `CreateInvalidation` XML 形式互換 (`POST /2020-05-31/distribution/{Id}/invalidation`)
+- 後半-2 wildcard サポート (`/foo/*`, `*.jpg`)
+- 後半-3 multi-variant invalidation (cookie / header / AE 違いの全 slot を一括 purge)
+- 後半-4 非同期実行 + status (`InProgress`/`Completed`) + `GetInvalidation` / `ListInvalidations`
+- 後半-5 invalidation 履歴の永続化 (BoltDB)
+
+### DESIGN.md 更新が必要な点
+
+- **§4.3 Invalidation**: Phase 3 MVP 仕様 (cf-local 独自 simple JSON / 完全一致 / default policy + AE=identity の 1 variant のみ / 同期実行) を反映する。後半拡充は Phase 4-B 送り
+- **§3.1 Control Plane / Data Plane の data flow 図**: named volume 経由の renderer 配信 (Control Plane が `cf-local.conf` + `policies.json` を atomic rename → inotify sidecar が `nginx -s reload` を発火) を反映
+- **§5 リスク**: macOS Docker Desktop の VirtioFS bind mount + inotify が動かない件は named volume で解決済なので、リスクとしての記述は削除 or 「named volume 採用で解消」と注記
+
+### 主要マイルストーン (本フェーズ)
+
+| 区分 | 主担当 commit |
+|---|---|
+| 3-1 schema 確定 + njs 4-behavior + AE 独立 | `0c42152` / `7805364` |
+| 3-2 ngx_cache_purge dynamic module | `abdd41f` (spike) / `f1cd583` (本実装) |
+| 3-5 reload 経路 (named volume + inotify) | `ec06188` (spike) / `5865815` (本実装) |
+| 3-3 Go 基盤 + config loader | `8c85171` / `fae8417` |
+| 3-4 + 3-5 残 (A.4) renderer + 常駐化 + named volume 切替 | `e2ba8dd`〜`84daa33` (13 commit) / `077c34f` (review fix) / `f7a72a7` (β loose ends fix) |
+| 3-6 + 3-7 (A.5) invalidation handler + α | `7198205` (設計) / `5d2506a`〜`3adb57d` (5 commit) / `b316b5e` (docs) |
+| 3-Rv (Phase 2 review 繰越し) | `b269cbd` |
+| 3-8 examples + CMS webhook docs | `2f8b0f5` |
