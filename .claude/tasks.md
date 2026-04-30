@@ -41,7 +41,7 @@
 ### Phase 2 review からの繰越し (3-Rv)
 
 - [ ] REV-7 `getPolicyTtl` validation (`min_ttl > max_ttl` / 負値 / 非数値) — `nginx/njs/cache_key.js`
-- [ ] REV-10 TTL error path observability (`X-Cf-Ttl-Error` sentinel + outer の `proxy_no_cache`) — `nginx/njs/ttl.js`, `nginx.conf`
+- [x] REV-10 TTL error path observability (`X-Cf-Ttl-Error` sentinel + outer の `proxy_no_cache`) — `nginx/njs/ttl.js`, `nginx.conf` (A.0 で完了、α regression 検証済)
 - [ ] REV-3 多 policy 対応で `_test-ttl-clamp` を α テスト実 location に — `tests/integration/...`
 - [ ] REV-5 AT02 sleep を 3.5s + wall-clock log — `tests/integration/ttl_alpha_test.go`
 - [ ] REV-9 testserver malformed query で 400 — `tests/integration/testserver/server.go`
