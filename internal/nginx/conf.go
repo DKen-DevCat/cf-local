@@ -266,11 +266,18 @@ func writeUpstreams(b *bytes.Buffer, origins []originView) {
 
 func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerView) {
 	b.WriteString("server {\n    listen 8080;\n\n")
-	b.WriteString(`    # Invalidation purge endpoint (A.5 で発火)。
+	b.WriteString(`    # Invalidation purge endpoint (A.5)。Control Plane が GET /_cf_purge<path>
+    # を内部発行すると、cache_key.js が cf_purge_uri を見て「<path> + default policy
+    # + 空 headers/cookies/queries + AE=identity」の cache key を計算し、ngx_cache_purge
+    # が当該 1 slot を消す。MVP は default policy 1 variant のみ対応 (docs/limitations.md 参照)。
     location ~ ^/_cf_purge(/.*)$ {
         allow 127.0.0.1;
         deny all;
-        proxy_cache_purge cf_cache $1;
+
+        set $cf_policy_id "default";
+        set $cf_purge_uri  $1;
+
+        proxy_cache_purge cf_cache $cf_cache_key;
     }
 
 `)

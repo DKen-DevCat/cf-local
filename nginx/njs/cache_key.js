@@ -262,8 +262,13 @@ function forNginx(r) {
         const id = r.variables.cf_policy_id || 'default';
         const policy = getPolicy(id);
         if (!policy) return 'cache-key-no-policy';
+        // Phase 3 A.5.1: invalidation 内部 endpoint (`/_cf_purge<path>`) は
+        // 計算用 URI を `$cf_purge_uri` で渡す。これがあれば r.uri より優先。
+        // 通常リクエストでは未設定 (空文字) なので r.uri が使われる。
+        const purgeUri = r.variables.cf_purge_uri;
+        const uri = purgeUri && purgeUri.length > 0 ? purgeUri : r.uri;
         return compute({
-            uri: r.uri,
+            uri: uri,
             method: r.method,
             headers: r.headersIn,
             cookies: parseCookieHeader(r.headersIn['Cookie']),
