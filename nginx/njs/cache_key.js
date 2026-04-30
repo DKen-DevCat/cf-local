@@ -22,6 +22,13 @@ import fs from 'fs';
 // 起動時 1 度だけ読み込む。同 dir には `cf-local.conf` も同居。
 const POLICIES_PATH = '/etc/nginx/cf-local/policies.json';
 
+// Phase 3 A.4.13: β テスト用 policy (`_test-*` / docs 例の `with-session` /
+// `with-locale`) は image 焼き込みの test-policies.json に分離する。本番側
+// (renderer 出力) と同名キーがあれば本番優先 (test policy が本番を silent に
+// 上書きするのを防ぐ)。test-policies.json は best-effort: ファイル不在 /
+// 不正でも起動を止めない (本番 mode で 8081 を expose しなければ無害)。
+const TEST_POLICIES_PATH = '/etc/nginx/njs/test-policies.json';
+
 // policies.json が壊れていたり消えていたりしても worker を起動継続させるための fallback。
 // 全 behavior=none / AE 両 ON のため、cache key は URI + method + AE のみで決まる。
 const SAFE_DEFAULT = {
@@ -38,20 +45,36 @@ const SAFE_DEFAULT = {
     },
 };
 
-// 各 worker で 1 度だけパース。失敗時は SAFE_DEFAULT のみで起動継続し、
+// 各 worker で 1 度だけパース。本番 load 失敗時は SAFE_DEFAULT のみで起動継続し、
 // 全リクエストが同一 cache slot に潰れる事故を回避する (Phase 2 review concern #4)。
 let _loadError = null;
 const POLICIES = (function () {
+    let testPolicies = {};
+    try {
+        const parsed = JSON.parse(fs.readFileSync(TEST_POLICIES_PATH));
+        if (parsed && typeof parsed.policies === 'object' && parsed.policies !== null) {
+            testPolicies = parsed.policies;
+        }
+    } catch (e) {
+        // best-effort: test-policies.json は β only。production を止める理由にしない。
+    }
+
+    let prodPolicies;
     try {
         const parsed = JSON.parse(fs.readFileSync(POLICIES_PATH));
         if (!parsed || typeof parsed.policies !== 'object' || parsed.policies === null) {
             throw new Error('policies.json: top-level "policies" object missing or not an object');
         }
-        return parsed.policies;
+        prodPolicies = parsed.policies;
     } catch (e) {
         _loadError = String(e.message || e);
-        return { default: SAFE_DEFAULT };
+        prodPolicies = { default: SAFE_DEFAULT };
     }
+
+    const merged = {};
+    for (const k in testPolicies) merged[k] = testPolicies[k];
+    for (const k in prodPolicies) merged[k] = prodPolicies[k];
+    return merged;
 })();
 
 // material 組み立てフォーマットのバージョン。組み立て規則を変えたらここを bump して

@@ -49,10 +49,12 @@
         - A.4.10 β test endpoint を `nginx/cf-local-tests/cf-local-tests.conf` (port 8081 別 server block) に分離。base `nginx.conf` に `include /etc/nginx/cf-local-tests/*.conf;` 追加。`nginx/cf-local/cf-local.conf` 削除。β test 側 (`tests/integration/`) は `doBeta` ヘルパー + `defaultBetaBase` 定数を追加して 8081 に逃がす。`requireUp` も β endpoint ping に統一
         - A.4.11 repo root `Dockerfile` 新規 (Go binary, multi-stage, tini PID1)。`docker-compose.yml` 改修 (cf-local service + named volume `cf-local-conf` + nginx mount 切替 + depends_on)。`docker-compose.test.yml` 新規 (port 8081 を expose する override)
         - A.4.12 `cf-local/cache-policies/default.json` + `cf-local/distributions/main.json` を Phase 0〜2 互換で配置。`.gitignore` の `/cf-local` rule 撤去 (binary 用は docker build で閉じる運用に変更)
-    - [ ] A.4.13 α regression PASS 確認 (Phase 1〜2 の α テスト群が新構成で通る)
+    - [x] A.4.13 α regression PASS 確認 — 新構成 (cf-local + nginx 2 service / named volume / inotify reload) で Phase 1 α 4/4 + Phase 2 α 7/7 PASS。発見した A.4.9〜10 取りこぼし 2 件 (β only loose ends) を併せて修正:
+        - (L1) `nginx/cf-local-tests/cf-local-tests.conf` に test 用 `js_import` (ck_test / cc_test / ttl_test) が無く 8081 endpoint が 500 → http context に 3 行追加 (`js_path` は cf-local.conf 側で先に設定済)
+        - (L2) `cache_key.js` が POLICIES_PATH (renderer 出力) のみ読み β テスト用合成 policy (`with-session` / `with-locale` / `_test-*`) を引き継いでいない → `nginx/njs/policies.json` を `test-policies.json` にリネーム + `default` 削除 + `cache_key.js` に `TEST_POLICIES_PATH` 追加 (best-effort load、本番優先 merge)。β `TestComputeKey_TableDriven` / `TestCacheControl_Parse` / `TestTTL_Compute` 全 PASS
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
 - [x] 3-5 本実装 (A.2): sidecar スクリプト `nginx/scripts/` 配置 + Dockerfile に inotify-tools + nginx.conf を `include /etc/nginx/cf-local/*.conf` 化 + bind mount 追加 (α regression PASS、macOS bind mount + inotify は VirtioFS 制約で動かないが A.4 で named volume に切替後解決)
-- [ ] 3-5 残: Control Plane (`internal/nginx/renderer.go`) で atomic rename 実装 — A.4 で扱う
+- [x] 3-5 残: Control Plane で atomic rename 実装 — A.4.7 (`internal/nginx/writer.go` の `WriteAtomic`: tmp → fsync → rename → parent dir fsync) + A.4.8 (`cmd/cf-local/main.go` の `run()` で `policies.json` / `cf-local.conf` 両方に配線) で吸収済み
 - [ ] 3-6 `POST /_invalidate` ハンドラ + `ngx_cache_purge` 連携 (完全一致のみ)
 - [ ] 3-7 α 統合テスト追加 (config → docker up → invalidate → MISS)
 - [ ] 3-8 `examples/` 拡充 + `docs/config-schema.md` + CMS 連携ドキュメント
