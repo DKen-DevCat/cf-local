@@ -23,6 +23,9 @@ vendor/
 /nginx-cache/
 *.log
 
+# golden file テスト不一致時に書き出される actual output (assertGolden が生成)
+internal/**/testdata/**/*.got
+
 # Editor / OS
 .DS_Store
 .idea/

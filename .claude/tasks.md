@@ -37,7 +37,7 @@
     - 論点 1〜5 (policies.json 配信 / PathPattern 範囲 / β test 分離 / purge location 同梱 / compose 同梱) は kickoff 後に確定
     - [x] A.4.0 golden test fixture 配置 (`internal/nginx/testdata/{min,multi-policy,ae-flags,disabled}/{cache-policies,distributions,*.json,*.conf}`) — TDD の input/expected を先に。loader smoke で全 4 ケース読み込み OK
     - [x] A.4.1 `internal/nginx/renderer.go` skeleton + `Render(*config.LoadResult) (*Output, error)` 型定義 + `render_test.go` table-driven test (全 4 ケース unimplemented で FAIL することを確認、gofmt/go vet クリーン)
-    - [ ] A.4.2 policies.json 生成 (AWS SDK 型 → JSON marshal) + `min` / `ae-flags` golden PASS
+    - [x] A.4.2 policies.json 生成 (intermediate struct で flatten + omitempty marshal) + 全 4 ケース policies.json golden PASS。subtest は cf-local.conf 側で依然 FAIL なので最終 PASS は A.4.6 で達成
     - [ ] A.4.3 nginx.conf 生成: upstream + DefaultCacheBehavior の outer/inner ペア + `min` golden PASS
     - [ ] A.4.4 PathPattern → location 変換 + sanitize + `multi-policy` golden PASS
     - [ ] A.4.5 loader 側 PathPattern 受理規則 (prefix `/path/*` のみ) + `pathpattern-reject` テスト追加

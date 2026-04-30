@@ -1,7 +1,12 @@
 package nginx
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 
 	"github.com/DKen-DevCat/cf-local/internal/config"
 )
@@ -33,11 +38,164 @@ type Output struct {
 // res.CachePolicies に存在しない等) を表す。loader が cross-ref 検証を
 // 通している場合、ここで error が返ることはないが defense-in-depth として残す。
 //
-// A.4.1 時点では unimplemented (skeleton)。A.4.2 で policies.json、A.4.3
-// で cf-local.conf の生成を順次実装する。
+// 実装進捗:
+//   - A.4.1 skeleton (型定義のみ)
+//   - A.4.2 policies.json 生成 ← 本コミット
+//   - A.4.3+ cf-local.conf 生成 (順次)
 func Render(res *config.LoadResult) (*Output, error) {
 	if res == nil {
 		return nil, errors.New("nginx.Render: LoadResult is nil")
 	}
-	return nil, errors.New("nginx.Render: unimplemented (A.4.1 skeleton)")
+
+	policies, err := buildPoliciesJSON(res.CachePolicies)
+	if err != nil {
+		return nil, fmt.Errorf("nginx.Render: policies.json: %w", err)
+	}
+
+	return &Output{
+		Conf:     nil, // A.4.3 以降で実装
+		Policies: policies,
+	}, nil
+}
+
+// ---- policies.json ---------------------------------------------------------
+
+// policies.json の出力フォーマット定義。
+//
+// AWS SDK Go v2 の cloudfront/types は List 型を {Quantity, Items} の入れ子
+// 構造で表現する (XML 互換のため)。njs cache_key.js は flat array 前提で
+// 実装されているため、出力時に flatten する必要がある。本ファイルでは
+// 中間 struct を定義して `encoding/json` で marshal することで:
+//
+//   1. PascalCase フィールド名を維持 (njs schema 互換)
+//   2. {Quantity, Items} → flat array に flatten
+//   3. 空 list は omitempty で省略 (njs cache_key.js 側は `|| []` で吸収)
+//   4. struct 宣言順でフィールドが出力される (encoding/json の仕様)
+//   5. map のキーは alphabetical sort される (encoding/json の仕様)
+//
+// 出力 indent は 2 space。末尾改行 1 つ付ける (POSIX text file 慣行 +
+// `diff -u` で差分を見やすくするため)。
+
+type policiesJSON struct {
+	Policies map[string]*policyOut `json:"policies"`
+}
+
+type policyOut struct {
+	Name       string            `json:"Name"`
+	MinTTL     int64             `json:"MinTTL"`
+	MaxTTL     *int64            `json:"MaxTTL,omitempty"`
+	DefaultTTL *int64            `json:"DefaultTTL,omitempty"`
+	Parameters cacheKeyParamsOut `json:"ParametersInCacheKeyAndForwardedToOrigin"`
+}
+
+type cacheKeyParamsOut struct {
+	EnableAcceptEncodingGzip   bool                  `json:"EnableAcceptEncodingGzip"`
+	EnableAcceptEncodingBrotli bool                  `json:"EnableAcceptEncodingBrotli"`
+	HeadersConfig              headersConfigOut      `json:"HeadersConfig"`
+	CookiesConfig              cookiesConfigOut      `json:"CookiesConfig"`
+	QueryStringsConfig         queryStringsConfigOut `json:"QueryStringsConfig"`
+}
+
+type headersConfigOut struct {
+	HeaderBehavior string   `json:"HeaderBehavior"`
+	Headers        []string `json:"Headers,omitempty"`
+}
+
+type cookiesConfigOut struct {
+	CookieBehavior string   `json:"CookieBehavior"`
+	Cookies        []string `json:"Cookies,omitempty"`
+}
+
+type queryStringsConfigOut struct {
+	QueryStringBehavior string   `json:"QueryStringBehavior"`
+	QueryStrings        []string `json:"QueryStrings,omitempty"`
+}
+
+func buildPoliciesJSON(in map[string]*types.CachePolicyConfig) ([]byte, error) {
+	out := policiesJSON{Policies: make(map[string]*policyOut, len(in))}
+	for name, cp := range in {
+		converted, err := convertCachePolicy(cp)
+		if err != nil {
+			return nil, fmt.Errorf("policy %q: %w", name, err)
+		}
+		out.Policies[name] = converted
+	}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false) // policies.json は njs が読むだけ。`<` `>` `&` の
+	// HTML エスケープは紛らわしくなるだけなので無効化。
+	if err := enc.Encode(out); err != nil {
+		return nil, err
+	}
+	// json.Encoder は末尾に改行を付ける。それを尊重する (golden が末尾改行 1 つ前提)。
+	return buf.Bytes(), nil
+}
+
+func convertCachePolicy(cp *types.CachePolicyConfig) (*policyOut, error) {
+	if cp == nil {
+		return nil, errors.New("CachePolicyConfig is nil")
+	}
+	out := &policyOut{
+		MaxTTL:     cp.MaxTTL,
+		DefaultTTL: cp.DefaultTTL,
+	}
+	if cp.Name != nil {
+		out.Name = *cp.Name
+	}
+	if cp.MinTTL != nil {
+		out.MinTTL = *cp.MinTTL
+	}
+	params := cp.ParametersInCacheKeyAndForwardedToOrigin
+	if params != nil {
+		out.Parameters = cacheKeyParamsOut{
+			EnableAcceptEncodingGzip:   derefBool(params.EnableAcceptEncodingGzip),
+			EnableAcceptEncodingBrotli: derefBool(params.EnableAcceptEncodingBrotli),
+			HeadersConfig:              convertHeadersConfig(params.HeadersConfig),
+			CookiesConfig:              convertCookiesConfig(params.CookiesConfig),
+			QueryStringsConfig:         convertQueryStringsConfig(params.QueryStringsConfig),
+		}
+	}
+	return out, nil
+}
+
+func convertHeadersConfig(c *types.CachePolicyHeadersConfig) headersConfigOut {
+	if c == nil {
+		return headersConfigOut{}
+	}
+	out := headersConfigOut{HeaderBehavior: string(c.HeaderBehavior)}
+	if c.Headers != nil && len(c.Headers.Items) > 0 {
+		out.Headers = c.Headers.Items
+	}
+	return out
+}
+
+func convertCookiesConfig(c *types.CachePolicyCookiesConfig) cookiesConfigOut {
+	if c == nil {
+		return cookiesConfigOut{}
+	}
+	out := cookiesConfigOut{CookieBehavior: string(c.CookieBehavior)}
+	if c.Cookies != nil && len(c.Cookies.Items) > 0 {
+		out.Cookies = c.Cookies.Items
+	}
+	return out
+}
+
+func convertQueryStringsConfig(c *types.CachePolicyQueryStringsConfig) queryStringsConfigOut {
+	if c == nil {
+		return queryStringsConfigOut{}
+	}
+	out := queryStringsConfigOut{QueryStringBehavior: string(c.QueryStringBehavior)}
+	if c.QueryStrings != nil && len(c.QueryStrings.Items) > 0 {
+		out.QueryStrings = c.QueryStrings.Items
+	}
+	return out
+}
+
+func derefBool(p *bool) bool {
+	if p == nil {
+		return false
+	}
+	return *p
 }
