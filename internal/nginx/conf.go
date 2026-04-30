@@ -96,19 +96,75 @@ func buildOriginViews(origins *types.Origins) ([]originView, error) {
 // buildBehaviorViews は DefaultCacheBehavior + CacheBehaviors[] から
 // outer location 配列と inner location 配列を組み立てる。
 //
-// A.4.3 時点では DefaultCacheBehavior のみ。CacheBehaviors[] は A.4.4 で
-// 反映する (ここで早めに処理してもいいが、A.4.4 の PathPattern 変換ロジック
-// に集約する方が PR を小さく保てる)。
+// outer location の出力順:
+//
+//  1. CacheBehaviors[] (AWS SDK Items の順 = JSON 配列順)
+//  2. DefaultCacheBehavior (`location /`)
+//
+// nginx の prefix-longest-match では順序は本来関係ないが、CloudFront 設定の
+// 慣行に合わせて宣言順に書く (`/api/` → `/`)。
+//
+// inner location は sanitized policy id 昇順 (alphabetical) に並べる。
+// 同一 policy が複数 behavior から参照されたら inner は 1 つだけ生成する
+// (sanitized id ベースで dedup)。dedup された場合の TargetOriginId は
+// 「最初に登録した behavior のもの」を採用する (Phase 3 の挙動として確定。
+// 同 policy で別 origin に振り分けたい場合は別 policy を作る運用)。
 func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerView, error) {
 	if d == nil {
 		return nil, nil, fmt.Errorf("DistributionConfig is nil")
 	}
-
-	var behaviors []behaviorView
-
 	if d.DefaultCacheBehavior == nil {
 		return nil, nil, fmt.Errorf("DefaultCacheBehavior is nil")
 	}
+
+	var behaviors []behaviorView
+	inners := map[string]innerView{}
+
+	addInner := func(policyID, originID, sanPolicy string) error {
+		if _, ok := inners[sanPolicy]; ok {
+			return nil // dedup
+		}
+		upstream, err := originUpstreamName(originID)
+		if err != nil {
+			return err
+		}
+		inners[sanPolicy] = innerView{
+			Location:     "/_cf_inner_" + sanPolicy + "/",
+			PolicyID:     policyID,
+			UpstreamName: upstream,
+		}
+		return nil
+	}
+
+	// 1. CacheBehaviors[] (PathPattern 順)
+	if d.CacheBehaviors != nil {
+		for i, b := range d.CacheBehaviors.Items {
+			pattern := derefString(b.PathPattern)
+			policyID := derefString(b.CachePolicyId)
+			originID := derefString(b.TargetOriginId)
+
+			loc, err := pathPatternToLocation(pattern)
+			if err != nil {
+				return nil, nil, fmt.Errorf("CacheBehaviors[%d]: %w", i, err)
+			}
+			san := sanitizeID(policyID)
+			if san == "" {
+				return nil, nil, fmt.Errorf("CacheBehaviors[%d].CachePolicyId %q sanitizes to empty string", i, policyID)
+			}
+
+			behaviors = append(behaviors, behaviorView{
+				Comment:     fmt.Sprintf("CacheBehaviors[%d]: %s (CachePolicyId=%s).", i, pattern, policyID),
+				Location:    loc,
+				PolicyID:    policyID,
+				InnerPrefix: "/_cf_inner_" + san,
+			})
+			if err := addInner(policyID, originID, san); err != nil {
+				return nil, nil, fmt.Errorf("CacheBehaviors[%d]: %w", i, err)
+			}
+		}
+	}
+
+	// 2. DefaultCacheBehavior
 	defaultOriginID := derefString(d.DefaultCacheBehavior.TargetOriginId)
 	defaultPolicyID := derefString(d.DefaultCacheBehavior.CachePolicyId)
 	defaultSan := sanitizeID(defaultPolicyID)
@@ -121,27 +177,11 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 		PolicyID:    defaultPolicyID,
 		InnerPrefix: "/_cf_inner_" + defaultSan,
 	})
-
-	// inner locations: sanitized policy id をキーに dedup (A.4.4 で複数 behaviors が
-	// 同 policy を共有した場合に備えて map 経由で管理)。
-	inners := map[string]innerView{}
-	originUpstream := func(originID string) (string, error) {
-		san := sanitizeID(originID)
-		if san == "" {
-			return "", fmt.Errorf("TargetOriginId %q sanitizes to empty string", originID)
-		}
-		return "origin_" + san, nil
-	}
-	defaultUpstream, err := originUpstream(defaultOriginID)
-	if err != nil {
+	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan); err != nil {
 		return nil, nil, err
 	}
-	inners[defaultSan] = innerView{
-		Location:     "/_cf_inner_" + defaultSan + "/",
-		PolicyID:     defaultPolicyID,
-		UpstreamName: defaultUpstream,
-	}
 
+	// inner sort (sanitized id alphabetical)
 	innerList := make([]innerView, 0, len(inners))
 	keys := make([]string, 0, len(inners))
 	for k := range inners {
@@ -153,6 +193,43 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 	}
 
 	return behaviors, innerList, nil
+}
+
+// originUpstreamName は TargetOriginId を sanitize して `origin_<san>` を返す。
+func originUpstreamName(originID string) (string, error) {
+	san := sanitizeID(originID)
+	if san == "" {
+		return "", fmt.Errorf("TargetOriginId %q sanitizes to empty string", originID)
+	}
+	return "origin_" + san, nil
+}
+
+// pathPatternToLocation は CloudFront PathPattern を nginx location prefix に
+// 変換する。Phase 3 では prefix wildcard (`/path/*` / `*`) のみ受理する。
+//
+// 変換規則:
+//
+//   - `*`        → `/`         (全パス、DefaultCacheBehavior と同じだが
+//     loader が定義可能性を許容している)
+//   - `/api/*`   → `/api/`     (末尾 `/*` を strip して `/` を残す)
+//   - `/posts/*` → `/posts/`
+//
+// 上記以外は error を返す。**この関数は loader 側の受理規則と二重防衛として
+// 残してあるが、第一防衛は loader (A.4.5 で実装)**。loader が通した PathPattern
+// が renderer 側で reject される状況は通常起きない。
+func pathPatternToLocation(p string) (string, error) {
+	if p == "" {
+		return "", fmt.Errorf("PathPattern is empty")
+	}
+	if p == "*" {
+		return "/", nil
+	}
+	if strings.HasSuffix(p, "/*") {
+		// 末尾の `*` だけを除去し、`/` を残す。
+		// 例: "/api/*" -> "/api/"
+		return strings.TrimSuffix(p, "*"), nil
+	}
+	return "", fmt.Errorf("unsupported PathPattern %q (Phase 3 supports only prefix wildcard `…/*` or `*`)", p)
 }
 
 // ---- writers ---------------------------------------------------------------
