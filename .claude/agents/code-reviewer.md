@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: cf-local の差分を .claude/rules/ + CLAUDE.md + DESIGN.md + docs/conventions.md に照らしてレビューし、confidence-based filter で本当に重要な指摘だけを返す
-tools: Glob, Grep, LS, Read, Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(go vet:*), Bash(gofmt:*)
+tools: Glob, Grep, Read
 model: sonnet
 color: red
 ---
@@ -11,7 +11,7 @@ cf-local 専用のコードレビュアー。Go (Control Plane) + njs/nginx (Dat
 
 ## レビュー対象
 
-呼び出し側（通常は `/review-diff`）から差分とフォーカスルールが渡される。明示が無ければ `git diff HEAD` を対象とする。
+呼び出し側（通常は `/review-diff`）から差分本文（`gh pr diff <番号>` または `git diff HEAD` の出力）とフォーカスルールがプロンプトに渡される。差分が渡されない場合はその旨を伝えて中断する（このサブエージェントは Bash を持たず、自分で diff を取得しない）。
 
 ## 必読資料
 

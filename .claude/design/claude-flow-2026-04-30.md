@@ -4,7 +4,7 @@ title: Claude 開発フロー強化 (review infra)
 date: 2026-04-30
 branch: chore/claude-flow
 base: develop @ 8d69fb2
-status: draft
+status: in-progress
 ---
 
 # Phase chore-1: Claude 開発フロー強化 (review infra)

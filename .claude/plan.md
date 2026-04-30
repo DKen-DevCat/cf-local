@@ -31,7 +31,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4c` | 未着手 | 仕上げ |
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
-| `chore-1` | 未着手 | Claude 開発フロー強化 (review infra) |
+| `chore-1` | 進行中 | Claude 開発フロー強化 (review infra) |
 
 ---
 
@@ -278,8 +278,8 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ## chore-1: Claude 開発フロー強化 (review infra)
 
-> ステータス: planned
-> ブランチ案: `chore/claude-flow`
+> ステータス: in-progress
+> ブランチ: `chore/claude-flow`
 > 作成日: 2026-04-30
 
 ### 目的 / 背景
