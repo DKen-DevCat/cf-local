@@ -113,8 +113,22 @@ func validatePaths(paths []string) error {
 	return nil
 }
 
-// validatePath は完全一致 path に許す形だけ通す。Phase 3 では query / fragment を
-// 含む path は invalid (cache key 計算は queries=空 で固定するため)。
+// validatePath は完全一致 path を strict allow-list で受け付ける。
+//
+// 許容: [A-Za-z0-9._\-/] のみ。これは internal/config の isSafePathRune と
+// 同じ規則で、SEC-1 系の sanitization と一貫させている。
+//
+// 弾くもの (狭く絞る理由):
+//   - percent-encoded byte (`%2e%2e%2f`, `%00`, `%0a` 等) → nginx 側 URL
+//     decode 後の $cf_purge_uri が本番 $request_uri と byte 一致せず、
+//     SHA-256 cache key が desync して purge が無音失敗するため
+//   - 制御文字 (\x00-\x1f, \x7f) / 非 ASCII (\x80+) → 同上
+//   - `?` `#` → query / fragment は cache key 計算で空固定、含めるのは無意味
+//   - `*` ワイルドカード → Phase 3 は完全一致のみ (Phase 4-B で対応)
+//
+// CloudFront 本物は事前 URL encode された printable ASCII を許容するが、
+// Phase 3 MVP は `%` を含めて弾く保守側に倒し、Phase 4-B で encoded path /
+// wildcard / Unicode 対応を再設計する。
 func validatePath(p string) error {
 	if p == "" {
 		return errors.New("empty")
@@ -125,10 +139,26 @@ func validatePath(p string) error {
 	if len(p) > maxPathLen {
 		return fmt.Errorf("too long: %d bytes (max %d)", len(p), maxPathLen)
 	}
-	if strings.ContainsAny(p, "\x00 \t\r\n?#") {
-		return errors.New("contains forbidden character (whitespace / ? / # / NUL)")
+	for i := 0; i < len(p); i++ {
+		if !isSafePathByte(p[i]) {
+			return fmt.Errorf("contains forbidden byte 0x%02x at offset %d (allowed: A-Z a-z 0-9 . _ - /)", p[i], i)
+		}
 	}
 	return nil
+}
+
+func isSafePathByte(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z':
+		return true
+	case c >= 'a' && c <= 'z':
+		return true
+	case c >= '0' && c <= '9':
+		return true
+	case c == '.', c == '_', c == '-', c == '/':
+		return true
+	}
+	return false
 }
 
 func isJSONContentType(ct string) bool {

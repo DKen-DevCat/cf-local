@@ -128,6 +128,80 @@ func TestHandler_TableDriven(t *testing.T) {
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
+			// strict-mode: percent-encoded `%2e%2e%2f` (../) を弾く。
+			// 通すと nginx 側 URL decode 後の $cf_purge_uri が本番 $request_uri と
+			// byte 一致せず、SHA-256 cache key が desync して purge が無音失敗する。
+			name:        "path with percent-encoded ..%2f → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foo/%2e%2e%2fbar"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "path with percent-encoded NUL %00 → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foo%00"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "path with percent-encoded LF %0a → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foo%0abar"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			// non-ASCII UTF-8 multi-byte (ja: 日本) → 0xe6 系で reject。
+			// Phase 3 MVP は事前エンコード済 ASCII path のみ受け付ける契約。
+			name:        "path with non-ASCII UTF-8 → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/posts/日本語"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			// 制御文字 (raw 0x01) → reject (JSON 内で  として送る)。
+			name:        "path with control byte → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foobar"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			// HTML-like meta chars → reject。loader 側 SEC-1 と一貫。
+			name:        "path with angle bracket → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foo<bar"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "path with backslash → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foo\\bar"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			// wildcard `*` は Phase 4-B 送り。Phase 3 では完全一致のみ。
+			name:        "path with wildcard → 400",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"paths":["/foo/*"]}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			// allow-list 境界: `[A-Za-z0-9._\-/]` 内の全文字を含む path は通る。
+			name:            "path with all allowed chars → 200",
+			method:          http.MethodPost,
+			contentType:     "application/json",
+			body:            `{"paths":["/posts/abc-def_ghi.html"]}`,
+			wantStatus:      http.StatusOK,
+			wantPurged:      []string{"/posts/abc-def_ghi.html"},
+			wantInvalidated: 1,
+		},
+		{
 			name:            "purger error per path → 200 with errors[]",
 			method:          http.MethodPost,
 			contentType:     "application/json",

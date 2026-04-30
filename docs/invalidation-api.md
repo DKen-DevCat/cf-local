@@ -25,7 +25,21 @@ Phase 4-A 以降で `:4566` には AWS API 互換 endpoint も同居させる予
 
 | Field | Type | 制約 |
 |---|---|---|
-| `paths` | string[] | 必須。1〜1000 件。各 path は leading `/` 必須、長さ ≤ 1024 byte、whitespace / `?` / `#` / NUL を含まない |
+| `paths` | string[] | 必須。1〜1000 件。各 path は leading `/` 必須、長さ ≤ 1024 byte、許容文字は `[A-Za-z0-9._\-/]` のみ (詳細は下記) |
+
+### path に使える文字 (Phase 3 MVP, strict allow-list)
+
+`[A-Za-z0-9._\-/]` 以外の byte を含む path はすべて **400 Bad Request**:
+
+- 制御文字 / 非 ASCII (UTF-8 multi-byte 含む) → reject
+- percent-encoded byte (`%2e`, `%00`, `%0a` 等) → reject
+- query / fragment (`?`, `#`) → reject (cache key 計算は空 query 固定のため含めても無意味)
+- wildcard (`*`) → reject (Phase 4-B 送り)
+- HTML / shell metachars (`<`, `>`, `&`, `'`, `"`, `\`, `;` 等) → reject
+
+これは nginx の URL decode 後 `$cf_purge_uri` と本番 `$request_uri` を byte 完全一致させ、SHA-256 cache key の desync (= 無音 purge 失敗) を防ぐための保守側の制約。Unicode path / encoded path / wildcard 対応は Phase 4-B で再設計する。
+
+`internal/config` の `isSafePathRune` (SEC-1) と同じ allow-list で一貫させている。
 
 ## レスポンス
 
