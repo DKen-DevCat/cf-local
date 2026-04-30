@@ -89,6 +89,18 @@ func TestTTL_Compute(t *testing.T) {
 
 		// 未知 directive は無視 (cache_control.parse 側で吸収済 — ここは念押し)
 		{"TT22 default: public + max-age=60", "public, max-age=60", "default", 60},
+
+		// REV-7 (Phase 2 review 繰越し): getPolicyTtl の sanitize。silent に
+		// 通すと clamp が逆向きに作用したり負値で異常 TTL が出るので、必ず
+		// DEFAULT_TTL_CONFIG に倒されることを実機で検証する。
+		// _test-ttl-bad-negative: MinTTL=-10 → 0 にサニタイズ、Max/Default は
+		//                          そのまま (Default=86400)。
+		{"TT-RV7-1 bad-negative: no CC → DefaultTTL=86400", "", "_test-ttl-bad-negative", 86400},
+		{"TT-RV7-2 bad-negative: no-store → MinTTL=0 (-10 を sanitize で 0)", "no-store", "_test-ttl-bad-negative", 0},
+		// _test-ttl-bad-min-gt-max: MinTTL=200 > MaxTTL=100 → 両方 DEFAULT に
+		//                            倒れる (Min=0, Max=31536000)。DefaultTTL=86400。
+		{"TT-RV7-3 bad-min-gt-max: no CC → DefaultTTL=86400", "", "_test-ttl-bad-min-gt-max", 86400},
+		{"TT-RV7-4 bad-min-gt-max: max-age=50 → 50 (clamp range が default に倒れて raw 通過)", "max-age=50", "_test-ttl-bad-min-gt-max", 50},
 	}
 
 	for _, c := range cases {

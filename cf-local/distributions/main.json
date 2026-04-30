@@ -15,5 +15,16 @@
         "CachePolicyId":        "default",
         "AllowedMethods":       ["GET", "HEAD"],
         "Compress":             true
-    }
+    },
+    "CacheBehaviors": [
+        {
+            "_comment":             "Phase 3-Rv (REV-3) — α テストで clamp 検証用。/_test-ttl-clamp/* で _test-ttl-clamp policy を割当。本番ユーザー向けではない (`_` prefix)。",
+            "PathPattern":          "/_test-ttl-clamp/*",
+            "TargetOriginId":       "next-app",
+            "ViewerProtocolPolicy": "allow-all",
+            "CachePolicyId":        "_test-ttl-clamp",
+            "AllowedMethods":       ["GET", "HEAD"],
+            "Compress":             true
+        }
+    ]
 }

@@ -82,12 +82,12 @@
 
 ### Phase 2 review からの繰越し (3-Rv)
 
-- [ ] REV-7 `getPolicyTtl` validation (`min_ttl > max_ttl` / 負値 / 非数値) — `nginx/njs/cache_key.js`
+- [x] REV-7 `getPolicyTtl` validation (`min_ttl > max_ttl` / 負値 / NaN / Infinity / 非数値 → DEFAULT_TTL_CONFIG にフォールバック) — `nginx/njs/cache_key.js` に sanitizeTtl() 追加 + test-policies.json に broken policy 2 件 + ttl_test.go に TT-RV7-1〜4 追加
 - [x] REV-10 TTL error path observability (`X-Cf-Ttl-Error` sentinel + outer の `proxy_no_cache`) — `nginx/njs/ttl.js`, `nginx.conf` (A.0 で完了、α regression 検証済)
-- [ ] REV-3 多 policy 対応で `_test-ttl-clamp` を α テスト実 location に — `tests/integration/...`
-- [ ] REV-5 AT02 sleep を 3.5s + wall-clock log — `tests/integration/ttl_alpha_test.go`
-- [ ] REV-9 testserver malformed query で 400 — `tests/integration/testserver/server.go`
-- [ ] REV-14 `cache_control.js` `max-age=` (値空) drop の test 追加 — `nginx/njs/cache_control.test.js`
+- [x] REV-3 多 policy 対応で `_test-ttl-clamp` を α テスト実 location に — `cf-local/cache-policies/_test-ttl-clamp.json` 新規 (本番 single source) + `cf-local/distributions/main.json` の CacheBehaviors に `/_test-ttl-clamp/*` 追加 + test-policies.json から重複削除 + ttl_alpha_test.go AT06 (max-age=1 → MinTTL=60 clamp で 1.5s 後も HIT 維持)
+- [x] REV-5 AT02 sleep を 3.5s + wall-clock log — `tests/integration/ttl_alpha_test.go`
+- [x] REV-9 testserver malformed query で 400 — `tests/integration/testserver/server.go` + `server_test.go` 新規 (4 unit test)
+- [x] REV-14 `cache_control.js` `max-age=` (値空) drop の test 追加 — `tests/integration/cache_control_test.go` に P20-P22 (実装は既に early return 済、境界明示)
 
 ### 完了条件 (再掲)
 

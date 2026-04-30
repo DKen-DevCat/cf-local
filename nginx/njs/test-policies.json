@@ -52,20 +52,6 @@
         "QueryStringsConfig": { "QueryStringBehavior": "none" }
       }
     },
-    "_test-ttl-clamp": {
-      "_comment": "Phase 2 test-only — non-default min/max/default to exercise ttl.compute clamp logic. No location maps to this policy.",
-      "Name": "_test-ttl-clamp",
-      "MinTTL": 60,
-      "MaxTTL": 120,
-      "DefaultTTL": 300,
-      "ParametersInCacheKeyAndForwardedToOrigin": {
-        "EnableAcceptEncodingGzip": true,
-        "EnableAcceptEncodingBrotli": true,
-        "HeadersConfig":      { "HeaderBehavior":      "none" },
-        "CookiesConfig":      { "CookieBehavior":      "none" },
-        "QueryStringsConfig": { "QueryStringBehavior": "none" }
-      }
-    },
     "_test-all-cookies": {
       "_comment": "Phase 3-1a test-only — CookieBehavior=all. すべての cookie が cache key に入る。",
       "Name": "_test-all-cookies",
@@ -165,6 +151,34 @@
       "ParametersInCacheKeyAndForwardedToOrigin": {
         "EnableAcceptEncodingGzip": false,
         "EnableAcceptEncodingBrotli": false,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-ttl-bad-negative": {
+      "_comment": "Phase 3-Rv (REV-7) test-only — MinTTL 負値。getPolicyTtl が DEFAULT_TTL_CONFIG.MinTTL=0 に倒すべき。",
+      "Name": "_test-ttl-bad-negative",
+      "MinTTL": -10,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-ttl-bad-min-gt-max": {
+      "_comment": "Phase 3-Rv (REV-7) test-only — MinTTL > MaxTTL。getPolicyTtl が両方 DEFAULT に倒すべき (silent に clamp が逆向きに作用するのを防ぐ)。",
+      "Name": "_test-ttl-bad-min-gt-max",
+      "MinTTL": 200,
+      "MaxTTL": 100,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
         "HeadersConfig":      { "HeaderBehavior":      "none" },
         "CookiesConfig":      { "CookieBehavior":      "none" },
         "QueryStringsConfig": { "QueryStringBehavior": "none" }

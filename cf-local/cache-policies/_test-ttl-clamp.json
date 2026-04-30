@@ -1,0 +1,14 @@
+{
+    "Name": "_test-ttl-clamp",
+    "Comment": "Phase 3-Rv (REV-3) — α テストで clamp 検証用 (MinTTL=60 / MaxTTL=120 / DefaultTTL=300)。/_test-ttl-clamp/* に割当。本番ユーザー向けではない (`_` prefix)。",
+    "MinTTL": 60,
+    "MaxTTL": 120,
+    "DefaultTTL": 300,
+    "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+    }
+}

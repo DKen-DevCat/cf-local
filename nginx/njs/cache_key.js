@@ -241,13 +241,28 @@ const DEFAULT_TTL_CONFIG = {
     DefaultTTL: 86400,      // 1 day  (CF default DefaultTTL)
 };
 
+// REV-7 (Phase 2 review 繰越し): 不正な TTL 値 (負値 / NaN / Infinity / 非数値 /
+// MinTTL > MaxTTL) が silent に cache 挙動を壊さないよう、defense-in-depth で
+// sanitize する。Go loader (`internal/config`) でも validation 済だが、image
+// 焼き込み test-policies.json や将来の external policy 投入経路を想定した安全網。
+function sanitizeTtl(v, fallback) {
+    if (typeof v !== 'number' || !isFinite(v) || v < 0) return fallback;
+    return v;
+}
+
 function getPolicyTtl(policy) {
     if (!policy) return DEFAULT_TTL_CONFIG;
-    return {
-        MinTTL:     typeof policy.MinTTL     === 'number' ? policy.MinTTL     : DEFAULT_TTL_CONFIG.MinTTL,
-        MaxTTL:     typeof policy.MaxTTL     === 'number' ? policy.MaxTTL     : DEFAULT_TTL_CONFIG.MaxTTL,
-        DefaultTTL: typeof policy.DefaultTTL === 'number' ? policy.DefaultTTL : DEFAULT_TTL_CONFIG.DefaultTTL,
-    };
+    let min = sanitizeTtl(policy.MinTTL, DEFAULT_TTL_CONFIG.MinTTL);
+    let max = sanitizeTtl(policy.MaxTTL, DEFAULT_TTL_CONFIG.MaxTTL);
+    const def = sanitizeTtl(policy.DefaultTTL, DEFAULT_TTL_CONFIG.DefaultTTL);
+    // min > max は CloudFront API では reject される値の組み合わせ。silent に
+    // 通すと clamp が逆向きに作用して全リクエストが MinTTL に張り付く事故になる
+    // ため、両方デフォルトに倒す。
+    if (min > max) {
+        min = DEFAULT_TTL_CONFIG.MinTTL;
+        max = DEFAULT_TTL_CONFIG.MaxTTL;
+    }
+    return { MinTTL: min, MaxTTL: max, DefaultTTL: def };
 }
 
 // js_set entry. nginx.conf 側で `set $cf_policy_id "<id>";` を location に置けば
