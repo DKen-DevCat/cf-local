@@ -250,6 +250,77 @@ func TestComputeKey_TableDriven(t *testing.T) {
 			b := computeKey(t, "_test-empty-cookie", "/a", map[string]string{"Cookie": "=garbage; theme=dark"})
 			eq(t, a, b)
 		}},
+
+		// Phase 3-1a: CookieBehavior=all
+		{"T20 _test-all-cookies: theme diff → diff (vs whitelist would be same)", func(t *testing.T) {
+			a := computeKey(t, "_test-all-cookies", "/a", map[string]string{"Cookie": "theme=dark"})
+			b := computeKey(t, "_test-all-cookies", "/a", map[string]string{"Cookie": "theme=light"})
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1a: CookieBehavior=allExcept (theme excluded)
+		{"T21 _test-allexcept-cookies: excluded cookie diff → same key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=dark; uid=u1"})
+			b := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=light; uid=u1"})
+			eq(t, a, b)
+		}},
+		{"T22 _test-allexcept-cookies: non-excluded cookie diff → diff key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=dark; uid=u1"})
+			b := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=dark; uid=u2"})
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1a: QueryStringBehavior=allExcept (utm_source / utm_medium excluded)
+		{"T23 _test-allexcept-queries: excluded query diff → same key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-queries", "/a?lang=ja&utm_source=tw", nil)
+			b := computeKey(t, "_test-allexcept-queries", "/a?lang=ja&utm_source=fb", nil)
+			eq(t, a, b)
+		}},
+		{"T24 _test-allexcept-queries: non-excluded query diff → diff key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-queries", "/a?lang=ja&utm_source=tw", nil)
+			b := computeKey(t, "_test-allexcept-queries", "/a?lang=en&utm_source=tw", nil)
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1a: QueryStringBehavior=all
+		{"T25 _test-all-queries: any query diff → diff", func(t *testing.T) {
+			a := computeKey(t, "_test-all-queries", "/a?utm=foo", nil)
+			b := computeKey(t, "_test-all-queries", "/a?utm=bar", nil)
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1b: EnableAcceptEncodingBrotli only
+		{"T26 _test-brotli-only: AE=br vs gzip → diff (br honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-brotli-only", "/a", map[string]string{"Accept-Encoding": "br"})
+			b := computeKey(t, "_test-brotli-only", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			neq(t, a, b)
+		}},
+		{"T27 _test-brotli-only: AE=gzip vs absent → same (gzip not honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-brotli-only", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			b := computeKey(t, "_test-brotli-only", "/a", nil)
+			eq(t, a, b)
+		}},
+
+		// Phase 3-1b: EnableAcceptEncodingGzip only
+		{"T28 _test-gzip-only: AE=gzip vs absent → diff (gzip honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-gzip-only", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			b := computeKey(t, "_test-gzip-only", "/a", nil)
+			neq(t, a, b)
+		}},
+		{"T29 _test-gzip-only: AE=br vs absent → same (br not honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-gzip-only", "/a", map[string]string{"Accept-Encoding": "br"})
+			b := computeKey(t, "_test-gzip-only", "/a", nil)
+			eq(t, a, b)
+		}},
+
+		// Phase 3-1b: both AE flags off (cache key independent of AE)
+		{"T30 _test-no-ae: AE=br vs gzip vs absent → all same", func(t *testing.T) {
+			a := computeKey(t, "_test-no-ae", "/a", map[string]string{"Accept-Encoding": "br"})
+			b := computeKey(t, "_test-no-ae", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			c := computeKey(t, "_test-no-ae", "/a", nil)
+			eq(t, a, b)
+			eq(t, b, c)
+		}},
 	}
 
 	for _, c := range cases {

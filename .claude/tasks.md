@@ -25,9 +25,9 @@
 ### コアスコープ
 
 - [x] 3-1 設定ファイルスキーマ確定 + `docs/config-schema.md` 初版 (A 群 / B 群 / C 群 三分類)
-- [ ] 3-1a njs `cache_key.js` を 4 behavior 対応 (`none` / `whitelist` / `allExcept` / `all`) — TDD
-- [ ] 3-1b njs `cache_key.js` を `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` 独立フラグ化 — TDD
-- [ ] 3-1c 内部 `policies.json` schema 移行 (PascalCase + 3-1a/b 反映)
+- [x] 3-1a njs `cache_key.js` を 4 behavior 対応 (`none` / `whitelist` / `allExcept` / `all`) — T20-T25 で検証
+- [x] 3-1b njs `cache_key.js` を `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` 独立フラグ化 — T26-T30 で検証
+- [x] 3-1c 内部 `policies.json` schema 移行 (PascalCase + 3-1a/b 反映) + `ttl.js` の連動修正
 - [ ] 3-2 nginx Dockerfile multi-stage 化 + `ngx_cache_purge` dynamic module 組込み (spike → 本実装)
 - [ ] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD)
 - [ ] 3-4 `internal/nginx` で `nginx.conf` + `policies.json` 生成器 (golden file テスト)

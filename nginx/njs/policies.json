@@ -1,51 +1,187 @@
 {
   "policies": {
     "default": {
-      "headers":       { "whitelist": [] },
-      "cookies":       { "whitelist": [] },
-      "query_strings": { "whitelist": [] },
-      "accept_encoding_normalize": true,
-      "min_ttl":     0,
-      "max_ttl":     31536000,
-      "default_ttl": 86400
+      "Name": "default",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
     },
     "with-session": {
-      "headers":       { "whitelist": [] },
-      "cookies":       { "whitelist": ["session_id"] },
-      "query_strings": { "whitelist": [] },
-      "accept_encoding_normalize": true,
-      "min_ttl":     0,
-      "max_ttl":     31536000,
-      "default_ttl": 86400
+      "Name": "with-session",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      {
+          "CookieBehavior": "whitelist",
+          "Cookies":         ["session_id"]
+        },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
     },
     "with-locale": {
-      "headers":       { "whitelist": ["Accept-Language"] },
-      "cookies":       { "whitelist": [] },
-      "query_strings": { "whitelist": ["lang"] },
-      "accept_encoding_normalize": true,
-      "min_ttl":     0,
-      "max_ttl":     31536000,
-      "default_ttl": 86400
+      "Name": "with-locale",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig": {
+          "HeaderBehavior": "whitelist",
+          "Headers":        ["Accept-Language"]
+        },
+        "CookiesConfig":      { "CookieBehavior": "none" },
+        "QueryStringsConfig": {
+          "QueryStringBehavior": "whitelist",
+          "QueryStrings":         ["lang"]
+        }
+      }
     },
     "_test-empty-cookie": {
-      "_comment": "Phase 1 test-only — exists solely to exercise parseCookieHeader's handling of empty cookie names. No location maps to this policy.",
-      "headers":       { "whitelist": [] },
-      "cookies":       { "whitelist": [""] },
-      "query_strings": { "whitelist": [] },
-      "accept_encoding_normalize": false,
-      "min_ttl":     0,
-      "max_ttl":     31536000,
-      "default_ttl": 86400
+      "_comment": "Phase 1 test-only — exercises parseCookieHeader's handling of empty cookie names. No location maps to this policy.",
+      "Name": "_test-empty-cookie",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": false,
+        "EnableAcceptEncodingBrotli": false,
+        "HeadersConfig":      { "HeaderBehavior": "none" },
+        "CookiesConfig":      {
+          "CookieBehavior": "whitelist",
+          "Cookies":         [""]
+        },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
     },
     "_test-ttl-clamp": {
       "_comment": "Phase 2 test-only — non-default min/max/default to exercise ttl.compute clamp logic. No location maps to this policy.",
-      "headers":       { "whitelist": [] },
-      "cookies":       { "whitelist": [] },
-      "query_strings": { "whitelist": [] },
-      "accept_encoding_normalize": true,
-      "min_ttl":     60,
-      "max_ttl":     120,
-      "default_ttl": 300
+      "Name": "_test-ttl-clamp",
+      "MinTTL": 60,
+      "MaxTTL": 120,
+      "DefaultTTL": 300,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-all-cookies": {
+      "_comment": "Phase 3-1a test-only — CookieBehavior=all. すべての cookie が cache key に入る。",
+      "Name": "_test-all-cookies",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "all" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-allexcept-cookies": {
+      "_comment": "Phase 3-1a test-only — CookieBehavior=allExcept、theme を除外。",
+      "Name": "_test-allexcept-cookies",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior": "none" },
+        "CookiesConfig":      {
+          "CookieBehavior": "allExcept",
+          "Cookies":         ["theme"]
+        },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-allexcept-queries": {
+      "_comment": "Phase 3-1a test-only — QueryStringBehavior=allExcept、utm_source / utm_medium を除外。",
+      "Name": "_test-allexcept-queries",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior": "none" },
+        "CookiesConfig":      { "CookieBehavior": "none" },
+        "QueryStringsConfig": {
+          "QueryStringBehavior": "allExcept",
+          "QueryStrings":         ["utm_source", "utm_medium"]
+        }
+      }
+    },
+    "_test-all-queries": {
+      "_comment": "Phase 3-1a test-only — QueryStringBehavior=all。すべての query が cache key に入る。",
+      "Name": "_test-all-queries",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior": "none" },
+        "CookiesConfig":      { "CookieBehavior": "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "all" }
+      }
+    },
+    "_test-brotli-only": {
+      "_comment": "Phase 3-1b test-only — Brotli のみ enable。Gzip は cache key に寄与しない。",
+      "Name": "_test-brotli-only",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": false,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-gzip-only": {
+      "_comment": "Phase 3-1b test-only — Gzip のみ enable。Brotli は cache key に寄与しない。",
+      "Name": "_test-gzip-only",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": false,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
+    },
+    "_test-no-ae": {
+      "_comment": "Phase 3-1b test-only — 両 AE フラグ false。AE は cache key に寄与しない。",
+      "Name": "_test-no-ae",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": false,
+        "EnableAcceptEncodingBrotli": false,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+      }
     }
   }
 }

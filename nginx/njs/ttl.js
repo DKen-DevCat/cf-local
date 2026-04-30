@@ -20,17 +20,17 @@ import ck from 'cache_key.js';
 // case 2 の clamp は CF docs §"Managing how long content stays in the cache":
 // MaxTTL/DefaultTTL より max-age を尊重しつつ、MinTTL で下限を保証する。
 function compute(cc, p) {
-    if (cc.noStore || cc.noCache || cc.private) return p.min_ttl;
+    if (cc.noStore || cc.noCache || cc.private) return p.MinTTL;
 
     const explicit = cc.sMaxage !== null ? cc.sMaxage : cc.maxAge;
     if (explicit !== null) {
         let v = explicit;
-        if (v < p.min_ttl) v = p.min_ttl;
-        if (v > p.max_ttl) v = p.max_ttl;
+        if (v < p.MinTTL) v = p.MinTTL;
+        if (v > p.MaxTTL) v = p.MaxTTL;
         return v;
     }
 
-    return p.default_ttl;
+    return p.DefaultTTL;
 }
 
 // 2-5 で inner location に `js_header_filter ttl.computeAndInject` として配線する。

@@ -1,10 +1,15 @@
-// Phase 1-3: cache_key 計算
+// Phase 3 (3-1a/b/c): cache_key 計算 (AWS CloudFront API 形式互換 schema)
 //
 // DESIGN.md §4.1 の式:
-//   key = URI ⊕ sort(headers in WL) ⊕ sort(cookies in WL)
-//             ⊕ sort(query_strings in WL) ⊕ normalized(Accept-Encoding)
+//   key = URI ⊕ sort(headers per HeadersConfig)
+//             ⊕ sort(cookies per CookiesConfig)
+//             ⊕ sort(query_strings per QueryStringsConfig)
+//             ⊕ normalized(Accept-Encoding per Enable*Encoding flags)
 //
-// policies.json schema は design doc の "1-2 確定版" 節を参照。
+// policies.json は内部表現で、Phase 3 では Control Plane (Go) が
+// `cache-policies/*.json` を読んで `nginx/njs/policies.json` に書き出す予定。
+// schema は AWS SDK Go v2 `CachePolicyConfig` を JSON marshal した形 (List 型は
+// flat array に簡略化)。詳細は `docs/config-schema.md`。
 //
 // `compute()` は副作用フリーの pure function (テストから直接呼ぶ)。
 // `forNginx()` は js_set エントリポイントで、`r` から入力を抽出して compute を呼ぶ。
@@ -15,18 +20,23 @@ import fs from 'fs';
 const POLICIES_PATH = '/etc/nginx/njs/policies.json';
 
 // policies.json が壊れていたり消えていたりしても worker を起動継続させるための fallback。
-// 全 whitelist 空 / AE 正規化 ON のため、cache key は URI + method + AE のみで決まる。
+// 全 behavior=none / AE 両 ON のため、cache key は URI + method + AE のみで決まる。
 const SAFE_DEFAULT = {
-    headers:       { whitelist: [] },
-    cookies:       { whitelist: [] },
-    query_strings: { whitelist: [] },
-    accept_encoding_normalize: true,
+    Name: '__safe_default',
+    MinTTL: 0,
+    MaxTTL: 31536000,
+    DefaultTTL: 86400,
+    ParametersInCacheKeyAndForwardedToOrigin: {
+        EnableAcceptEncodingGzip: true,
+        EnableAcceptEncodingBrotli: true,
+        HeadersConfig:      { HeaderBehavior:      'none' },
+        CookiesConfig:      { CookieBehavior:      'none' },
+        QueryStringsConfig: { QueryStringBehavior: 'none' },
+    },
 };
 
 // 各 worker で 1 度だけパース。失敗時は SAFE_DEFAULT のみで起動継続し、
-// 全リクエストが同一 cache slot に潰れる事故を回避する (review concern #4)。
-// 起動時のエラーは _loadError に保存して、最初のリクエスト時に r.log 経由で
-// 出す (njs module init 時点では nginx error log API が安定して使えない)。
+// 全リクエストが同一 cache slot に潰れる事故を回避する (Phase 2 review concern #4)。
 let _loadError = null;
 const POLICIES = (function () {
     try {
@@ -42,8 +52,9 @@ const POLICIES = (function () {
 })();
 
 // material 組み立てフォーマットのバージョン。組み立て規則を変えたらここを bump して
-// 既存キャッシュを自然失効させる。
-const FORMAT_VERSION = 'v1';
+// 既存キャッシュを自然失効させる。Phase 3 で 4-behavior + AE 独立フラグに対応したため
+// v1 → v2 (whitelist-only と意味的に等価な policy でも key が変わる前提)。
+const FORMAT_VERSION = 'v2';
 
 function compute(args) {
     const uri = args.uri || '/';
@@ -57,16 +68,20 @@ function compute(args) {
         throw new Error('compute: policy is required');
     }
 
+    const params = policy.ParametersInCacheKeyAndForwardedToOrigin || {};
     const parts = [FORMAT_VERSION, method, uri];
 
-    // headers: 名前は case-insensitive 比較、material には lower-cased で出力。
-    const wlHeaders = (policy.headers && policy.headers.whitelist) || [];
-    const wlHeadersLower = wlHeaders.map(function (s) { return String(s).toLowerCase(); });
+    // headers: HeaderBehavior (none / whitelist) + Headers list。
+    // 名前は case-insensitive 比較、material には lower-cased で出力。
+    const headersConfig = params.HeadersConfig || { HeaderBehavior: 'none' };
     const headerEntries = [];
-    for (const k in headers) {
-        const lk = k.toLowerCase();
-        if (wlHeadersLower.indexOf(lk) >= 0) {
-            headerEntries.push([lk, String(headers[k])]);
+    if (headersConfig.HeaderBehavior === 'whitelist') {
+        const wl = (headersConfig.Headers || []).map(function (s) { return String(s).toLowerCase(); });
+        for (const k in headers) {
+            const lk = k.toLowerCase();
+            if (wl.indexOf(lk) >= 0) {
+                headerEntries.push([lk, String(headers[k])]);
+            }
         }
     }
     headerEntries.sort(byFirst);
@@ -75,43 +90,61 @@ function compute(args) {
         parts.push(headerEntries[i][0] + '=' + headerEntries[i][1]);
     }
 
-    // cookies: 名前は case-sensitive 比較。
-    const wlCookies = (policy.cookies && policy.cookies.whitelist) || [];
-    const cookieEntries = [];
-    for (const k in cookies) {
-        if (wlCookies.indexOf(k) >= 0) {
-            cookieEntries.push([k, String(cookies[k])]);
-        }
-    }
+    // cookies: CookieBehavior (none / whitelist / allExcept / all) + Cookies list。
+    // 名前は case-sensitive 比較。
+    const cookiesConfig = params.CookiesConfig || { CookieBehavior: 'none' };
+    const cookieEntries = collectByBehavior(cookies, cookiesConfig.CookieBehavior, cookiesConfig.Cookies, false);
     cookieEntries.sort(byFirst);
     parts.push('c');
     for (let i = 0; i < cookieEntries.length; i++) {
         parts.push(cookieEntries[i][0] + '=' + cookieEntries[i][1]);
     }
 
-    // queries: 名前は case-sensitive。multi-value は値ソートして "," で join。
-    const wlQueries = (policy.query_strings && policy.query_strings.whitelist) || [];
-    const queryEntries = [];
-    for (const k in queries) {
-        if (wlQueries.indexOf(k) >= 0) {
-            let v = queries[k];
-            if (Array.isArray(v)) {
-                v = v.slice().sort().join(',');
-            }
-            queryEntries.push([k, String(v)]);
-        }
-    }
+    // queries: QueryStringBehavior (none / whitelist / allExcept / all)。
+    // 名前は case-sensitive。multi-value は値ソートして "," で join。
+    const qsConfig = params.QueryStringsConfig || { QueryStringBehavior: 'none' };
+    const queryEntries = collectByBehavior(queries, qsConfig.QueryStringBehavior, qsConfig.QueryStrings, true);
     queryEntries.sort(byFirst);
     parts.push('q');
     for (let i = 0; i < queryEntries.length; i++) {
         parts.push(queryEntries[i][0] + '=' + queryEntries[i][1]);
     }
 
-    // Accept-Encoding: 形式不変のため常に出す。policy で off の場合は空文字。
+    // Accept-Encoding: EnableAcceptEncodingGzip / EnableAcceptEncodingBrotli の独立フラグ。
+    // 両方 false なら cache key に AE 由来の差は入らない (空文字)。
     parts.push('a');
-    parts.push(policy.accept_encoding_normalize ? normalizeAcceptEncoding(acceptEncodingRaw) : '');
+    parts.push(normalizeAcceptEncoding(
+        acceptEncodingRaw,
+        !!params.EnableAcceptEncodingGzip,
+        !!params.EnableAcceptEncodingBrotli
+    ));
 
     return crypto.createHash('sha256').update(parts.join('\n')).digest('hex');
+}
+
+// behavior に従って key→value の集合を抽出する。multiValue=true のとき値が
+// 配列なら sort + "," join する (queries 用)。
+function collectByBehavior(map, behavior, list, multiValue) {
+    const out = [];
+    if (behavior === 'none' || behavior === undefined) return out;
+    const names = list || [];
+    for (const k in map) {
+        let include = false;
+        if (behavior === 'all') {
+            include = true;
+        } else if (behavior === 'whitelist') {
+            include = names.indexOf(k) >= 0;
+        } else if (behavior === 'allExcept') {
+            include = names.indexOf(k) < 0;
+        }
+        if (!include) continue;
+        let v = map[k];
+        if (multiValue && Array.isArray(v)) {
+            v = v.slice().sort().join(',');
+        }
+        out.push([k, String(v)]);
+    }
+    return out;
 }
 
 function byFirst(a, b) {
@@ -120,7 +153,13 @@ function byFirst(a, b) {
     return 0;
 }
 
-function normalizeAcceptEncoding(raw) {
+// AE 正規化の出力テーブル (gzip/brotli の独立フラグで決まる):
+//   両 ON :  br > gzip > identity (CloudFront default)
+//   gzip ON 単独: gzip > identity
+//   br ON 単独  : br > identity
+//   両 OFF : 空文字 (cache key に AE が入らない)
+function normalizeAcceptEncoding(raw, enableGzip, enableBrotli) {
+    if (!enableGzip && !enableBrotli) return '';
     if (!raw) return 'identity';
     // RFC 9110 §12.5.3 tokenization. `q=0` means "explicitly refuse".
     // Substring matches like `xbr` / `x-gzip` must NOT count as br/gzip.
@@ -128,12 +167,12 @@ function normalizeAcceptEncoding(raw) {
     let hasGzip = false;
     const tokens = String(raw).split(',');
     for (let i = 0; i < tokens.length; i++) {
-        const parts = tokens[i].split(';');
-        const name = parts[0].trim().toLowerCase();
+        const tparts = tokens[i].split(';');
+        const name = tparts[0].trim().toLowerCase();
         if (!name) continue;
         let q = 1;
-        for (let j = 1; j < parts.length; j++) {
-            const p = parts[j].trim();
+        for (let j = 1; j < tparts.length; j++) {
+            const p = tparts[j].trim();
             if (p.indexOf('q=') === 0) {
                 const parsed = parseFloat(p.substring(2));
                 if (!isNaN(parsed)) q = parsed;
@@ -143,8 +182,8 @@ function normalizeAcceptEncoding(raw) {
         if (name === 'br') hasBr = true;
         else if (name === 'gzip') hasGzip = true;
     }
-    if (hasBr) return 'br';
-    if (hasGzip) return 'gzip';
+    if (hasBr && enableBrotli) return 'br';
+    if (hasGzip && enableGzip) return 'gzip';
     return 'identity';
 }
 
@@ -167,27 +206,26 @@ function getPolicy(id) {
     return POLICIES[id || 'default'] || POLICIES['default'] || null;
 }
 
-// CloudFront `CachePolicy` 互換のデフォルト値。policies.json に該当フィールドが
-// 欠落していても `ttl.compute` が落ちないよう、ここで埋める。本フェーズで
-// policies.json は全 policy に explicit に書く方針 (design doc 2-2) だが、
-// 後続フェーズで Go テンプレ生成に切り替わったときの保険。
+// CloudFront 既定値で TTL fields の欠落を埋める。policies.json には全 policy に
+// explicit に書く方針 (3-1c) だが、Managed Cache Policies (Phase 4-A) で一部
+// 省略を許す将来仕様の保険。
 const DEFAULT_TTL_CONFIG = {
-    min_ttl:     0,
-    max_ttl:     31536000,   // 1 year (CF default MaxTTL)
-    default_ttl: 86400,      // 1 day  (CF default DefaultTTL)
+    MinTTL:     0,
+    MaxTTL:     31536000,   // 1 year (CF default MaxTTL)
+    DefaultTTL: 86400,      // 1 day  (CF default DefaultTTL)
 };
 
 function getPolicyTtl(policy) {
     if (!policy) return DEFAULT_TTL_CONFIG;
     return {
-        min_ttl:     typeof policy.min_ttl     === 'number' ? policy.min_ttl     : DEFAULT_TTL_CONFIG.min_ttl,
-        max_ttl:     typeof policy.max_ttl     === 'number' ? policy.max_ttl     : DEFAULT_TTL_CONFIG.max_ttl,
-        default_ttl: typeof policy.default_ttl === 'number' ? policy.default_ttl : DEFAULT_TTL_CONFIG.default_ttl,
+        MinTTL:     typeof policy.MinTTL     === 'number' ? policy.MinTTL     : DEFAULT_TTL_CONFIG.MinTTL,
+        MaxTTL:     typeof policy.MaxTTL     === 'number' ? policy.MaxTTL     : DEFAULT_TTL_CONFIG.MaxTTL,
+        DefaultTTL: typeof policy.DefaultTTL === 'number' ? policy.DefaultTTL : DEFAULT_TTL_CONFIG.DefaultTTL,
     };
 }
 
 // js_set entry. nginx.conf 側で `set $cf_policy_id "<id>";` を location に置けば
-// その policy で計算する。1-4 で / location に配線する。
+// その policy で計算する。
 function forNginx(r) {
     // 起動時の policies.json load 失敗を最初のリクエスト時に 1 回だけ error log に出す。
     if (_loadError !== null) {
