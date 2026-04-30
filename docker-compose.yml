@@ -13,6 +13,10 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/njs:/etc/nginx/njs:ro
+      # Phase 3-A.2 (3-5 本実装): cf-local.conf を bind mount。reload-watcher が
+      # /etc/nginx/cf-local/ への MOVED_TO event を watch する。Phase 4-A 以降は
+      # Control Plane (Go) container と共有 named volume で接続する形に切替。
+      - ./nginx/cf-local:/etc/nginx/cf-local:ro
       - nginx-cache:/var/cache/nginx
     extra_hosts:
       # Linux で host.docker.internal を有効にする

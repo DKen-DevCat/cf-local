@@ -233,6 +233,7 @@ nginx/spike/                      # 3-2 / 3-5 spike 用 (一時)
 
 - **ngx_cache_purge dynamic module ビルドの ABI 整合 (C で部分対応済)**: `nginx-modules/ngx_cache_purge` + `--with-compat` で dynamic module 化を採用済 (本ドキュメント「C」セクション)。ただし spike (3-2 冒頭) で実機検証必須。NG の場合は debian source build (Plan B) に切替
 - **inotify sidecar の reload 競合 (3-5 spike で部分検証済)**: 1 秒 debounce で連続 burst (3 件) は 1 reload に集約されることを確認。reload 完了より早く次の `MOVED_TO` が来るシナリオ (Control Plane の高頻度書き込み) は本実装でも observable な負荷として残るが、Phase 3 で実装する Control Plane は起動時 1 回 + invalidation の 1 イベントしか conf を書かないため、実用上は問題にならない
+- **macOS Docker Desktop の bind mount + inotify (A.2 で確認)**: ホスト bind mount 越しの atomic rename event が container 内 inotify に届かない (VirtioFS の既知制約)。A.2 段階では `docker compose restart nginx` で手動 reload する必要がある。**A.4 (3-4 renderer) で Control Plane container と nginx container を named volume で接続する形に切替した時点で全環境で auto reload が効くようになる** (3-5 spike で named volume 経由は動作確認済)
 - **microCMS webhook 連携サンプル**: 実 webhook 仕様に合わせるか、generic webhook 形にするかは 3-8 着手時にユーザーと最終確認
 - **複数 distribution の routing**: 1 nginx で複数 distribution を扱う場合の経路分け方針 (Host header / port / path prefix のいずれか)。DESIGN.md にも記述なし。3-1 のスキーマ確定時にユーザーと相談
 

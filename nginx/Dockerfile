@@ -48,11 +48,24 @@ RUN ./configure --with-compat --add-dynamic-module=/build/ngx_cache_purge \
 FROM nginx:1.27-alpine
 ARG NGINX_VERSION
 
-RUN apk add --no-cache nginx-module-njs
+# Phase 3-A.2 (3-5 本実装): inotify-tools を sidecar 用に追加。
+# /etc/nginx/cf-local/ への MOVED_TO event を watch して `nginx -s reload` を発火する。
+RUN apk add --no-cache nginx-module-njs inotify-tools
 
 COPY --from=builder /build/nginx-${NGINX_VERSION}/objs/ngx_http_cache_purge_module.so \
                     /usr/lib/nginx/modules/ngx_http_cache_purge_module.so
 
+# Phase 3-A.2 (3-5 本実装): sidecar スクリプト群。
+COPY scripts/reload-watcher.sh    /usr/local/bin/reload-watcher.sh
+COPY scripts/reload-entrypoint.sh /usr/local/bin/reload-entrypoint.sh
+RUN chmod +x /usr/local/bin/reload-watcher.sh /usr/local/bin/reload-entrypoint.sh \
+    && mkdir -p /etc/nginx/cf-local
+
 EXPOSE 8080
 
-CMD ["nginx", "-g", "daemon off;"]
+# 公式 nginx image の docker-entrypoint.sh は IPv6 / envsubst / worker tune を
+# 実行してから CMD を起動する。本フェーズでは sidecar も起動したいので CMD を
+# 自前 entrypoint に置換し、reload-entrypoint.sh 内で /docker-entrypoint.d/ を
+# 自前ループ実行する (公式の挙動を引き継ぐ)。
+ENTRYPOINT []
+CMD ["/usr/local/bin/reload-entrypoint.sh"]
