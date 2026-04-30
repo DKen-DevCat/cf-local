@@ -32,7 +32,23 @@
 - [x] 3-2 本実装 (A.1): multi-stage Dockerfile + ngx_cache_purge v2.5.5 dynamic module + nginx.conf に `load_module` 追加 (実発火 location は A.5 で追加、α regression PASS)
 - [ ] 3-2 残: 内部 purge endpoint 設計 (cache_key と purge key の整合) — A.5 で扱う
 - [x] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD) — A.3a/A.3b の 2 コミットで完了。独自 Schema 型 (flat array) → AWS SDK Go v2 cloudfront/types 変換 + Phase 3 制約 (distributions 1 ファイル限定) + cross-ref validation。テーブル駆動テストで Happy 6 + Error 14 ケース。REV-7 (MinTTL 負値 / MinTTL > MaxTTL) は Go loader 側でも fail-fast (njs 側は別タスクで残置)
-- [ ] 3-4 `internal/nginx` で `nginx.conf` + `policies.json` 生成器 (golden file テスト)
+- [ ] 3-4 / A.4 `internal/nginx` renderer + Control Plane 常駐化 + named volume 経由配信 (3-4 + 3-5 残)
+    - 詳細: 設計ドキュメント §「A.4 詳細設計 (3-4 + 3-5 残)」
+    - 論点 1〜5 (policies.json 配信 / PathPattern 範囲 / β test 分離 / purge location 同梱 / compose 同梱) は kickoff 後に確定
+    - [ ] A.4.0 golden test fixture 配置 (`internal/nginx/testdata/{min,multi-policy,ae-flags,disabled}/*`) — TDD の input/expected を先に
+    - [ ] A.4.1 `internal/nginx/renderer.go` skeleton + `Render(*config.LoadResult) (*Output, error)` 型定義
+    - [ ] A.4.2 policies.json 生成 (AWS SDK 型 → JSON marshal) + `min` / `ae-flags` golden PASS
+    - [ ] A.4.3 nginx.conf 生成: upstream + DefaultCacheBehavior の outer/inner ペア + `min` golden PASS
+    - [ ] A.4.4 PathPattern → location 変換 + sanitize + `multi-policy` golden PASS
+    - [ ] A.4.5 loader 側 PathPattern 受理規則 (prefix `/path/*` のみ) + `pathpattern-reject` テスト追加
+    - [ ] A.4.6 `disabled` ケース (Distribution.Enabled=false で空出力) + golden PASS
+    - [ ] A.4.7 `internal/nginx/writer.go` の `WriteAtomic` 実装 + unit test (3-5 残)
+    - [ ] A.4.8 `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` 追加 + render → write → sleep) — A.3b の dump コード撤去
+    - [ ] A.4.9 `nginx/njs/cache_key.js` の policies.json path を `/etc/nginx/cf-local/policies.json` に変更
+    - [ ] A.4.10 `nginx/cf-local/cf-local.conf` を `nginx/cf-local-tests/cf-local-tests.conf` に β test endpoint だけ抜き出して再配置
+    - [ ] A.4.11 repo root `Dockerfile` 新規 + `docker-compose.yml` 改修 (cf-local service 追加 + named volume + nginx mount 切替) + `docker-compose.test.yml` (β test override)
+    - [ ] A.4.12 `./cf-local/cache-policies/*.json` + `./cf-local/distributions/main.json` 整備 (Phase 0〜2 と同等の挙動を再現)
+    - [ ] A.4.13 α regression PASS 確認 (Phase 1〜2 の α テスト群が新構成で通る)
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
 - [x] 3-5 本実装 (A.2): sidecar スクリプト `nginx/scripts/` 配置 + Dockerfile に inotify-tools + nginx.conf を `include /etc/nginx/cf-local/*.conf` 化 + bind mount 追加 (α regression PASS、macOS bind mount + inotify は VirtioFS 制約で動かないが A.4 で named volume に切替後解決)
 - [ ] 3-5 残: Control Plane (`internal/nginx/renderer.go`) で atomic rename 実装 — A.4 で扱う

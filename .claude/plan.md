@@ -167,6 +167,15 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - **REV-1** inner location の loopback 制限を unix socket に置換: 現状 `allow 127.0.0.1; deny all;` (`nginx.conf:107-119`) は同ホスト 127.0.0.1 経由でバイパス可能。Phase 4-A で control plane が同居するタイミングで `upstream self { server unix:/run/cf-local-inner.sock; }` に切り替えて、`listen unix:/run/cf-local-inner.sock;` の inner-only server block を分離する (Phase 2 design doc 2-2 で「unix socket 化までの暫定」と記載済)。
 - **REV-11** 2-hop TCP self-loop の高並列検証: `upstream self` は keepalive 未設定で各リクエスト TCP connect が立つ。`worker_connections 1024` のうち outer + inner で実質半減。Phase 4-A で stress test (例: vegeta 1000 RPS / 1 分) を入れて connection 枯渇 / accept queue 飽和を観測。unix socket 化 (REV-1) 後の再計測で確定。
 
+**Phase 3 からの繰越し**:
+
+- **P3→P4A-1** PathPattern 受理範囲の拡張 (Phase 3 では prefix `/path/*` のみ): 本物の CloudFront `PathPattern` で有効な以下の構文を Phase 3 では loader が reject している。Phase 4-A で renderer の location 変換ルールを正規表現対応にして解禁する:
+  - **suffix wildcard** (`*.jpg`) → `location ~* \.jpg$` に変換
+  - **middle wildcard** (`/api/*/foo`) → regex location (`location ~ ^/api/[^/]*/foo$` 等。`*` の貪欲性が CF 仕様と完全一致するか実機で要確認)
+  - **exact path** (`/index.html`) → `location = /index.html` (exact match modifier)
+  - **複数 wildcard** (`/a/*/b/*`) → regex で対応
+  優先順位の規則 (より具体的な PathPattern が優先) も Phase 4-A で正式設計。Phase 3 では prefix のみなので nginx の prefix-longest-match に乗せていれば同じ挙動が得られるが、混在時の決定性は AWS 仕様への準拠が必要。詳細: `.claude/design/phase-3-invalidation-config-2026-04-30.md` §「A.4 詳細設計」「PathPattern 受理規則」。
+
 詳細: commit `440ffc8` (Phase 2 pro/con レビュー記録)。
 
 ---

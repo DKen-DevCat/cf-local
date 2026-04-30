@@ -174,6 +174,219 @@ nginx/Dockerfile                  # multi-stage 化
 nginx/spike/                      # 3-2 / 3-5 spike 用 (一時)
 ```
 
+### A.4 詳細設計 (3-4 + 3-5 残)
+
+A.3b 完了時点で loader (`internal/config`) は AWS SDK Go v2 型 (`map[name]*types.CachePolicyConfig` + `*types.DistributionConfig`) を返す状態。A.4 では **`internal/nginx` renderer** + **Control Plane の最小常駐化** + **named volume への atomic rename** を 1 セットで実装し、Phase 0〜2 の挙動を保ちつつ data plane を「設定ファイル駆動」に切り替える。
+
+#### 論点 1〜5 への決定 (kickoff 後追加)
+
+| # | 決定 | 影響範囲 |
+|---|---|---|
+| 1 | `policies.json` も nginx.conf と同じ named volume `cf-local-conf` に配信 | `nginx/njs/cache_key.js` の require/読込 path を `/etc/nginx/cf-local/policies.json` に変更 (1 行) |
+| 2 | `PathPattern` は **prefix wildcard `…/*` のみ** Phase 3 で受理。それ以外 (`*.jpg` / middle wildcard / 完全 exact) は loader で reject (起動時 fail-fast) | suffix / middle wildcard は Phase 4-A で正式仕様化 |
+| 3 | β test endpoint (`/_cache_key_test` 等) は image 焼き込みの `nginx/cf-local-tests/cf-local-tests.conf` に分離。test mode の compose で `/etc/nginx/cf-local/cf-local-tests.conf` に追加 mount | renderer は β test を一切知らない。本番 mode では mount しない |
+| 4 | `proxy_cache_purge` location は A.4 の renderer が**常に出力**する (`/_cf_purge/...`)。A.5 では Go ハンドラのみ実装 | renderer 編集は 1 コミットに収まる |
+| 5 | A.4 で cf-local container を docker-compose に追加し、起動時に 1 回 render してから idle (sleep) する。HTTP listener は A.5 で追加 | named volume 経由の reload を全環境で動かすために必要 |
+
+#### 出力ファイル構造
+
+cf-local container は `--out-dir=/work/cf-local-conf` (named volume) に下記 2 ファイルを atomic rename で書き出す:
+
+```
+cf-local-conf/  (nginx container では /etc/nginx/cf-local/)
+  ├─ cf-local.conf     # http context 配下の include 用 (renderer 出力)
+  └─ policies.json     # njs cache_key.js / ttl.js が読む (renderer 出力)
+```
+
+base `nginx.conf` は変更なし (既に `include /etc/nginx/cf-local/*.conf` でガード済)。test mode 時のみ image 焼き込みの `cf-local-tests.conf` が同 dir に追加 mount される。
+
+#### `cf-local.conf` 生成テンプレ (多 policy 対応)
+
+各 cache behavior (DefaultCacheBehavior + CacheBehaviors[]) に対し outer + inner location ペアを生成。Phase 0〜2 の 2-hop パターン (DESIGN.md §4.2 Phase 2 確定) を policy 数だけ展開する。
+
+```
+# (renderer 出力イメージ — policy / pattern は LoadResult から動的生成)
+
+js_path "/etc/nginx/njs/";
+js_import ck  from cache_key.js;
+js_import ttl from ttl.js;
+js_set $cf_cache_key ck.forNginx;
+
+proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=cf_cache:100m max_size=1g inactive=7d use_temp_path=off;
+
+# upstream は Origins[].Id ごとに 1 block 生成
+upstream origin_<sanitized-origin-id> {
+    server <DomainName>:<HTTPPort>;
+}
+upstream self {
+    server 127.0.0.1:8080;
+}
+
+server {
+    listen 8080;
+
+    # ---- 共通: invalidation purge endpoint (A.5 で発火) ----
+    location ~ ^/_cf_purge(/.*)$ {
+        allow 127.0.0.1;
+        deny all;
+        proxy_cache_purge cf_cache $1;  # path は cache key と整合させる (A.5 で詳細詰め)
+    }
+
+    # ---- DefaultCacheBehavior ----
+    location / {
+        set $cf_policy_id "<DefaultCacheBehavior.CachePolicyId>";
+        proxy_cache cf_cache;
+        proxy_cache_key $cf_cache_key;
+        proxy_cache_valid 200 86400s;
+        proxy_cache_valid 404 10s;
+        proxy_no_cache $upstream_http_x_cf_ttl_error;
+        proxy_ignore_headers Set-Cookie Vary Cache-Control;
+        add_header X-Cache-Status $upstream_cache_status always;
+        add_header X-Cache-Key    $cf_cache_key          always;
+        proxy_pass http://self/_cf_inner_<sanitized-policy-id>$request_uri;
+        # X-Forwarded-* / Host も従来同様
+    }
+    location /_cf_inner_<sanitized-policy-id>/ {
+        allow 127.0.0.1; deny all;
+        set $cf_policy_id "<...>";
+        js_header_filter ttl.computeAndInject;
+        proxy_pass http://origin_<sanitized-origin-id>/;
+        proxy_set_header Host $host;
+    }
+
+    # ---- CacheBehaviors[] (PathPattern ごと) ----
+    location /<prefix>/ {
+        # outer (above と同型)
+    }
+    location /_cf_inner_<sanitized-policy-id-N>/ {
+        # inner (above と同型)
+    }
+}
+```
+
+サニタイズ規則 (renderer 内 helper):
+
+- `<sanitized-policy-id>` / `<sanitized-origin-id>`: `[^a-zA-Z0-9_]` を `_` に置換、長さ 0 になったら error
+- `PathPattern` から `<prefix>`: 末尾 `/*` を strip。先頭 `/` がなければ補う (CloudFront syntax 準拠)
+- 同一 policy が複数 behavior から参照された場合、inner location は **1 つだけ** 生成 (sanitized policy id ベースで dedup)
+
+PathPattern 受理規則 (loader 側):
+
+- 受理: `/api/*`, `/posts/*`, `*` (= 全パス、`/_default_/*` 相当に正規化)
+- reject: `*.jpg` (suffix wildcard), `/api/*/foo` (middle wildcard), `/exact-path` (exact match) — Phase 4-A まで `phase 3 の PathPattern は prefix `/path/*` のみサポート` のエラーで起動失敗
+
+> **Phase 4-A への繰越し (P3→P4A-1)**: 上記 reject 群はいずれも本物の CloudFront `PathPattern` で有効な構文。Phase 3 では nginx location syntax への変換規則と policy ↔ behavior の整合検証を **prefix だけに絞って** 設計を簡潔に保つが、本物互換のためには Phase 4-A で以下を解禁する必要がある:
+> - **suffix wildcard** (`*.jpg`): nginx の正規表現 location (`location ~* \.jpg$`) に変換
+> - **middle wildcard** (`/api/*/foo`): regex location に変換 (`location ~ ^/api/[^/]*/foo$` 等。`*` の貪欲性が CF 仕様と一致するか要確認)
+> - **exact path** (`/index.html`): `location = /index.html` (exact match modifier) に変換
+> - **複数 wildcard** (`/a/*/b/*`): 上に同じ
+>
+> Phase 4-A での実装範囲は plan.md `phase-4a` の繰越し項目に記載。
+
+#### `policies.json` 出力スキーマ
+
+Phase 3-1c で確定済の現行 schema (`nginx/njs/policies.json` 形式) と完全同型:
+
+```json
+{
+  "policies": {
+    "<CachePolicyConfig.Name>": {
+      "Name": "...",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": { ... }
+    }
+  }
+}
+```
+
+renderer は AWS SDK 型を `encoding/json` で marshal して `{"policies": ...}` に包むだけ (PascalCase は SDK 型の json タグそのまま)。`int64` ポインタ → number / `bool` ポインタ → bool は SDK の標準動作で OK。
+
+#### atomic rename (3-5 残部分)
+
+```go
+// internal/nginx/writer.go (新規)
+func WriteAtomic(outDir, name string, contents []byte) error {
+    // 1. tmp file: outDir/.<name>.tmp に O_CREATE|O_TRUNC で write
+    // 2. fsync
+    // 3. rename(tmp, outDir/<name>) — POSIX 規約で atomic
+}
+```
+
+inotify sidecar は `MOVED_TO` のみ watch (3-5 spike 確認済)。tmp file の `CREATE` イベントは無視されるため、書き込み中の不完全な conf を nginx が読みに行くことはない。
+
+#### docker-compose 構造変更
+
+```yaml
+# docker-compose.yml (A.4 で追加される構成)
+services:
+  cf-local:
+    build:
+      context: .
+      dockerfile: Dockerfile          # repo root に新規追加 (Go binary)
+    volumes:
+      - ./cf-local:/cf-local:ro       # ユーザー設定 (cache-policies/ + distributions/)
+      - cf-local-conf:/work/cf-local-conf
+    command: ["--config-dir", "/cf-local", "--out-dir", "/work/cf-local-conf"]
+    # A.5 で HTTP listener が追加されるまで render → sleep infinity
+
+  nginx:
+    build:
+      context: ./nginx
+    volumes:
+      - cf-local-conf:/etc/nginx/cf-local
+    depends_on:
+      cf-local:
+        condition: service_started
+    ports:
+      - "8080:8080"
+
+volumes:
+  cf-local-conf:
+```
+
+cf-local container の Dockerfile (repo root) は alpine + go binary の 2-stage:
+- builder: `golang:1.23-alpine` で `go build -o cf-local ./cmd/cf-local`
+- final: `alpine:3.20` に binary だけ COPY、`ENTRYPOINT ["cf-local"]`
+
+旧 nginx の bind mount (`./nginx/cf-local:/etc/nginx/cf-local:ro`) は撤去。test mode の compose ファイル (例 `docker-compose.test.yml`) で `./nginx/cf-local-tests:/etc/nginx/cf-local-tests:ro` を override 追加。
+
+#### TDD: golden file テストケース
+
+`internal/nginx/render_test.go` のテーブル駆動:
+
+| ケース | LoadResult fixture | golden output |
+|---|---|---|
+| min | 1 origin + DefaultCacheBehavior + 1 policy (`default`) | `testdata/min/cf-local.conf`, `testdata/min/policies.json` |
+| multi-policy | 2 policies (`default` + `with-session`), DefaultCacheBehavior=`default` + 1 path-pattern behavior `/api/*`=`with-session` | `testdata/multi-policy/*` |
+| ae-flags | EnableAcceptEncodingGzip / Brotli の 4 組合せを 4 policy で網羅 (renderer は単に通すだけだが policies.json の差分検出に必要) | `testdata/ae-flags/*` |
+| disabled | Distribution.Enabled=false | empty cf-local.conf (`# distribution disabled` のみ) + policies.json は空 `{"policies":{}}` |
+| pathpattern-reject | suffix wildcard `*.jpg` / middle wildcard `/api/*/foo` / exact `/path` | renderer に来る前に loader 側で reject。loader テストに追加 |
+
+golden 比較は `bytes.Equal` (CRLF/LF 揺れがないので diff で十分)。
+
+#### A.4 サブタスク分解
+
+| # | 内容 | 主対象ファイル | 備考 |
+|---|---|---|---|
+| A.4.0 | golden test fixture (input LoadResult + expected `cf-local.conf` / `policies.json`) を `internal/nginx/testdata/` に配置 | `internal/nginx/testdata/{min,multi-policy,ae-flags,disabled}/*` | 先に golden を書いてから renderer 実装 (TDD) |
+| A.4.1 | `internal/nginx/renderer.go` skeleton + `Render(*config.LoadResult) (*Output, error)` 型定義 + `Output { Conf []byte; Policies []byte }` | `internal/nginx/renderer.go` | テストはまだ全 FAIL でよい |
+| A.4.2 | policies.json 生成 (AWS SDK 型 → JSON marshal) + `min` / `ae-flags` golden PASS | `internal/nginx/renderer.go`, `internal/nginx/render_test.go` | 単純な marshal なので 1 関数 |
+| A.4.3 | nginx.conf 生成: upstream + outer / inner location ペア (default behavior のみ) + `min` golden PASS | `internal/nginx/renderer.go` | text/template 採用検討 (依存追加なし、stdlib) |
+| A.4.4 | PathPattern → location 変換 + sanitize + `multi-policy` golden PASS | `internal/nginx/renderer.go` | prefix wildcard のみ受理。reject は loader 側 |
+| A.4.5 | loader 側 PathPattern 受理規則の実装 + `pathpattern-reject` テスト追加 | `internal/config/loader.go`, `internal/config/loader_test.go` | A.3b の validate*() に PathPattern チェック追記 |
+| A.4.6 | `disabled` ケース実装 (Distribution.Enabled=false で空出力) + golden PASS | `internal/nginx/renderer.go` | early return で済む |
+| A.4.7 | `internal/nginx/writer.go` の `WriteAtomic` 実装 + unit test | `internal/nginx/writer.go`, `internal/nginx/writer_test.go` | tmpfs 上でテスト |
+| A.4.8 | `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` flag 追加 + render → write → sleep) | `cmd/cf-local/main.go` | A.3b の dump コードは撤去 |
+| A.4.9 | `nginx/njs/cache_key.js` の policies.json 読込 path を `/etc/nginx/cf-local/policies.json` に変更 | `nginx/njs/cache_key.js`, `nginx/njs/cache_key.test.js` | β test 側の fixture path 整合確認 |
+| A.4.10 | `nginx/cf-local/cf-local.conf` を退避 → `nginx/cf-local-tests/cf-local-tests.conf` に β test endpoint だけ抜き出して再配置 | `nginx/cf-local-tests/`, `nginx/Dockerfile` (mount 路変更不要) | renderer 出力では β test endpoint は出さない |
+| A.4.11 | repo root `Dockerfile` 新規 (cf-local Go binary) + `docker-compose.yml` 改修 (cf-local service 追加 + named volume + nginx mount 切替) | `Dockerfile`, `docker-compose.yml` | test mode override は `docker-compose.test.yml` を新規 (β test 用) |
+| A.4.12 | `./cf-local/cache-policies/*.json` + `./cf-local/distributions/main.json` のリアル設定整備 (Phase 0〜2 と同等の挙動を再現) | `cf-local/` (新規 dir) | 既存 policies.json (10 policy) を bridge する集合を最小限に絞る |
+| A.4.13 | α regression PASS 確認 (Phase 1〜2 の α テスト群が新構成で通る) | (テスト追加なし、CI 確認) | 不通なら原因切り分け、修正は別タスクで |
+
+各サブタスク = 1 コミット原則 (CLAUDE.md §5)。A.4.0〜A.4.7 は Go-only で β レベル、A.4.8〜A.4.13 は image / compose / α regression に踏み込むので慎重に。
+
 ### TDD 対象
 
 - `internal/config/loader_test.go` — schema 違反検出 (AWS SDK 型へのデコード境界)
