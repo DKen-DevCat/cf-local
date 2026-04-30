@@ -15,6 +15,10 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cf-local
+    ports:
+      # Phase 3 A.5.3: invalidation API (POST /_invalidate)。Phase 4-A 以降の
+      # AWS API 互換 endpoint も同 port に追加していく予定。
+      - "4566:4566"
     volumes:
       # ユーザー設定 (read-only)。距離感の参考実装は examples/ 配下に置く予定 (3-8)。
       - ./cf-local:/cf-local:ro
@@ -26,6 +30,10 @@ services:
       - /cf-local
       - --out-dir
       - /work/cf-local-conf
+      - --addr
+      - ":4566"
+      - --nginx-url
+      - http://nginx:8080
     restart: unless-stopped
 
   nginx:

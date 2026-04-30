@@ -32,9 +32,9 @@
 - [x] 3-2 本実装 (A.1): multi-stage Dockerfile + ngx_cache_purge v2.5.5 dynamic module + nginx.conf に `load_module` 追加 (実発火 location は A.5 で追加、α regression PASS)
 - [ ] 3-2 残 + 3-6 + 3-7 (A.5 詳細設計): MVP は「default policy / 空 headers/cookies/queries / AE=identity の 1 variant のみ purge、完全一致、同期実行、cf-local 独自 JSON `{"paths":[]}`」。詳細: 設計ドキュメント §「A.5 詳細設計」
     - [x] A.5.1 renderer の `_cf_purge` location を cache_key 経由に修正 (`proxy_cache_purge cf_cache $cf_cache_key`) + `cache_key.js` の `forNginx` に `cf_purge_uri` override 対応 + 全 fixture の `cf-local.conf` golden 更新。実機検証: container 内 `wget http://127.0.0.1:8080/_cf_purge/foo` → 412 Precondition Failed (ngx_cache_purge v2.5.5 の「対象 slot 不在」正常系)、error log 空、500/403 ではないので wiring 全段 PASS
-    - [ ] A.5.2 `internal/api/invalidation/` package + handler skeleton + table-driven test (path validation / JSON schema / 不正リクエスト 400)。upstream nginx 呼び出しは interface で抽象化、test は fake で
-    - [ ] A.5.3 `cmd/cf-local/main.go` を ListenAndServe 化 + `:4566` listen + graceful shutdown (`--addr` flag override)
-    - [ ] A.5.4 nginx 内部 purge への HTTP client 実装 (`internal/api/invalidation/purger.go`) + handler に配線
+    - [x] A.5.2 `internal/api/invalidation/` package + handler skeleton + table-driven test (path validation / JSON schema / 不正リクエスト 400)。upstream nginx 呼び出しは interface で抽象化、test は fake で。16 ケース PASS
+    - [x] A.5.3 `cmd/cf-local/main.go` を ListenAndServe 化 + `:4566` listen + graceful shutdown (`--addr` / `--nginx-url` flag)。docker-compose.yml で 4566 expose + flag 配線
+    - [x] A.5.4 nginx 内部 purge への HTTP client 実装 (`internal/api/invalidation/purger.go`) + handler に配線。200/204/404/412 を success として扱う (412 = ngx_cache_purge v2.5.5 の「slot 不在」)。11 ケース PASS。実機検証: `curl -X POST http://localhost:4566/_invalidate -d '{"paths":["/foo","/bar"]}'` → `{"invalidated":2}` HTTP 200。A.5.3 実機検証で control plane → nginx が docker network private IP で 127.0.0.1 only allow に弾かれる問題を発見、purge location に RFC1918 private CIDR (10/8 + 172.16/12 + 192.168/16) allow 追加 + 全 fixture golden 更新
     - [ ] A.5.5 α 統合テスト (`tests/integration/invalidation_alpha_test.go`): config → docker up → curl で HIT → `POST /_invalidate` → curl で MISS
     - [ ] A.5.6 variants 制約 / API 仕様を `docs/limitations.md` + `docs/config-schema.md` に記載 (「default policy 1 variant のみ purge」を明記)
 
