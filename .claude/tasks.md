@@ -44,10 +44,11 @@
     - [x] A.4.6 `disabled` ケース (Distribution.Enabled=false で空出力) + golden PASS — A.4.3 で先取り実装。Render() の switch case で disabled comment を返す経路を分けた
     - [x] A.4.7 `internal/nginx/writer.go` の `WriteAtomic` 実装 + unit test (3-5 残)。tmp file (`.<name>.tmp`) + O_TRUNC + fsync + rename(2)。stale tmp / overwrite / path separator reject / empty name / nonexistent dir のテスト 6 ケース PASS
     - [x] A.4.8 `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` 追加 + render → write → sleep) — A.3b の dump コード撤去。smoke で min fixture 出力が golden と完全一致 (`go run ./cmd/cf-local --config-dir ./internal/nginx/testdata/min --out-dir /tmp/x` → diff CONF MATCH / POLICIES MATCH)
-    - [ ] A.4.9 `nginx/njs/cache_key.js` の policies.json path を `/etc/nginx/cf-local/policies.json` に変更
-    - [ ] A.4.10 `nginx/cf-local/cf-local.conf` を `nginx/cf-local-tests/cf-local-tests.conf` に β test endpoint だけ抜き出して再配置
-    - [ ] A.4.11 repo root `Dockerfile` 新規 + `docker-compose.yml` 改修 (cf-local service 追加 + named volume + nginx mount 切替) + `docker-compose.test.yml` (β test override)
-    - [ ] A.4.12 `./cf-local/cache-policies/*.json` + `./cf-local/distributions/main.json` 整備 (Phase 0〜2 と同等の挙動を再現)
+    - [x] A.4.9〜12 image / compose / 設定の renderer 移行を 1 commit でまとめて実施
+        - A.4.9 `cache_key.js` POLICIES_PATH → `/etc/nginx/cf-local/policies.json`
+        - A.4.10 β test endpoint を `nginx/cf-local-tests/cf-local-tests.conf` (port 8081 別 server block) に分離。base `nginx.conf` に `include /etc/nginx/cf-local-tests/*.conf;` 追加。`nginx/cf-local/cf-local.conf` 削除。β test 側 (`tests/integration/`) は `doBeta` ヘルパー + `defaultBetaBase` 定数を追加して 8081 に逃がす。`requireUp` も β endpoint ping に統一
+        - A.4.11 repo root `Dockerfile` 新規 (Go binary, multi-stage, tini PID1)。`docker-compose.yml` 改修 (cf-local service + named volume `cf-local-conf` + nginx mount 切替 + depends_on)。`docker-compose.test.yml` 新規 (port 8081 を expose する override)
+        - A.4.12 `cf-local/cache-policies/default.json` + `cf-local/distributions/main.json` を Phase 0〜2 互換で配置。`.gitignore` の `/cf-local` rule 撤去 (binary 用は docker build で閉じる運用に変更)
     - [ ] A.4.13 α regression PASS 確認 (Phase 1〜2 の α テスト群が新構成で通る)
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
 - [x] 3-5 本実装 (A.2): sidecar スクリプト `nginx/scripts/` 配置 + Dockerfile に inotify-tools + nginx.conf を `include /etc/nginx/cf-local/*.conf` 化 + bind mount 追加 (α regression PASS、macOS bind mount + inotify は VirtioFS 制約で動かないが A.4 で named volume に切替後解決)

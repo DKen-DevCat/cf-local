@@ -1,0 +1,17 @@
+# Phase 3-A.4.11: β test 用 override。
+#
+# 使い方:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+#
+# 効果:
+#   - nginx container が port 8081 (β test endpoint) を host に expose
+#   - 本番 mode (docker-compose.yml 単独) では 8081 は expose されない
+#
+# β test (`tests/integration/cache_key_test.go` 等) は `http://localhost:8081`
+# に対して `/_cache_key_test` / `/_cache_control_test` / `/_ttl_test` を叩く。
+# α test は `http://localhost:8080` を叩く (本番と同じ port)。
+
+services:
+  nginx:
+    ports:
+      - "8081:8081"

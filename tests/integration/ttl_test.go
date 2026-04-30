@@ -29,7 +29,7 @@ func computeTTL(t *testing.T, cc, policy string) int {
 	if cc != "" {
 		headers["X-Test-CC"] = cc
 	}
-	resp := do(t, "/_ttl_test", reqOpts{headers: headers})
+	resp := doBeta(t, "/_ttl_test", reqOpts{headers: headers})
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

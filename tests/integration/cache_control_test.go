@@ -37,7 +37,7 @@ func parseCC(t *testing.T, value string, sendHeader bool) parsedCC {
 	if sendHeader {
 		headers["X-Test-CC"] = value
 	}
-	resp := do(t, "/_cache_control_test", reqOpts{headers: headers})
+	resp := doBeta(t, "/_cache_control_test", reqOpts{headers: headers})
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

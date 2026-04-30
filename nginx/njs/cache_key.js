@@ -17,7 +17,10 @@
 import crypto from 'crypto';
 import fs from 'fs';
 
-const POLICIES_PATH = '/etc/nginx/njs/policies.json';
+// Phase 3 A.4: Control Plane (`internal/nginx`) が renderer 出力を
+// `/etc/nginx/cf-local/policies.json` に atomic rename で書き出す。njs は
+// 起動時 1 度だけ読み込む。同 dir には `cf-local.conf` も同居。
+const POLICIES_PATH = '/etc/nginx/cf-local/policies.json';
 
 // policies.json が壊れていたり消えていたりしても worker を起動継続させるための fallback。
 // 全 behavior=none / AE 両 ON のため、cache key は URI + method + AE のみで決まる。

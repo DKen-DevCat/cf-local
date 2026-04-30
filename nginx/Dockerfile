@@ -59,7 +59,12 @@ COPY --from=builder /build/nginx-${NGINX_VERSION}/objs/ngx_http_cache_purge_modu
 COPY scripts/reload-watcher.sh    /usr/local/bin/reload-watcher.sh
 COPY scripts/reload-entrypoint.sh /usr/local/bin/reload-entrypoint.sh
 RUN chmod +x /usr/local/bin/reload-watcher.sh /usr/local/bin/reload-entrypoint.sh \
-    && mkdir -p /etc/nginx/cf-local
+    && mkdir -p /etc/nginx/cf-local /etc/nginx/cf-local-tests
+
+# Phase 3-A.4.10: β test endpoint conf を image に焼き込む。本番 mode の compose
+# は port 8081 を expose しない (外部から叩かれない) ので、build-time に常時
+# COPY しても本番運用に影響しない。
+COPY cf-local-tests/cf-local-tests.conf /etc/nginx/cf-local-tests/cf-local-tests.conf
 
 EXPOSE 8080
 

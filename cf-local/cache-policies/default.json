@@ -1,0 +1,14 @@
+{
+    "Name": "default",
+    "Comment": "Phase 3 A.4.12 — Phase 0〜2 互換のデフォルト policy。HeaderBehavior=none / CookieBehavior=none / QueryStringBehavior=none。",
+    "MinTTL": 0,
+    "DefaultTTL": 86400,
+    "MaxTTL": 31536000,
+    "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig":      { "HeaderBehavior":      "none" },
+        "CookiesConfig":      { "CookieBehavior":      "none" },
+        "QueryStringsConfig": { "QueryStringBehavior": "none" }
+    }
+}
