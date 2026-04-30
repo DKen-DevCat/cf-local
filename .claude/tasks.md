@@ -36,7 +36,7 @@
     - 詳細: 設計ドキュメント §「A.4 詳細設計 (3-4 + 3-5 残)」
     - 論点 1〜5 (policies.json 配信 / PathPattern 範囲 / β test 分離 / purge location 同梱 / compose 同梱) は kickoff 後に確定
     - [x] A.4.0 golden test fixture 配置 (`internal/nginx/testdata/{min,multi-policy,ae-flags,disabled}/{cache-policies,distributions,*.json,*.conf}`) — TDD の input/expected を先に。loader smoke で全 4 ケース読み込み OK
-    - [ ] A.4.1 `internal/nginx/renderer.go` skeleton + `Render(*config.LoadResult) (*Output, error)` 型定義
+    - [x] A.4.1 `internal/nginx/renderer.go` skeleton + `Render(*config.LoadResult) (*Output, error)` 型定義 + `render_test.go` table-driven test (全 4 ケース unimplemented で FAIL することを確認、gofmt/go vet クリーン)
     - [ ] A.4.2 policies.json 生成 (AWS SDK 型 → JSON marshal) + `min` / `ae-flags` golden PASS
     - [ ] A.4.3 nginx.conf 生成: upstream + DefaultCacheBehavior の outer/inner ペア + `min` golden PASS
     - [ ] A.4.4 PathPattern → location 変換 + sanitize + `multi-policy` golden PASS
