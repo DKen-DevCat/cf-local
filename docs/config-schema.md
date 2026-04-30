@@ -164,20 +164,20 @@ allExcept 例 (UTM tracking 系を除外して全クエリをキャッシュ):
 |---|---|---|---|
 | `CallerReference` | string | ✓ | idempotency key |
 | `Comment` | string (≤128) | ✓ | |
-| `Enabled` | bool | ✓ | Phase 3 では `false` にすると nginx に何も生成しない |
+| `Enabled` | bool | ✓ | Phase 3 では `false` にすると nginx に何も生成しない (= port 8080 listen 自体が消えるため、HTTP リクエストは connection refused になる)。一時的な無効化用途で使う場合は注意 |
 | `Origins[].Id` | string | ✓ | `TargetOriginId` から参照される識別子 |
 | `Origins[].DomainName` | string | ✓ | nginx の `upstream` の `server` host になる |
 | `Origins[].OriginPath` | string | | 既定 `""`、prefix として origin URL に付与 |
 | `Origins[].CustomOriginConfig.HTTPPort` | int | | 既定 80。nginx upstream の port になる |
 | `DefaultCacheBehavior.TargetOriginId` | string | ✓ | |
 | `DefaultCacheBehavior.ViewerProtocolPolicy` | enum | ✓ | 値は受理するが nginx 設定では強制せず (HTTP-only ローカル) |
-| `DefaultCacheBehavior.CachePolicyId` | string | | 省略時は CloudFront の Managed-CachingDisabled 相当 (キャッシュ無効) |
+| `DefaultCacheBehavior.CachePolicyId` | string | ✓ | Phase 3 では必須 (Managed Cache Policies の解決は Phase 4-A で実装予定)。`cache-policies/<Name>.json` の `Name` と一致する文字列を指す |
 | `DefaultCacheBehavior.AllowedMethods` | string[] | | 既定 `["GET", "HEAD"]`。nginx の `limit_except` 相当に展開 |
 | `DefaultCacheBehavior.Compress` | bool | | nginx の `gzip on/off` に反映 |
 | `CacheBehaviors[].PathPattern` | string | ✓ | nginx `location ~ <regex>` 相当に変換 (CloudFront のワイルドカード規則を regex に翻訳) |
 | `CacheBehaviors[].TargetOriginId` | string | ✓ | |
 | `CacheBehaviors[].ViewerProtocolPolicy` | enum | ✓ | DefaultCacheBehavior と同じく受理のみ |
-| `CacheBehaviors[].CachePolicyId` | string | | |
+| `CacheBehaviors[].CachePolicyId` | string | ✓ | Phase 3 では必須。DefaultCacheBehavior.CachePolicyId と同様 |
 
 `CacheBehaviors` の評価順は配列順。AWS 本物では `Precedence` フィールドが暗黙に決まるが、cf-local では **配列順 = 評価順** とする。
 

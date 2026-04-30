@@ -194,8 +194,8 @@ func offsetToLineCol(data []byte, offset int) (int, int) {
 }
 
 func validateCachePolicy(s *CachePolicySchema, file string) error {
-	if s.Name == "" {
-		return fmt.Errorf("%s: Name is required", file)
+	if err := validateSafeName(s.Name, "Name", file); err != nil {
+		return err
 	}
 	if s.MinTTL < 0 {
 		return fmt.Errorf("%s: MinTTL must be >= 0 (got %d)", file, s.MinTTL)
@@ -289,15 +289,19 @@ func validateDistribution(s *DistributionSchema, file string) error {
 	}
 	originIDs := make(map[string]struct{}, len(s.Origins))
 	for i, o := range s.Origins {
-		if o.Id == "" {
-			return fmt.Errorf("%s: Origins[%d].Id is required", file, i)
+		idField := fmt.Sprintf("Origins[%d].Id", i)
+		if err := validateSafeName(o.Id, idField, file); err != nil {
+			return err
 		}
 		if _, dup := originIDs[o.Id]; dup {
 			return fmt.Errorf("%s: Origins[%d].Id %q is duplicated", file, i, o.Id)
 		}
 		originIDs[o.Id] = struct{}{}
-		if o.DomainName == "" {
-			return fmt.Errorf("%s: Origins[%d].DomainName is required", file, i)
+		if err := validateHostname(o.DomainName, fmt.Sprintf("Origins[%d].DomainName", i), file); err != nil {
+			return err
+		}
+		if err := validateOriginPath(o.OriginPath, fmt.Sprintf("Origins[%d].OriginPath", i), file); err != nil {
+			return err
 		}
 	}
 	if err := validateCacheBehavior(s.DefaultCacheBehavior, "DefaultCacheBehavior", file, false); err != nil {
@@ -367,9 +371,81 @@ func validatePathPattern(p string) error {
 		if strings.Contains(inner, "*") {
 			return fmt.Errorf("%q has a wildcard in the middle (Phase 3 supports only a single trailing `/*`)", p)
 		}
+		// SEC-1: prefix must not embed nginx-special / control characters.
+		// renderer は location prefix として `inner + "/"` を直接 nginx 設定に書き込む。
+		for _, r := range inner {
+			if !isSafePathRune(r) {
+				return fmt.Errorf("%q contains unsupported character %q (allowed: A-Za-z 0-9 . _ - /)", p, r)
+			}
+		}
 		return nil
 	}
 	return fmt.Errorf("%q is not supported in Phase 3 (only prefix wildcard `…/*` or `*` is accepted; suffix `*.ext` / middle `/a/*/b` / exact `/path` / no leading `/` are deferred to Phase 4-A)", p)
+}
+
+// validateSafeName は CachePolicy.Name / Origin.Id 等、renderer に raw 文字列が
+// 流れる識別子フィールドを strict allow-list で検証する。`A-Z a-z 0-9 . _ -`
+// のみ許容することで、newline / `;` / `{` / `}` / `#` 等の nginx 設定文の
+// メタ文字を fail-fast で弾く (SEC-1)。
+func validateSafeName(s, fieldName, file string) error {
+	if s == "" {
+		return fmt.Errorf("%s: %s is required", file, fieldName)
+	}
+	for _, r := range s {
+		if !isSafeNameRune(r) {
+			return fmt.Errorf("%s: %s %q contains unsupported character %q (allowed: A-Za-z 0-9 . _ -)", file, fieldName, s, r)
+		}
+	}
+	return nil
+}
+
+func isSafeNameRune(r rune) bool {
+	if r >= 'A' && r <= 'Z' {
+		return true
+	}
+	if r >= 'a' && r <= 'z' {
+		return true
+	}
+	if r >= '0' && r <= '9' {
+		return true
+	}
+	return r == '.' || r == '_' || r == '-'
+}
+
+// validateHostname は Origin.DomainName をホスト名らしさで検証する。許容文字は
+// `validateSafeName` と同一 (RFC 1123 ish: 英数字 + `.` `-` `_`)。空白 /
+// nginx メタ文字をすべて拒否する (SEC-1)。
+func validateHostname(s, fieldName, file string) error {
+	if s == "" {
+		return fmt.Errorf("%s: %s is required", file, fieldName)
+	}
+	for _, r := range s {
+		if !isSafeNameRune(r) {
+			return fmt.Errorf("%s: %s %q contains unsupported character %q (allowed: A-Za-z 0-9 . _ -)", file, fieldName, s, r)
+		}
+	}
+	return nil
+}
+
+// validateOriginPath は Origin.OriginPath を検証する。空文字または `/` 始まりで
+// `A-Za-z 0-9 . _ - /` のみ。空白 / nginx メタ文字を拒否する (SEC-1)。
+func validateOriginPath(s, fieldName, file string) error {
+	if s == "" {
+		return nil
+	}
+	if !strings.HasPrefix(s, "/") {
+		return fmt.Errorf("%s: %s %q must start with `/`", file, fieldName, s)
+	}
+	for _, r := range s {
+		if !isSafePathRune(r) {
+			return fmt.Errorf("%s: %s %q contains unsupported character %q (allowed: A-Za-z 0-9 . _ - /)", file, fieldName, s, r)
+		}
+	}
+	return nil
+}
+
+func isSafePathRune(r rune) bool {
+	return isSafeNameRune(r) || r == '/'
 }
 
 func validateCrossReferences(res *LoadResult) error {
@@ -379,9 +455,12 @@ func validateCrossReferences(res *LoadResult) error {
 	if res.Distribution.Enabled == nil || !*res.Distribution.Enabled {
 		return nil
 	}
+	// REV-5: CachePolicyId は Phase 3 では必須 (Managed-CachingDisabled 等の
+	// implicit fallback は Phase 4-A で Managed Cache Policies 解決を実装してから)。
+	// docs/config-schema.md §サポートフィールドと整合。
 	check := func(cachePolicyId *string, ctx string) error {
 		if cachePolicyId == nil {
-			return nil
+			return fmt.Errorf("%s: %s.CachePolicyId is required (Phase 3 では Managed Cache Policies 未対応のため省略不可。Phase 4-A で解禁予定)", res.DistributionFile, ctx)
 		}
 		if _, ok := res.CachePolicies[*cachePolicyId]; !ok {
 			return fmt.Errorf("%s: %s.CachePolicyId %q is not defined in cache-policies/", res.DistributionFile, ctx, *cachePolicyId)

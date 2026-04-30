@@ -449,6 +449,7 @@ golden 比較は `bytes.Equal` (CRLF/LF 揺れがないので diff で十分)。
 - **macOS Docker Desktop の bind mount + inotify (A.2 で確認)**: ホスト bind mount 越しの atomic rename event が container 内 inotify に届かない (VirtioFS の既知制約)。A.2 段階では `docker compose restart nginx` で手動 reload する必要がある。**A.4 (3-4 renderer) で Control Plane container と nginx container を named volume で接続する形に切替した時点で全環境で auto reload が効くようになる** (3-5 spike で named volume 経由は動作確認済)
 - **microCMS webhook 連携サンプル**: 実 webhook 仕様に合わせるか、generic webhook 形にするかは 3-8 着手時にユーザーと最終確認
 - **複数 distribution の routing**: 1 nginx で複数 distribution を扱う場合の経路分け方針 (Host header / port / path prefix のいずれか)。DESIGN.md にも記述なし。3-1 のスキーマ確定時にユーザーと相談
+- **`policies.json` ↔ `cf-local.conf` の rename 順序 race (Phase 4-A 議論送り)**: 現状 cf-local が 2 ファイルを順次 atomic rename し、watcher 側は debounce 1 秒で集約する。実用上は同一 reload にまとまるが、bursty な書き込み (Phase 4-A 以降の頻繁な API 呼び出し) で「1 ファイル目だけ反映 → reload → 2 ファイル目反映 → 別 reload」の中間状態が短時間発生する余地が残る。staging dir に 2 ファイルを書き終わってから dir 単位で atomic rename する方式や、cf-local.conf 側の rename だけを reload trigger にし policies.json を起動時 1 回だけ読む形に変える方式は、いずれも Phase 4-A の API ハンドラ設計と一緒に検討する
 
 ## 参考
 

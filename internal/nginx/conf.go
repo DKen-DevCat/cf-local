@@ -121,12 +121,22 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 	inners := map[string]innerView{}
 
 	addInner := func(policyID, originID, sanPolicy string) error {
-		if _, ok := inners[sanPolicy]; ok {
-			return nil // dedup
-		}
 		upstream, err := originUpstreamName(originID)
 		if err != nil {
 			return err
+		}
+		// REV-2: 同 sanitized policy id で異 TargetOriginId は silent shadowing
+		// せず error を返す。Phase 3 で「同 policy で別 origin に振り分けたい場合は
+		// 別 policy を作る」運用を確定済みのため (`.claude/design/phase-3-...md`
+		// 論点)、同 policy が異 origin に紐付くのは config の不整合。
+		if existing, ok := inners[sanPolicy]; ok {
+			if existing.UpstreamName != upstream {
+				return fmt.Errorf(
+					"policy %q is referenced by behaviors with different TargetOriginId (mapped to %q, conflicting %q); split into separate policies",
+					policyID, existing.UpstreamName, upstream,
+				)
+			}
+			return nil
 		}
 		inners[sanPolicy] = innerView{
 			Location:     "/_cf_inner_" + sanPolicy + "/",
@@ -278,7 +288,10 @@ func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerV
 }
 
 func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
-	fmt.Fprintf(b, "    # %s\n", beh.Comment)
+	// SEC-1 defense-in-depth: loader が allow-list で raw 文字列の改行/メタ文字を
+	// 既に弾いているが、将来 loader 側の regression が発生した場合に備えて
+	// `# %s\n` で出力する直前にも改行を空白へ置換する。
+	fmt.Fprintf(b, "    # %s\n", sanitizeCommentText(beh.Comment))
 	fmt.Fprintf(b, "    location %s {\n", beh.Location)
 	fmt.Fprintf(b, "        set $cf_policy_id %q;\n\n", beh.PolicyID)
 	b.WriteString(`        proxy_cache cf_cache;
@@ -314,6 +327,14 @@ func writeInnerLocation(b *bytes.Buffer, inner innerView) {
 }
 
 // ---- helpers ---------------------------------------------------------------
+
+// sanitizeCommentText は generated nginx comment 1 行に出して安全な形に正規化する。
+// 改行と CR を空白へ落とすことで、将来 loader 側の allow-list が緩んでも
+// `# %s\n` の comment context を newline で抜け出されないようにする (SEC-1
+// defense-in-depth)。
+func sanitizeCommentText(s string) string {
+	return strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
+}
 
 // sanitizeID は nginx upstream name や internal location の prefix で使える形に
 // AWS リソース ID を正規化する。`[^a-zA-Z0-9_]` を `_` に置換するだけ。

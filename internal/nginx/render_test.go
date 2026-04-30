@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DKen-DevCat/cf-local/internal/config"
@@ -75,5 +76,68 @@ func TestRender_NilLoadResult(t *testing.T) {
 	_, err := Render(nil)
 	if err == nil {
 		t.Fatal("Render(nil) should return error")
+	}
+}
+
+// TestRender_SamePolicyDifferentOrigins は REV-2 を回帰テストする。
+// 同じ CachePolicyId が DefaultCacheBehavior と CacheBehaviors[] で別の
+// TargetOriginId を指している場合に、silent shadowing せず error を返すこと。
+func TestRender_SamePolicyDifferentOrigins(t *testing.T) {
+	root := t.TempDir()
+	cachePolicy := `{
+		"Name": "default",
+		"MinTTL": 0,
+		"ParametersInCacheKeyAndForwardedToOrigin": {
+			"EnableAcceptEncodingGzip": true,
+			"EnableAcceptEncodingBrotli": true,
+			"HeadersConfig":      { "HeaderBehavior": "none" },
+			"CookiesConfig":      { "CookieBehavior": "none" },
+			"QueryStringsConfig": { "QueryStringBehavior": "none" }
+		}
+	}`
+	dist := `{
+		"CallerReference": "x",
+		"Comment": "x",
+		"Enabled": true,
+		"Origins": [
+			{ "Id": "next-app", "DomainName": "host.docker.internal", "CustomOriginConfig": { "HTTPPort": 3000 } },
+			{ "Id": "other",    "DomainName": "host.docker.internal", "CustomOriginConfig": { "HTTPPort": 4000 } }
+		],
+		"DefaultCacheBehavior": {
+			"TargetOriginId":       "next-app",
+			"ViewerProtocolPolicy": "allow-all",
+			"CachePolicyId":        "default"
+		},
+		"CacheBehaviors": [
+			{
+				"PathPattern":          "/api/*",
+				"TargetOriginId":       "other",
+				"ViewerProtocolPolicy": "allow-all",
+				"CachePolicyId":        "default"
+			}
+		]
+	}`
+	mustWrite := func(rel, content string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", full, err)
+		}
+	}
+	mustWrite("cache-policies/default.json", cachePolicy)
+	mustWrite("distributions/main.json", dist)
+
+	res, err := config.Load(root)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	_, err = Render(res)
+	if err == nil {
+		t.Fatal("Render should fail when same policy is mapped to different TargetOriginId")
+	}
+	if !strings.Contains(err.Error(), "different TargetOriginId") {
+		t.Errorf("err = %q, want substring 'different TargetOriginId'", err.Error())
 	}
 }

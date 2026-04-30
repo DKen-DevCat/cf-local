@@ -57,6 +57,15 @@
 - [ ] 3-7 α 統合テスト追加 (config → docker up → invalidate → MISS)
 - [ ] 3-8 `examples/` 拡充 + `docs/config-schema.md` + CMS 連携ドキュメント
 
+### Phase 3 review 対応 (A.4 着地レビューより)
+
+- [x] SEC-1 設定文字列 allow-list (CachePolicy.Name / Origin.Id / Origin.DomainName / Origin.OriginPath / PathPattern) + comment sanitize defense-in-depth — `internal/config/loader.go`, `internal/nginx/conf.go`
+- [x] REV-2 同 sanitized policy id で異 TargetOriginId を error 化 (silent shadowing 廃止) — `internal/nginx/conf.go`
+- [x] REV-3+10b `inotifywait` を -m monitor mode + stderr を流す改修 — `nginx/scripts/reload-watcher.sh`
+- [x] REV-5 CachePolicyId 空を fail-fast + `docs/config-schema.md` の必須表記 — `internal/config/loader.go`, `docs/config-schema.md`
+- [x] REV-6 `WriteAtomic` parent dir fsync 追加 — `internal/nginx/writer.go`
+- [x] docs REV-1 (rename 順序 race を Phase 4-A 議論送り) を design doc §リスクに追記 + REV-4/8 (Disabled で 8080 listen 消滅) を `docs/config-schema.md` に明記
+
 ### Phase 2 review からの繰越し (3-Rv)
 
 - [ ] REV-7 `getPolicyTtl` validation (`min_ttl > max_ttl` / 負値 / 非数値) — `nginx/njs/cache_key.js`

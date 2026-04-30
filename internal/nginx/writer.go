@@ -13,11 +13,14 @@ import (
 //  1. tmp file (outDir/.<name>.tmp) に O_CREATE|O_TRUNC|O_WRONLY で書き込む
 //  2. f.Sync() で data + meta を flush
 //  3. rename(tmp, outDir/<name>) — POSIX 規約で同一 fs 内 rename は atomic
+//  4. parent dir を Sync で fsync (REV-6) — Linux ext4 / xfs では rename の
+//     dirent 更新を永続化させるため必須
 //
 // 中断時の状態:
 //
 //   - step 1〜2 中で死亡: outDir/<name> は変更されない (旧バージョンが残る)
-//   - step 3 後に死亡  : outDir/<name> は新内容に切り替わっている
+//   - step 3 後に死亡  : outDir/<name> は新内容に切り替わっている (step 4 が
+//     未完だと crash 後に rename 自体が消えるリスクがあるため step 4 まで完遂)
 //
 // nginx container 側の inotify sidecar は MOVED_TO のみを watch するため
 // (3-5 spike 確認済 — `nginx/spike/README.md`)、CREATE / WRITE 中の半端な
@@ -70,6 +73,20 @@ func WriteAtomic(outDir, name string, contents []byte) error {
 	if err := os.Rename(tmpPath, finalPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("WriteAtomic: rename %s -> %s: %w", tmpPath, finalPath, err)
+	}
+	// REV-6: parent dir fsync で rename の dirent 更新を永続化する。
+	// Linux ext4 / xfs では rename の永続化保証に必須。darwin (HFS+/APFS) は
+	// 厳密には不要だが call 自体は benign。
+	dir, err := os.Open(outDir)
+	if err != nil {
+		return fmt.Errorf("WriteAtomic: open dir %s: %w", outDir, err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("WriteAtomic: fsync dir %s: %w", outDir, err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("WriteAtomic: close dir %s: %w", outDir, err)
 	}
 	return nil
 }

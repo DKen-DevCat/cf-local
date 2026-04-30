@@ -11,6 +11,8 @@ import (
 
 // pathPatternDist は CacheBehaviors[0].PathPattern を埋め込んだ最小 distribution
 // JSON を返す。PathPattern 受理規則 (Phase 3) のテストに使う。
+// validateCacheBehavior は PathPattern 検証で先に reject するので CachePolicyId
+// は省略してもテスト側のエラーメッセージに到達する。
 func pathPatternDist(pattern string) string {
 	return `{
 		"CallerReference": "x",
@@ -279,12 +281,14 @@ func TestLoad_OriginDefaultHTTPPort(t *testing.T) {
 		],
 		"DefaultCacheBehavior": {
 			"TargetOriginId":       "o1",
-			"ViewerProtocolPolicy": "allow-all"
+			"ViewerProtocolPolicy": "allow-all",
+			"CachePolicyId":        "default"
 		}
 	}`
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{
-		"distributions/main.json": dist,
+		"cache-policies/default.json": cachePolicyDefault,
+		"distributions/main.json":     dist,
 	})
 	res, err := Load(root)
 	if err != nil {
@@ -547,6 +551,122 @@ func TestLoad_Errors(t *testing.T) {
 			},
 			wantError: `"api/*" is not supported in Phase 3`,
 		},
+
+		// --- SEC-1: nginx 設定への raw 文字列 injection を loader で塞ぐ ---
+
+		{
+			name: "cache policy Name with newline rejected (SEC-1)",
+			files: map[string]string{
+				"cache-policies/x.json": `{
+					"Name": "default\n}\nserver { listen 9999; }",
+					"MinTTL": 0,
+					"ParametersInCacheKeyAndForwardedToOrigin": {
+						"EnableAcceptEncodingGzip": true,
+						"HeadersConfig":      { "HeaderBehavior": "none" },
+						"CookiesConfig":      { "CookieBehavior": "none" },
+						"QueryStringsConfig": { "QueryStringBehavior": "none" }
+					}
+				}`,
+			},
+			wantError: "Name",
+		},
+		{
+			name: "Origin DomainName with semicolon rejected (SEC-1)",
+			files: map[string]string{
+				"distributions/main.json": `{
+					"CallerReference": "x",
+					"Comment": "x",
+					"Enabled": true,
+					"Origins": [{ "Id": "o1", "DomainName": "host.example;evil" }],
+					"DefaultCacheBehavior": {
+						"TargetOriginId":       "o1",
+						"ViewerProtocolPolicy": "allow-all"
+					}
+				}`,
+			},
+			wantError: `Origins[0].DomainName "host.example;evil" contains unsupported character`,
+		},
+		{
+			name: "Origin Id with brace rejected (SEC-1)",
+			files: map[string]string{
+				"distributions/main.json": `{
+					"CallerReference": "x",
+					"Comment": "x",
+					"Enabled": true,
+					"Origins": [{ "Id": "o1}injected", "DomainName": "example.com" }],
+					"DefaultCacheBehavior": {
+						"TargetOriginId":       "o1}injected",
+						"ViewerProtocolPolicy": "allow-all"
+					}
+				}`,
+			},
+			wantError: "Origins[0].Id",
+		},
+		{
+			name: "Origin OriginPath with newline rejected (SEC-1)",
+			files: map[string]string{
+				"distributions/main.json": `{
+					"CallerReference": "x",
+					"Comment": "x",
+					"Enabled": true,
+					"Origins": [{ "Id": "o1", "DomainName": "example.com", "OriginPath": "/sub\npath" }],
+					"DefaultCacheBehavior": {
+						"TargetOriginId":       "o1",
+						"ViewerProtocolPolicy": "allow-all"
+					}
+				}`,
+			},
+			wantError: "Origins[0].OriginPath",
+		},
+		{
+			name: "PathPattern with newline rejected (SEC-1)",
+			files: map[string]string{
+				"distributions/main.json": pathPatternDist(`/api\n}\n/*`),
+			},
+			wantError: "contains unsupported character",
+		},
+
+		// --- REV-5: CachePolicyId 必須 (Phase 3 では Managed Policy 未対応) ---
+
+		{
+			name: "DefaultCacheBehavior.CachePolicyId omitted is required (REV-5)",
+			files: map[string]string{
+				"distributions/main.json": `{
+					"CallerReference": "x",
+					"Comment": "x",
+					"Enabled": true,
+					"Origins": [{ "Id": "o1", "DomainName": "example.com" }],
+					"DefaultCacheBehavior": {
+						"TargetOriginId":       "o1",
+						"ViewerProtocolPolicy": "allow-all"
+					}
+				}`,
+			},
+			wantError: "DefaultCacheBehavior.CachePolicyId is required",
+		},
+		{
+			name: "CacheBehaviors[].CachePolicyId omitted is required (REV-5)",
+			files: map[string]string{
+				"cache-policies/default.json": cachePolicyDefault,
+				"distributions/main.json": `{
+					"CallerReference": "x",
+					"Comment": "x",
+					"Enabled": true,
+					"Origins": [{ "Id": "o1", "DomainName": "example.com" }],
+					"DefaultCacheBehavior": {
+						"TargetOriginId":       "o1",
+						"ViewerProtocolPolicy": "allow-all",
+						"CachePolicyId":        "default"
+					},
+					"CacheBehaviors": [{
+						"PathPattern":          "/api/*",
+						"TargetOriginId":       "o1",
+						"ViewerProtocolPolicy": "allow-all"
+					}]
+				}`,
+			},
+			wantError: "CacheBehaviors[0].CachePolicyId is required",
+		},
 	}
 
 	for _, tc := range tests {
@@ -581,12 +701,14 @@ func TestLoad_ForwardCompatibility_UnknownFieldsIgnored(t *testing.T) {
 		"DefaultCacheBehavior": {
 			"TargetOriginId":       "o1",
 			"ViewerProtocolPolicy": "allow-all",
+			"CachePolicyId":        "default",
 			"OriginRequestPolicyId": "ignored-policy-id"
 		}
 	}`
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{
-		"distributions/main.json": dist,
+		"cache-policies/default.json": cachePolicyDefault,
+		"distributions/main.json":     dist,
 	})
 	res, err := Load(root)
 	if err != nil {
