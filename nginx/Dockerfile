@@ -1,12 +1,57 @@
-# Phase 1: njs モジュール対応版へ切替
-# 公式 nginx:alpine イメージは njs を dynamic module としてビルド済みパッケージで配布している
-# (apk: nginx-module-njs)。`load_module` 指示は nginx.conf 側で明示する。
+# Phase 3-A.1 (3-2 本実装):
+#   - njs は apk の nginx-module-njs (Phase 1 から継続)
+#   - ngx_cache_purge を nginx-modules fork v2.5.5 から `--with-compat` で dynamic
+#     module としてビルド (multi-stage、3-2 spike PASS — nginx/spike/README.md)
 #
-# ngx_cache_purge は公式パッケージに無く Phase 3 で multi-stage build に切替予定。
+# nginx 公式 alpine image は `--with-compat` 付きビルドのため、ABI 互換 dynamic
+# module を別ビルドして `load_module` で組み込める (nginx 1.11.5+ の compat 機能)。
+# nginx.conf 冒頭の `load_module modules/ngx_http_cache_purge_module.so;` で読み込む。
+#
+# `proxy_cache_purge` ディレクティブの実発火は Phase 3-A.5 (3-6 invalidation handler)
+# で追加。本フェーズでは module をロードできることと既存 α テスト regression が
+# 出ないことを確認するに留める。
 
+ARG NGINX_VERSION=1.27.5
+ARG NGX_CACHE_PURGE_VERSION=2.5.5
+
+# --- builder stage ---------------------------------------------------------
+FROM nginx:1.27-alpine AS builder
+ARG NGINX_VERSION
+ARG NGX_CACHE_PURGE_VERSION
+
+RUN apk add --no-cache \
+        gcc \
+        make \
+        libc-dev \
+        pcre-dev \
+        pcre2-dev \
+        zlib-dev \
+        openssl-dev \
+        linux-headers \
+        wget
+
+WORKDIR /build
+
+RUN wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+    && tar xzf "nginx-${NGINX_VERSION}.tar.gz"
+
+RUN wget -q "https://github.com/nginx-modules/ngx_cache_purge/archive/refs/tags/${NGX_CACHE_PURGE_VERSION}.tar.gz" \
+        -O ngx_cache_purge.tar.gz \
+    && tar xzf ngx_cache_purge.tar.gz \
+    && mv "ngx_cache_purge-${NGX_CACHE_PURGE_VERSION}" ngx_cache_purge
+
+WORKDIR /build/nginx-${NGINX_VERSION}
+RUN ./configure --with-compat --add-dynamic-module=/build/ngx_cache_purge \
+    && make modules
+
+# --- final stage -----------------------------------------------------------
 FROM nginx:1.27-alpine
+ARG NGINX_VERSION
 
 RUN apk add --no-cache nginx-module-njs
+
+COPY --from=builder /build/nginx-${NGINX_VERSION}/objs/ngx_http_cache_purge_module.so \
+                    /usr/lib/nginx/modules/ngx_http_cache_purge_module.so
 
 EXPOSE 8080
 

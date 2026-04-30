@@ -29,7 +29,8 @@
 - [x] 3-1b njs `cache_key.js` を `EnableAcceptEncodingGzip` / `EnableAcceptEncodingBrotli` 独立フラグ化 — T26-T30 で検証
 - [x] 3-1c 内部 `policies.json` schema 移行 (PascalCase + 3-1a/b 反映) + `ttl.js` の連動修正
 - [x] 3-2 spike: `nginx-modules/ngx_cache_purge` v2.5.5 を `--with-compat` で dynamic module ビルド検証 — PASS (`nginx/spike/README.md`)
-- [ ] 3-2 本実装: 同構造を `nginx/Dockerfile` に展開 + nginx.conf に `load_module` 追加 + 内部 purge endpoint 設計 (cache_key と purge key の整合)
+- [x] 3-2 本実装 (A.1): multi-stage Dockerfile + ngx_cache_purge v2.5.5 dynamic module + nginx.conf に `load_module` 追加 (実発火 location は A.5 で追加、α regression PASS)
+- [ ] 3-2 残: 内部 purge endpoint 設計 (cache_key と purge key の整合) — A.5 で扱う
 - [ ] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD)
 - [ ] 3-4 `internal/nginx` で `nginx.conf` + `policies.json` 生成器 (golden file テスト)
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
