@@ -2,18 +2,18 @@
 //
 // Two layers covered here:
 //
-//   (β) cache_key unit-style: hits the test-only `/_cache_key_test` endpoint
-//       (defined in cache_key.test.js) which computes a key against the request
-//       itself with policy chosen by the X-Test-Policy header. Each case is one
-//       or two requests + an assertion on the returned hex sha256.
+//	(β) cache_key unit-style: hits the test-only `/_cache_key_test` endpoint
+//	    (defined in cache_key.test.js) which computes a key against the request
+//	    itself with policy chosen by the X-Test-Policy header. Each case is one
+//	    or two requests + an assertion on the returned hex sha256.
 //
-//   (α) end-to-end via proxy_cache: hits a real cacheable upstream path through
-//       `location /` and asserts on `X-Cache-Status` / `X-Cache-Key`. Verifies
-//       that the njs key actually drives proxy_cache's HIT/MISS decisions and
-//       that the Vary fix from task 1-5 keeps "same normalized AE / different
-//       raw AE" in the same slot. Phase 2-6 wires α through testserver (mock
-//       origin) so cacheability is no longer at the mercy of whatever happens
-//       to be running on host port 3000.
+//	(α) end-to-end via proxy_cache: hits a real cacheable upstream path through
+//	    `location /` and asserts on `X-Cache-Status` / `X-Cache-Key`. Verifies
+//	    that the njs key actually drives proxy_cache's HIT/MISS decisions and
+//	    that the Vary fix from task 1-5 keeps "same normalized AE / different
+//	    raw AE" in the same slot. Phase 2-6 wires α through testserver (mock
+//	    origin) so cacheability is no longer at the mercy of whatever happens
+//	    to be running on host port 3000.
 //
 // Prerequisites:
 //   - `docker compose up -d` has been run from the repo root (so nginx + njs
@@ -44,13 +44,31 @@ import (
 	"testing"
 )
 
+// α テスト (本番 cache 経路) は port 8080。Phase 3 A.4.11 で renderer が
+// 出力した cf-local.conf がこの port を listen する。
 const defaultBase = "http://localhost:8080"
+
+// β test endpoint (`/_cache_key_test` 等) は Phase 3 A.4.10 で port 8081 に
+// 分離された (renderer は β を一切知らない方針 — `nginx/cf-local-tests/`
+// 配下に image 焼き込みの別 server block を立てている)。
+//
+// 起動方法:
+//
+//	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+const defaultBetaBase = "http://localhost:8081"
 
 func base() string {
 	if v := os.Getenv("CF_LOCAL_BASE"); v != "" {
 		return v
 	}
 	return defaultBase
+}
+
+func betaBase() string {
+	if v := os.Getenv("CF_LOCAL_BETA_BASE"); v != "" {
+		return v
+	}
+	return defaultBetaBase
 }
 
 // httpClient never auto-adds `Accept-Encoding: gzip`. Go's default Transport
@@ -67,14 +85,27 @@ type reqOpts struct {
 }
 
 // do issues a GET (or `opts.method`) against base+path and returns the response.
-// Tests are expected to inspect status / headers / body.
+// Tests are expected to inspect status / headers / body. α (本番 cache 経路)
+// 用 — port 8080。
 func do(t *testing.T, path string, opts reqOpts) *http.Response {
+	t.Helper()
+	return doRequest(t, base(), path, opts)
+}
+
+// doBeta は β test endpoint 用の port 8081 base に対するリクエスト。
+// `/_cache_key_test` / `/_cache_control_test` / `/_ttl_test` は本関数経由で叩く。
+func doBeta(t *testing.T, path string, opts reqOpts) *http.Response {
+	t.Helper()
+	return doRequest(t, betaBase(), path, opts)
+}
+
+func doRequest(t *testing.T, baseURL, path string, opts reqOpts) *http.Response {
 	t.Helper()
 	method := opts.method
 	if method == "" {
 		method = http.MethodGet
 	}
-	req, err := http.NewRequest(method, base()+path, nil)
+	req, err := http.NewRequest(method, baseURL+path, nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -98,7 +129,7 @@ func computeKey(t *testing.T, policy, path string, headers map[string]string) st
 	for k, v := range headers {
 		all[k] = v
 	}
-	resp := do(t, "/_cache_key_test"+path, reqOpts{headers: all})
+	resp := doBeta(t, "/_cache_key_test"+path, reqOpts{headers: all})
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -112,15 +143,21 @@ func computeKey(t *testing.T, policy, path string, headers map[string]string) st
 
 // requireUp fails fast when the stack isn't running, so the rest of the suite
 // produces actionable output instead of a wall of "connection refused".
+//
+// β test endpoint (port 8081) を ping する。α テストも本関数を呼ぶので、
+// β endpoint が立ち上がっていない (= test mode の compose で起動していない)
+// 場合は α テストごとここで止まる。これは意図的: β test endpoint は α テスト
+// を回す前に必ず up しているべき (compose で同 nginx container が両方 listen
+// しているため)。
 func requireUp(t *testing.T) {
 	t.Helper()
-	resp := do(t, "/_cache_key_test/__health", reqOpts{
+	resp := doBeta(t, "/_cache_key_test/__health", reqOpts{
 		headers: map[string]string{"X-Test-Policy": "default"},
 	})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("cf-local not reachable at %s (status %d). Run `docker compose up -d` first.",
-			base(), resp.StatusCode)
+		t.Fatalf("cf-local not reachable at %s (status %d). Run `docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build` first.",
+			betaBase(), resp.StatusCode)
 	}
 }
 
@@ -249,6 +286,77 @@ func TestComputeKey_TableDriven(t *testing.T) {
 			a := computeKey(t, "_test-empty-cookie", "/a", map[string]string{"Cookie": "theme=dark"})
 			b := computeKey(t, "_test-empty-cookie", "/a", map[string]string{"Cookie": "=garbage; theme=dark"})
 			eq(t, a, b)
+		}},
+
+		// Phase 3-1a: CookieBehavior=all
+		{"T20 _test-all-cookies: theme diff → diff (vs whitelist would be same)", func(t *testing.T) {
+			a := computeKey(t, "_test-all-cookies", "/a", map[string]string{"Cookie": "theme=dark"})
+			b := computeKey(t, "_test-all-cookies", "/a", map[string]string{"Cookie": "theme=light"})
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1a: CookieBehavior=allExcept (theme excluded)
+		{"T21 _test-allexcept-cookies: excluded cookie diff → same key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=dark; uid=u1"})
+			b := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=light; uid=u1"})
+			eq(t, a, b)
+		}},
+		{"T22 _test-allexcept-cookies: non-excluded cookie diff → diff key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=dark; uid=u1"})
+			b := computeKey(t, "_test-allexcept-cookies", "/a", map[string]string{"Cookie": "theme=dark; uid=u2"})
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1a: QueryStringBehavior=allExcept (utm_source / utm_medium excluded)
+		{"T23 _test-allexcept-queries: excluded query diff → same key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-queries", "/a?lang=ja&utm_source=tw", nil)
+			b := computeKey(t, "_test-allexcept-queries", "/a?lang=ja&utm_source=fb", nil)
+			eq(t, a, b)
+		}},
+		{"T24 _test-allexcept-queries: non-excluded query diff → diff key", func(t *testing.T) {
+			a := computeKey(t, "_test-allexcept-queries", "/a?lang=ja&utm_source=tw", nil)
+			b := computeKey(t, "_test-allexcept-queries", "/a?lang=en&utm_source=tw", nil)
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1a: QueryStringBehavior=all
+		{"T25 _test-all-queries: any query diff → diff", func(t *testing.T) {
+			a := computeKey(t, "_test-all-queries", "/a?utm=foo", nil)
+			b := computeKey(t, "_test-all-queries", "/a?utm=bar", nil)
+			neq(t, a, b)
+		}},
+
+		// Phase 3-1b: EnableAcceptEncodingBrotli only
+		{"T26 _test-brotli-only: AE=br vs gzip → diff (br honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-brotli-only", "/a", map[string]string{"Accept-Encoding": "br"})
+			b := computeKey(t, "_test-brotli-only", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			neq(t, a, b)
+		}},
+		{"T27 _test-brotli-only: AE=gzip vs absent → same (gzip not honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-brotli-only", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			b := computeKey(t, "_test-brotli-only", "/a", nil)
+			eq(t, a, b)
+		}},
+
+		// Phase 3-1b: EnableAcceptEncodingGzip only
+		{"T28 _test-gzip-only: AE=gzip vs absent → diff (gzip honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-gzip-only", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			b := computeKey(t, "_test-gzip-only", "/a", nil)
+			neq(t, a, b)
+		}},
+		{"T29 _test-gzip-only: AE=br vs absent → same (br not honored)", func(t *testing.T) {
+			a := computeKey(t, "_test-gzip-only", "/a", map[string]string{"Accept-Encoding": "br"})
+			b := computeKey(t, "_test-gzip-only", "/a", nil)
+			eq(t, a, b)
+		}},
+
+		// Phase 3-1b: both AE flags off (cache key independent of AE)
+		{"T30 _test-no-ae: AE=br vs gzip vs absent → all same", func(t *testing.T) {
+			a := computeKey(t, "_test-no-ae", "/a", map[string]string{"Accept-Encoding": "br"})
+			b := computeKey(t, "_test-no-ae", "/a", map[string]string{"Accept-Encoding": "gzip"})
+			c := computeKey(t, "_test-no-ae", "/a", nil)
+			eq(t, a, b)
+			eq(t, b, c)
 		}},
 	}
 

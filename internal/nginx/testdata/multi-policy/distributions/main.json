@@ -1,0 +1,25 @@
+{
+    "CallerReference": "multi-policy-2026-04-30",
+    "Comment": "Phase 3 A.4 multi-policy fixture",
+    "Enabled": true,
+    "Origins": [
+        {
+            "Id": "next-app",
+            "DomainName": "host.docker.internal",
+            "CustomOriginConfig": { "HTTPPort": 3000 }
+        }
+    ],
+    "DefaultCacheBehavior": {
+        "TargetOriginId":       "next-app",
+        "ViewerProtocolPolicy": "allow-all",
+        "CachePolicyId":        "default"
+    },
+    "CacheBehaviors": [
+        {
+            "PathPattern":          "/api/*",
+            "TargetOriginId":       "next-app",
+            "ViewerProtocolPolicy": "allow-all",
+            "CachePolicyId":        "with-session"
+        }
+    ]
+}

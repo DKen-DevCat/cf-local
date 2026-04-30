@@ -58,16 +58,27 @@ func TestTTL_Alpha_HitMissThroughProxyCache(t *testing.T) {
 	})
 
 	t.Run("AT02 max-age=2 → HIT, then MISS/EXPIRED after TTL", func(t *testing.T) {
-		_ = fetchWithCC(t, "AT02", "max-age=2") // warm
+		// REV-5 (Phase 2 review 繰越し): wall-clock log + sleep 3.5s で CI
+		// 遅延に余裕を持たせる。3.0s だと TTL=2s からの差分が 1s しかなく、
+		// 高負荷 CI で発火順序が逆転して silent flake になりうる。
+		warmStart := time.Now()
+		_ = fetchWithCC(t, "AT02", "max-age=2")
+		t.Logf("AT02 warm: t=%s", time.Since(warmStart))
+
+		hitStart := time.Now()
 		hit := fetchWithCC(t, "AT02", "max-age=2")
+		t.Logf("AT02 round 2 (HIT expected): t=%s elapsed-from-warm=%s status=%s",
+			time.Since(hitStart), time.Since(warmStart), hit.cacheStatus)
 		if hit.cacheStatus != "HIT" {
 			t.Fatalf("warm round 2 expected HIT got %s", hit.cacheStatus)
 		}
-		// 3s > 2s TTL: nginx revalidates and emits EXPIRED (or MISS if the
-		// entry was evicted entirely). Either is correct CloudFront-style
-		// behavior — the assertion is "no longer HIT".
-		time.Sleep(3 * time.Second)
+
+		time.Sleep(3500 * time.Millisecond)
+
+		afterStart := time.Now()
 		after := fetchWithCC(t, "AT02", "max-age=2")
+		t.Logf("AT02 round 3 (post-TTL): t=%s elapsed-from-warm=%s status=%s",
+			time.Since(afterStart), time.Since(warmStart), after.cacheStatus)
 		if after.cacheStatus == "HIT" {
 			t.Fatalf("expected non-HIT after TTL elapsed, got HIT (key=%s)", after.cacheKey)
 		}
@@ -98,6 +109,26 @@ func TestTTL_Alpha_HitMissThroughProxyCache(t *testing.T) {
 		second := fetchWithCC(t, "AT04", "s-maxage=60, max-age=0")
 		if second.cacheStatus != "HIT" {
 			t.Fatalf("round 2 expected HIT got %s — s-maxage priority broken", second.cacheStatus)
+		}
+	})
+
+	t.Run("AT06 clamp policy: max-age=1 → MinTTL=60 (REV-3, α 実 location で clamp 検証)", func(t *testing.T) {
+		// /_test-ttl-clamp/* には CacheBehavior で _test-ttl-clamp policy が
+		// 割当てられている (REV-3)。MinTTL=60 / MaxTTL=120 / DefaultTTL=300。
+		// origin が max-age=1 を返しても clamp で 60s に延長されるはずなので、
+		// 1.5s 経過後の round 3 も HIT を期待 (raw 値どおりなら EXPIRED になる)。
+		path := fmt.Sprintf("/_test-ttl-clamp/AT06_%d", os.Getpid())
+		full := path + "?cc=" + url.QueryEscape("max-age=1")
+
+		if r := head(t, full, nil); r.cacheStatus != "MISS" {
+			t.Fatalf("warm: expected MISS got %s", r.cacheStatus)
+		}
+		if r := head(t, full, nil); r.cacheStatus != "HIT" {
+			t.Fatalf("warm round 2: expected HIT got %s", r.cacheStatus)
+		}
+		time.Sleep(1500 * time.Millisecond)
+		if r := head(t, full, nil); r.cacheStatus != "HIT" {
+			t.Fatalf("post-1.5s: expected still HIT (clamp lifted max-age=1 to MinTTL=60) got %s", r.cacheStatus)
 		}
 	})
 

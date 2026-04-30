@@ -1,0 +1,64 @@
+# Phase 3-2 spike: nginx-modules/ngx_cache_purge を --with-compat dynamic module
+# として nginx:1.27-alpine 互換でビルドできるか実機検証する。
+#
+# 検証対象:
+#   1. ./configure --with-compat --add-dynamic-module で .so が生成できる
+#   2. apk nginx (nginx:1.27-alpine) に load_module で読み込める (ABI 整合)
+#   3. proxy_cache_purge ディレクティブが動作する (cache MISS → HIT → PURGE → MISS)
+#
+# 結果次第で:
+#   PASS → 本実装 (3-2) で同じ multi-stage 構造を採用
+#   FAIL → Plan B (debian source build) に切替
+
+ARG NGINX_VERSION=1.27.5
+ARG NGX_CACHE_PURGE_VERSION=2.5.5
+
+# --- builder stage ---------------------------------------------------------
+FROM nginx:1.27-alpine AS builder
+ARG NGINX_VERSION
+ARG NGX_CACHE_PURGE_VERSION
+
+RUN apk add --no-cache \
+        gcc \
+        make \
+        libc-dev \
+        pcre-dev \
+        pcre2-dev \
+        zlib-dev \
+        openssl-dev \
+        linux-headers \
+        wget
+
+WORKDIR /build
+
+# nginx source の取得 (apk の nginx 1.27.5 と同一バージョン)
+RUN wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+    && tar xzf "nginx-${NGINX_VERSION}.tar.gz"
+
+# ngx_cache_purge fork (active な nginx-modules 版) の取得
+RUN wget -q "https://github.com/nginx-modules/ngx_cache_purge/archive/refs/tags/${NGX_CACHE_PURGE_VERSION}.tar.gz" \
+        -O ngx_cache_purge.tar.gz \
+    && tar xzf ngx_cache_purge.tar.gz \
+    && mv "ngx_cache_purge-${NGX_CACHE_PURGE_VERSION}" ngx_cache_purge
+
+# --with-compat 付きで configure → modules-only build。
+# 公式 nginx:1.27-alpine も --with-compat でビルドされているので ABI 互換が取れる
+# (nginx 1.11.5+ の compat 機能)。
+WORKDIR /build/nginx-${NGINX_VERSION}
+RUN ./configure --with-compat --add-dynamic-module=/build/ngx_cache_purge \
+    && make modules \
+    && ls -l objs/*.so
+
+# --- final stage -----------------------------------------------------------
+FROM nginx:1.27-alpine
+
+ARG NGINX_VERSION
+COPY --from=builder /build/nginx-${NGINX_VERSION}/objs/ngx_http_cache_purge_module.so \
+                    /usr/lib/nginx/modules/ngx_http_cache_purge_module.so
+
+# spike 用 conf。同一 image 内に testserver の代わりに最小 origin を立てるのは
+# 面倒なので、外部から `wget --post-data=foo http://...` で書いて読むだけで HIT を作る
+# シンプルな構成。proxy_cache_purge ディレクティブ単体の動作確認が目的。
+COPY nginx.purge-test.conf /etc/nginx/nginx.conf
+
+EXPOSE 8081

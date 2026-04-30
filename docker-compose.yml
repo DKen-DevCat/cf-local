@@ -1,10 +1,41 @@
-# Phase 0: 最小構成
-# nginxだけ起動。originは別途ホスト側で起動する前提
+# Phase 3-A.4.11: Control Plane (Go) + Data Plane (nginx) 2 service 構成。
 #
-# Phase 4-A以降では Control Plane (Go) のサービスも追加される
-# Phase 4-D以降では Lambda RIE 連携用の docker-compose.lambda.yml が増える
+# cf-local container が `./cf-local/` のユーザー設定 (cache-policies/ +
+# distributions/) を読み込み、renderer 出力を named volume `cf-local-conf` 経由で
+# nginx container の `/etc/nginx/cf-local/` に流し込む。inotify sidecar
+# (`reload-watcher.sh`) が MOVED_TO event を watch して `nginx -s reload` を発火する。
+#
+# β test endpoint (port 8081) は本ファイルでは expose しない。test 実行時は
+# `docker compose -f docker-compose.yml -f docker-compose.test.yml up` で
+# override する (β テストの port mapping が追加される)。
 
 services:
+  cf-local:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cf-local
+    ports:
+      # Phase 3 A.5.3: invalidation API (POST /_invalidate)。Phase 4-A 以降の
+      # AWS API 互換 endpoint も同 port に追加していく予定。
+      - "4566:4566"
+    volumes:
+      # ユーザー設定 (read-only)。距離感の参考実装は examples/ 配下に置く予定 (3-8)。
+      - ./cf-local:/cf-local:ro
+      # renderer 出力先 (named volume)。nginx 側に同 volume を `/etc/nginx/cf-local/`
+      # で mount している。
+      - cf-local-conf:/work/cf-local-conf
+    command:
+      - --config-dir
+      - /cf-local
+      - --out-dir
+      - /work/cf-local-conf
+      - --addr
+      - ":4566"
+      - --nginx-url
+      - http://nginx:8080
+    restart: unless-stopped
+
   nginx:
     build: ./nginx
     container_name: cf-local-nginx
@@ -13,12 +44,20 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/njs:/etc/nginx/njs:ro
+      # Phase 3-A.4.11: Control Plane と共有する named volume (旧 bind mount
+      # `./nginx/cf-local:/etc/nginx/cf-local:ro` を撤去)。reload-watcher が
+      # この dir 配下の MOVED_TO を watch する。
+      - cf-local-conf:/etc/nginx/cf-local
       - nginx-cache:/var/cache/nginx
     extra_hosts:
       # Linux で host.docker.internal を有効にする
       # macOS / Windows では無視されるが書いて問題ない
       - "host.docker.internal:host-gateway"
+    depends_on:
+      cf-local:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
+  cf-local-conf:
   nginx-cache:

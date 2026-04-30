@@ -37,7 +37,7 @@ func parseCC(t *testing.T, value string, sendHeader bool) parsedCC {
 	if sendHeader {
 		headers["X-Test-CC"] = value
 	}
-	resp := do(t, "/_cache_control_test", reqOpts{headers: headers})
+	resp := doBeta(t, "/_cache_control_test", reqOpts{headers: headers})
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -113,6 +113,13 @@ func TestCacheControl_Parse(t *testing.T) {
 		{"P17 max-age=-5 rejected per RFC 9111", "max-age=-5", true, parsedCC{}},
 		{"P18 s-maxage=-1 rejected per RFC 9111", "s-maxage=-1", true, parsedCC{}},
 		{"P19 max-age=-0 retained as 0 (sign discarded)", "max-age=-0", true, parsedCC{}},
+
+		// REV-14 (Phase 2 review 繰越し): empty value (`max-age=`) が現状実装で
+		// drop されることを境界として明示する。parseDeltaSeconds 冒頭の
+		// `s === ''` early return が消えるとこのケースが silent に通ってしまう。
+		{"P20 max-age= (empty value) dropped", "max-age=", true, parsedCC{}},
+		{"P21 s-maxage= (empty value) dropped", "s-maxage=", true, parsedCC{}},
+		{"P22 max-age= mixed with valid no-cache", "no-cache, max-age=", true, parsedCC{NoCache: true}},
 	}
 
 	for _, c := range cases {

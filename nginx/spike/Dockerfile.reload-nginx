@@ -1,0 +1,25 @@
+# Phase 3-5 spike: 共有 volume + inotify sidecar の reload 経路検証
+#
+# 検証対象:
+#   1. inotifywait (inotify-tools) が docker volume mount 越しに MOVED_TO event を検知できる
+#   2. atomic rename (tmpfile + mv) によりファイル書きかけ状態を読まない (race 回避)
+#   3. nginx -s reload が sidecar から発火でき、master process が新 conf を読み込む
+#   4. 連続変更の debounce (~1 秒) で reload 回数が抑制される
+#
+# 結果次第で:
+#   PASS → 本実装 (3-2 / 3-5) で同構造を nginx/Dockerfile に展開
+#   FAIL → docker socket 経由など別経路を再検討
+
+FROM nginx:1.27-alpine
+
+RUN apk add --no-cache inotify-tools
+
+COPY reload-watcher.sh   /usr/local/bin/reload-watcher.sh
+COPY reload-entrypoint.sh /usr/local/bin/reload-entrypoint.sh
+COPY nginx.reload-base.conf /etc/nginx/nginx.conf
+
+RUN chmod +x /usr/local/bin/reload-watcher.sh /usr/local/bin/reload-entrypoint.sh \
+    && mkdir -p /shared
+
+EXPOSE 8083
+CMD ["/usr/local/bin/reload-entrypoint.sh"]

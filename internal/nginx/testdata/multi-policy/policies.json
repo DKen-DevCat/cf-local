@@ -1,0 +1,45 @@
+{
+  "policies": {
+    "default": {
+      "Name": "default",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig": {
+          "HeaderBehavior": "none"
+        },
+        "CookiesConfig": {
+          "CookieBehavior": "none"
+        },
+        "QueryStringsConfig": {
+          "QueryStringBehavior": "none"
+        }
+      }
+    },
+    "with-session": {
+      "Name": "with-session",
+      "MinTTL": 0,
+      "MaxTTL": 31536000,
+      "DefaultTTL": 86400,
+      "ParametersInCacheKeyAndForwardedToOrigin": {
+        "EnableAcceptEncodingGzip": true,
+        "EnableAcceptEncodingBrotli": true,
+        "HeadersConfig": {
+          "HeaderBehavior": "none"
+        },
+        "CookiesConfig": {
+          "CookieBehavior": "whitelist",
+          "Cookies": [
+            "session_id"
+          ]
+        },
+        "QueryStringsConfig": {
+          "QueryStringBehavior": "none"
+        }
+      }
+    }
+  }
+}

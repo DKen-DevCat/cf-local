@@ -52,9 +52,15 @@ func handle(w http.ResponseWriter, r *http.Request) {
 
 	status := http.StatusOK
 	if s := q.Get("status"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
-			status = n
+		// REV-9 (Phase 2 review 繰越し): 不正値 (e.g. `?status=abc`) を silent
+		// 200 fallback すると、テストが「α 経路で 200 を期待」と勘違いして失敗
+		// 原因が見えにくい。明示的に 400 を返してテスト側で検出させる。
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			http.Error(w, "testserver: malformed status query: "+s, http.StatusBadRequest)
+			return
 		}
+		status = n
 	}
 
 	body := q.Get("body")

@@ -11,7 +11,11 @@ go.work.sum
 vendor/
 
 # Build artifacts
-/cf-local
+# Phase 3 A.4.12: ./cf-local/ ディレクトリは user 設定置き場 (cache-policies/ +
+# distributions/) として tracked。Go binary を ad-hoc に build する場合は
+# `go build -o /tmp/cf-local ./cmd/cf-local` のように repo 外に出す運用。
+# 通常の build は docker (`docker compose up --build`) 経由なので host に
+# binary は残らない。
 /dist/
 /bin/
 
@@ -22,6 +26,9 @@ vendor/
 # nginx
 /nginx-cache/
 *.log
+
+# golden file テスト不一致時に書き出される actual output (assertGolden が生成)
+internal/**/testdata/**/*.got
 
 # Editor / OS
 .DS_Store
