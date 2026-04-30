@@ -29,3 +29,16 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - 後半-3 multi-variant invalidation (cookie / header / AE 違いの全 slot を一括 purge)
 - 後半-4 非同期実行 + status + `GetInvalidation` / `ListInvalidations`
 - 後半-5 invalidation 履歴の永続化 (BoltDB)
+
+---
+
+## Phase chore-1: Claude 開発フロー強化 (review infra) — 進行中
+
+ブランチ: `chore/claude-flow`（develop @ `8d69fb2` 起点）
+
+設計: [`.claude/design/claude-flow-2026-04-30.md`](design/claude-flow-2026-04-30.md)
+
+- [ ] **chore-1-1**: `.claude/agents/code-reviewer.md` を cf-local 用に新規作成（Go + njs/nginx + Markdown 観点、`.claude/rules/` 参照）
+- [ ] **chore-1-2**: `.claude/skills/review-diff/SKILL.md` の Step 3 で subagent_type を `general-purpose` → `code-reviewer` に切替 + プロンプト調整
+- [ ] **chore-1-3** (任意): `.claude/rules/code-style.md` の領域別分割を試走後に判断
+- [ ] **chore-1-4** (任意): 実 PR で `/phase-review --pr <番号>` を試走し、観測結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
