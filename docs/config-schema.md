@@ -209,6 +209,13 @@ allExcept 例 (UTM tracking 系を除外して全クエリをキャッシュ):
 - HTTPS は実装しない (HTTP-only)。`ViewerProtocolPolicy` の値は受理するが http→https リダイレクトは行わない
 - `CustomOriginConfig.HTTPSPort` / `OriginSslProtocols` は無視される
 
+## 関連 doc
+
+- [`invalidation-api.md`](./invalidation-api.md) — `POST /_invalidate` の API spec (Phase 3 MVP)
+- [`cache-policy.md`](./cache-policy.md) — cache policy の使い方 / 例
+- [`ttl.md`](./ttl.md) — TTL 決定ロジック (Phase 2)
+- [`limitations.md`](./limitations.md) — 制約一覧
+
 ## 参考
 
 - AWS CloudFront API Reference:

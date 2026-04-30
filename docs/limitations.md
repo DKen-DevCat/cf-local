@@ -32,11 +32,16 @@ cf-localと本物のCloudFrontとの違い。意図的に再現していない�
 - `Age` ヘッダーの扱いが本物と異なる可能性
 - TTL 注入は 2-hop パターン (outer cache 層 + inner `js_header_filter` で `X-Accel-Expires` 注入) で実装。1 リクエストにつき TCP self-loop が 1 回挟まる (sub-millisecond) — 詳細は `docs/ttl.md`
 
-### Invalidation
+### Invalidation (Phase 3 MVP)
 
-- ワイルドカード（`*`）は最後の `*` のみ対応
-- パスの完全一致 + 末尾ワイルドカードのみ
-- 同時実行制限は未実装（本物は3並列）
+Phase 3 では cf-local 独自 simple JSON で最小構成のみ実装 (`POST /_invalidate`)。詳細仕様は [`docs/invalidation-api.md`](./invalidation-api.md)。
+
+- **完全一致のみ** — wildcard (`/foo/*`, `*.jpg`) は Phase 4-B 送り
+- **default policy + AE=identity の 1 variant のみ purge** — 同じ path でも cookie / header / Accept-Encoding の違いで複数の cache slot が出来ている場合、Phase 3 で消せるのは「default policy + 空 headers/cookies/queries + AE=identity」の 1 つだけ。multi-variant 一括 invalidate は Phase 4-B
+- **同期実行** — `POST /_invalidate` は purge 完了まで待ってから 200 を返す。`InProgress`/`Completed` 等の status fields は Phase 4-B
+- **AWS API 互換ではない** — `POST /2020-05-31/distribution/{Id}/invalidation` の XML 互換は Phase 4-B
+- **invalidation 履歴は持たない** — `GetInvalidation` / `ListInvalidations` は Phase 4-B
+- **同時実行制限なし** — 本物は 3 並列上限、cf-local はローカル開発前提なので省略
 
 ### Lambda@Edge / CloudFront Functions
 
