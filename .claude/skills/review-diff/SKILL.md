@@ -46,25 +46,30 @@ $ARGUMENTS
 
 ### Step 3. 3 並列で code-reviewer サブエージェントを起動
 
-Agent ツール（subagent_type: `general-purpose`）を 3 本、**単一メッセージ内で並列**起動する。
+Agent ツール（subagent_type: `code-reviewer`）を 3 本、**単一メッセージ内で並列**起動する。
+`code-reviewer` agent (`.claude/agents/code-reviewer.md`) は cf-local 用に書かれており、必読資料 (CLAUDE.md / DESIGN.md / docs/conventions.md / .claude/rules/) を内部で読みに行く。プロンプトでは **担当領域とフォーカス** を渡せばよい（agent 側でルール参照を完結させる）。
+
+各 Agent には共通で以下を含める:
+- 差分全文（または `gh pr diff <番号>` の出力）
+- 担当領域の指示（A / B / C のいずれか）
+- 「confidence 0-100 で採点し **80 以上のみ報告**」の念押し
+- 報告フォーマット: `severity / confidence / file:line / 説明 / 該当ルール / 修正案`
 
 **Agent A — スタイル / 規約遵守**
 
-- 担当: `code-style.md` + `docs/conventions.md`
-- 観点: 命名、ファイル分割、エラーラップ、import 順序、gofmt 通過、njs スタイル、Markdown ルール
-- プロンプトに含める: 差分全文 + Agent A 担当ルールの抜粋 + 「confidence 0-100 で採点し、**80 以上のみ**報告。報告フォーマット: `severity / confidence / file:line / 説明 / 該当ルール / 修正案`」
+- 担当: 命名、ファイル分割、エラーラップ、import 順序、gofmt 通過、njs スタイル、nginx.conf スタイル、Markdown ルール
+- 軸となる資料: `.claude/rules/code-style.md` + `docs/conventions.md`
 
 **Agent B — 設計 / スコープ / テスト**
 
-- 担当: `quality.md` + `CLAUDE.md` + `DESIGN.md`
-- 観点: スコープ外機能の混入、過剰抽象化、テストファースト遵守（cache_key / TTL / config loader 等）、フェーズ単位の動作可否、DESIGN.md からの逸脱
-- プロンプトに含める: 差分全文 + Agent B 担当ルールの抜粋 + 「confidence ≥ 80 のみ報告」
+- 担当: スコープ外機能の混入、過剰抽象化、テストファースト遵守（cache_key / TTL / config loader 等）、フェーズ単位の動作可否、DESIGN.md からの逸脱
+- 軸となる資料: `.claude/rules/quality.md` + `CLAUDE.md` + `DESIGN.md`
 
-**Agent C — バグ・型・セキュリティ**
+**Agent C — バグ・型・並行性**
 
 - 担当: 論理バグ、Go 型 / nil 扱い、レース条件（goroutine / sync）、njs 特有の落とし穴、パフォーマンス劣化、IO リソースリーク
-- 観点: コードそのものの正しさ。**ローカル開発ツールなのでセキュリティ機能の欠如は指摘しない**（DESIGN.md 参照）。ただし「うっかり認証情報をログ出力」のような事故レベルは報告する
-- プロンプトに含める: 差分全文 + 観点 + 「confidence ≥ 80 のみ報告」
+- 軸となる観点: コードそのものの正しさ
+- 留意: **ローカル開発ツールなのでセキュリティ機能の欠如は指摘しない**（DESIGN.md 参照）。ただし「うっかり認証情報をログ出力」のような事故レベルは報告する
 
 ### Step 4. 結果の統合
 
