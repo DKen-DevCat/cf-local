@@ -1,0 +1,267 @@
+package nginx
+
+import (
+	"bytes"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
+)
+
+// conf.go: cf-local.conf 生成ロジック。
+//
+// 出力構造 (Phase 0〜2 の 2-hop パターンを policy 数だけ展開):
+//
+//   1. ヘッダ (load_module は base nginx.conf 側、ここでは js_* / proxy_cache_path)
+//   2. upstream blocks (Origins[].Id 1 つにつき 1 block + self)
+//   3. server { listen 8080; }
+//      a. invalidation purge endpoint
+//      b. CacheBehaviors[] の outer location (PathPattern 順)
+//      c. DefaultCacheBehavior の outer location (`location /`)
+//      d. inner locations (sanitized policy id alphabetical, dedup)
+//
+// サニタイズ規則:
+//
+//   - upstream / inner location 名: `[^a-zA-Z0-9_]` を `_` に置換
+//   - PathPattern → location prefix: 末尾 `/*` を strip
+//
+// A.4.3 では DefaultCacheBehavior のみ対応 (CacheBehaviors[] は A.4.4 で追加、
+// disabled 分岐は A.4.6 で追加)。
+
+// renderConf は AWS SDK の DistributionConfig + CachePolicyConfig マップから
+// cf-local.conf のバイト列を組み立てる。Distribution が nil または
+// Enabled=false の場合の分岐は本関数の呼び出し側 (Render) が担当する。
+func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConfig) ([]byte, error) {
+	origins, err := buildOriginViews(d.Origins)
+	if err != nil {
+		return nil, err
+	}
+	behaviors, inners, err := buildBehaviorViews(d)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	writeConfHeader(&buf)
+	writeUpstreams(&buf, origins)
+	writeServerBlock(&buf, behaviors, inners)
+	return buf.Bytes(), nil
+}
+
+// ---- views (template-friendly intermediate types) --------------------------
+
+type originView struct {
+	UpstreamName string // origin_<sanitized-id>
+	Server       string // <DomainName>:<HTTPPort>
+}
+
+type behaviorView struct {
+	Comment     string // "DefaultCacheBehavior (CachePolicyId=default)." 等
+	Location    string // "/" や "/api/"
+	PolicyID    string // raw (set $cf_policy_id "<raw>")
+	InnerPrefix string // "/_cf_inner_<sanitized-policy-id>"
+}
+
+type innerView struct {
+	Location     string // "/_cf_inner_<sanitized-policy-id>/"
+	PolicyID     string // raw
+	UpstreamName string // origin_<sanitized-origin-id>
+}
+
+func buildOriginViews(origins *types.Origins) ([]originView, error) {
+	if origins == nil || len(origins.Items) == 0 {
+		return nil, fmt.Errorf("Origins is empty")
+	}
+	out := make([]originView, 0, len(origins.Items))
+	for _, o := range origins.Items {
+		id := derefString(o.Id)
+		dom := derefString(o.DomainName)
+		san := sanitizeID(id)
+		if san == "" {
+			return nil, fmt.Errorf("Origins[].Id %q sanitizes to empty string", id)
+		}
+		port := int32(80)
+		if o.CustomOriginConfig != nil && o.CustomOriginConfig.HTTPPort != nil {
+			port = *o.CustomOriginConfig.HTTPPort
+		}
+		out = append(out, originView{
+			UpstreamName: "origin_" + san,
+			Server:       fmt.Sprintf("%s:%d", dom, port),
+		})
+	}
+	return out, nil
+}
+
+// buildBehaviorViews は DefaultCacheBehavior + CacheBehaviors[] から
+// outer location 配列と inner location 配列を組み立てる。
+//
+// A.4.3 時点では DefaultCacheBehavior のみ。CacheBehaviors[] は A.4.4 で
+// 反映する (ここで早めに処理してもいいが、A.4.4 の PathPattern 変換ロジック
+// に集約する方が PR を小さく保てる)。
+func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerView, error) {
+	if d == nil {
+		return nil, nil, fmt.Errorf("DistributionConfig is nil")
+	}
+
+	var behaviors []behaviorView
+
+	if d.DefaultCacheBehavior == nil {
+		return nil, nil, fmt.Errorf("DefaultCacheBehavior is nil")
+	}
+	defaultOriginID := derefString(d.DefaultCacheBehavior.TargetOriginId)
+	defaultPolicyID := derefString(d.DefaultCacheBehavior.CachePolicyId)
+	defaultSan := sanitizeID(defaultPolicyID)
+	if defaultSan == "" {
+		return nil, nil, fmt.Errorf("DefaultCacheBehavior.CachePolicyId %q sanitizes to empty string", defaultPolicyID)
+	}
+	behaviors = append(behaviors, behaviorView{
+		Comment:     fmt.Sprintf("DefaultCacheBehavior (CachePolicyId=%s).", defaultPolicyID),
+		Location:    "/",
+		PolicyID:    defaultPolicyID,
+		InnerPrefix: "/_cf_inner_" + defaultSan,
+	})
+
+	// inner locations: sanitized policy id をキーに dedup (A.4.4 で複数 behaviors が
+	// 同 policy を共有した場合に備えて map 経由で管理)。
+	inners := map[string]innerView{}
+	originUpstream := func(originID string) (string, error) {
+		san := sanitizeID(originID)
+		if san == "" {
+			return "", fmt.Errorf("TargetOriginId %q sanitizes to empty string", originID)
+		}
+		return "origin_" + san, nil
+	}
+	defaultUpstream, err := originUpstream(defaultOriginID)
+	if err != nil {
+		return nil, nil, err
+	}
+	inners[defaultSan] = innerView{
+		Location:     "/_cf_inner_" + defaultSan + "/",
+		PolicyID:     defaultPolicyID,
+		UpstreamName: defaultUpstream,
+	}
+
+	innerList := make([]innerView, 0, len(inners))
+	keys := make([]string, 0, len(inners))
+	for k := range inners {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		innerList = append(innerList, inners[k])
+	}
+
+	return behaviors, innerList, nil
+}
+
+// ---- writers ---------------------------------------------------------------
+
+func writeConfHeader(b *bytes.Buffer) {
+	b.WriteString(`# Generated by cf-local — do not edit by hand.
+
+js_path "/etc/nginx/njs/";
+js_import ck  from cache_key.js;
+js_import ttl from ttl.js;
+js_set $cf_cache_key ck.forNginx;
+
+proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=cf_cache:100m max_size=1g inactive=7d use_temp_path=off;
+
+`)
+}
+
+func writeUpstreams(b *bytes.Buffer, origins []originView) {
+	for _, o := range origins {
+		fmt.Fprintf(b, "upstream %s {\n    server %s;\n}\n", o.UpstreamName, o.Server)
+	}
+	b.WriteString("upstream self {\n    server 127.0.0.1:8080;\n}\n\n")
+}
+
+func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerView) {
+	b.WriteString("server {\n    listen 8080;\n\n")
+	b.WriteString(`    # Invalidation purge endpoint (A.5 で発火)。
+    location ~ ^/_cf_purge(/.*)$ {
+        allow 127.0.0.1;
+        deny all;
+        proxy_cache_purge cf_cache $1;
+    }
+
+`)
+	for _, beh := range behaviors {
+		writeOuterLocation(b, beh)
+		b.WriteByte('\n')
+	}
+	for i, inner := range inners {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		writeInnerLocation(b, inner)
+	}
+	b.WriteString("}\n")
+}
+
+func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
+	fmt.Fprintf(b, "    # %s\n", beh.Comment)
+	fmt.Fprintf(b, "    location %s {\n", beh.Location)
+	fmt.Fprintf(b, "        set $cf_policy_id %q;\n\n", beh.PolicyID)
+	b.WriteString(`        proxy_cache cf_cache;
+        proxy_cache_key $cf_cache_key;
+        proxy_cache_valid 200 86400s;
+        proxy_cache_valid 404 10s;
+        proxy_no_cache $upstream_http_x_cf_ttl_error;
+        proxy_ignore_headers Set-Cookie Vary Cache-Control;
+
+        add_header X-Cache-Status $upstream_cache_status always;
+        add_header X-Cache-Key    $cf_cache_key          always;
+
+`)
+	fmt.Fprintf(b, "        proxy_pass http://self%s$request_uri;\n", beh.InnerPrefix)
+	b.WriteString(`        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+`)
+}
+
+func writeInnerLocation(b *bytes.Buffer, inner innerView) {
+	fmt.Fprintf(b, "    location %s {\n", inner.Location)
+	b.WriteString(`        allow 127.0.0.1;
+        deny all;
+
+`)
+	fmt.Fprintf(b, "        set $cf_policy_id %q;\n", inner.PolicyID)
+	b.WriteString("        js_header_filter ttl.computeAndInject;\n\n")
+	fmt.Fprintf(b, "        proxy_pass http://%s/;\n", inner.UpstreamName)
+	b.WriteString("        proxy_set_header Host $host;\n    }\n")
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+// sanitizeID は nginx upstream name や internal location の prefix で使える形に
+// AWS リソース ID を正規化する。`[^a-zA-Z0-9_]` を `_` に置換するだけ。
+//
+// 入力が空文字なら出力も空文字。呼び出し側で「空になったらエラー」と判定する
+// (例: Origins[].Id が空文字に正規化されたら error)。
+func sanitizeID(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}

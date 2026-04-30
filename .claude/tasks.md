@@ -38,10 +38,10 @@
     - [x] A.4.0 golden test fixture 配置 (`internal/nginx/testdata/{min,multi-policy,ae-flags,disabled}/{cache-policies,distributions,*.json,*.conf}`) — TDD の input/expected を先に。loader smoke で全 4 ケース読み込み OK
     - [x] A.4.1 `internal/nginx/renderer.go` skeleton + `Render(*config.LoadResult) (*Output, error)` 型定義 + `render_test.go` table-driven test (全 4 ケース unimplemented で FAIL することを確認、gofmt/go vet クリーン)
     - [x] A.4.2 policies.json 生成 (intermediate struct で flatten + omitempty marshal) + 全 4 ケース policies.json golden PASS。subtest は cf-local.conf 側で依然 FAIL なので最終 PASS は A.4.6 で達成
-    - [ ] A.4.3 nginx.conf 生成: upstream + DefaultCacheBehavior の outer/inner ペア + `min` golden PASS
+    - [x] A.4.3 nginx.conf 生成: upstream + DefaultCacheBehavior の outer/inner ペア + `min` / `ae-flags` golden PASS。ついでに A.4.6 disabled 分岐も Render dispatch のついでに同コミットで実装 (disabled comment 1 行返す)
     - [ ] A.4.4 PathPattern → location 変換 + sanitize + `multi-policy` golden PASS
     - [ ] A.4.5 loader 側 PathPattern 受理規則 (prefix `/path/*` のみ) + `pathpattern-reject` テスト追加
-    - [ ] A.4.6 `disabled` ケース (Distribution.Enabled=false で空出力) + golden PASS
+    - [x] A.4.6 `disabled` ケース (Distribution.Enabled=false で空出力) + golden PASS — A.4.3 で先取り実装。Render() の switch case で disabled comment を返す経路を分けた
     - [ ] A.4.7 `internal/nginx/writer.go` の `WriteAtomic` 実装 + unit test (3-5 残)
     - [ ] A.4.8 `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` 追加 + render → write → sleep) — A.3b の dump コード撤去
     - [ ] A.4.9 `nginx/njs/cache_key.js` の policies.json path を `/etc/nginx/cf-local/policies.json` に変更
