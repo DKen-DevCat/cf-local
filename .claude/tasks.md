@@ -69,7 +69,7 @@
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
 - [x] 3-5 本実装 (A.2): sidecar スクリプト `nginx/scripts/` 配置 + Dockerfile に inotify-tools + nginx.conf を `include /etc/nginx/cf-local/*.conf` 化 + bind mount 追加 (α regression PASS、macOS bind mount + inotify は VirtioFS 制約で動かないが A.4 で named volume に切替後解決)
 - [x] 3-5 残: Control Plane で atomic rename 実装 — A.4.7 (`internal/nginx/writer.go` の `WriteAtomic`: tmp → fsync → rename → parent dir fsync) + A.4.8 (`cmd/cf-local/main.go` の `run()` で `policies.json` / `cf-local.conf` 両方に配線) で吸収済み
-- [ ] 3-8 `examples/` 拡充 + `docs/config-schema.md` + CMS 連携ドキュメント
+- [x] 3-8 `examples/` 拡充 + CMS 連携ドキュメント — `examples/nextjs-basic/README.md` を Phase 3 2-service 構成 + invalidation 項 + 設定カスタマイズに更新。`docs/invalidation-api.md` に CMS webhook 連携 section (直送 / 変換 layer / 本番 CDN への切替) 追加。`docs/config-schema.md` は A.4 着地時点で既に Phase 3 schema 網羅済 (A.5.6 で関連 doc link 追加)
 
 ### Phase 3 review 対応 (A.4 着地レビューより)
 

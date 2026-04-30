@@ -98,6 +98,43 @@ Phase 3 では「default policy + 空 headers/cookies/queries + AE=identity」�
 
 CMS webhook 連携など「単一 path を更新したら同 path を invalidate」の典型用例では、ブラウザは AE 別に cache を保持するので問題が顕在化することは少ないが、AE 経路で配信した cache を確実に消したい場合は **HIT 確認 + 必要なら容量 LRU 失効を待つ**か、Phase 4-B の multi-variant 対応を待つ。
 
+## CMS webhook との連携
+
+CMS (microCMS / Contentful / Strapi 等) の webhook を `POST /_invalidate` に転送するパターン。CMS が「記事更新時に webhook を打つ」設定をサポートしていれば、cf-local の前段に簡易な変換 layer を挟むだけでキャッシュ無効化が連動する。
+
+### 直送できる場合
+
+CMS の webhook payload がそのまま `{"paths":[...]}` 形式で送れる (or webhook 設定で template 指定できる) 場合は cf-local に直送できる:
+
+```shell
+$ curl -X POST http://localhost:4566/_invalidate \
+    -H 'Content-Type: application/json' \
+    -d '{"paths":["/posts/abc"]}'
+{"invalidated":1}
+```
+
+### 変換 layer を挟む場合
+
+CMS の payload 形式が異なる場合、簡単な変換 endpoint を間に挟む。Next.js の API route 例:
+
+```js
+// pages/api/cms-webhook.js
+export default async function handler(req, res) {
+  // microCMS の場合: req.body.contents.new.publishValue.id 等
+  const { id } = req.body;
+  const r = await fetch('http://localhost:4566/_invalidate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths: [`/posts/${id}`] }),
+  });
+  res.status(r.status).end();
+}
+```
+
+### 本番 CDN への切り替え
+
+cf-local API はローカル開発用なので、外部から `:4566` を直接叩かれる構成は想定外。本番環境では同じ webhook を CloudFront `CreateInvalidation` に振り向ける形 (本物の AWS SDK 呼び出し) で再利用できる。Phase 4-B で cf-local 側も `CreateInvalidation` XML 互換を実装する予定なので、最終的には webhook → SDK 呼び出しの 1 系統で local / 本番を切替できるようになる。
+
 ## 後半拡充 (Phase 4-B 以降)
 
 - AWS `CreateInvalidation` XML 形式互換 (`POST /2020-05-31/distribution/{Id}/invalidation`)
