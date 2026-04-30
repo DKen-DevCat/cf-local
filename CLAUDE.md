@@ -15,6 +15,24 @@
 
 `/phase-*` 系 skill はこの構造を前提に動く。
 
+## Skills config
+
+`/phase-*`・`/review-diff`・`/check` 等の skill が読む設定。
+
+```yaml
+phase:
+  base_branch: develop
+  phase_registry: .claude/plan.md
+  tasks_file: .claude/tasks.md
+  tasks_archive_dir: .claude/tasks-archive
+  design_dir: .claude/design
+  design_filename_pattern: <slug>-<YYYY-MM-DD>.md
+  branch_pattern: feat/<phase-id>-<slug>
+  commit_msg_hook_requires_tasks: false
+```
+
+`commit_msg_hook_requires_tasks: false` の根拠: cf-local は `.git/hooks/commit-msg` を導入していないため、`/phase-review --fix` のコミット時に `tasks.md` への追記は強制しない。
+
 ## このプロジェクトの作業哲学
 
 ### 1. 設計判断は DESIGN.md に従う
