@@ -119,3 +119,92 @@ tests/                        # 統合テスト・E2Eテスト
 3. `.claude/tasks.md` の進行中セクションを片付け、必要なら次フェーズの予定だけ残す
 
 これらは将来の自分（と他のClaude Codeセッション）への手紙。
+
+## Skills config
+
+`/phase-*` skill が読み取る設定ブロック。値を変えたいときはここを編集する（既定値で十分なら触らなくてよい）。
+
+```yaml
+phase:
+  base_branch: develop
+  branch_pattern: "feat/<phase-id>-<slug>"
+  phase_registry: .claude/plan.md
+  tasks_file: .claude/tasks.md
+  tasks_archive_dir: .claude/tasks-archive
+  design_dir: .claude/design
+  design_filename_pattern: "<slug>-<YYYY-MM-DD>.md"
+  # この PJ には commit-msg フックが無いため false。
+  # 将来 tasks 必須の commit-msg フックを入れたら true に切り替える。
+  commit_msg_hook_requires_tasks: false
+```
+
+## レビュースタイル: 肯定派 / 否定派ディベート
+
+`/phase-review`（および `/review-diff` / `/security-review` を直接叩いたとき）は、各指摘について **肯定派 / 否定派の両論** を立ててから採否を決める。「採否提案」テーブルを出す前に、必ずこのディベートを通す。
+
+### レビュー軸（4 系統を並列実行）
+
+`/phase-review` Step 2 の並列レビューに以下 2 軸を追加する。**4 つすべてを単一メッセージ内で並列起動**し、結果を Step 3 で統合する。
+
+| 軸 | 起動方法 | 拾う指摘 |
+|---|---|---|
+| (1) スタイル / バグ | `/review-diff` | confidence ≥ 80 |
+| (2) セキュリティ | `/security-review` | HIGH / MEDIUM (conf ≥ 0.8) |
+| (3) **設計思想整合** | Agent (subagent_type=Explore) で実行 | 下記 |
+| (4) **公式ドキュ準拠** | Agent (subagent_type=general-purpose) で実行 | 下記 |
+
+#### (3) 設計思想整合レビュー
+
+差分が `DESIGN.md` / `.claude/plan.md` / 着手中の `.claude/design/<slug>-<date>.md` / `docs/conventions.md` の明文と整合しているかを確認する。Agent への指示テンプレ:
+
+> 以下 4 ファイルを読み、現在の `git diff {{base}}...HEAD` が設計思想・スコープ・規約から逸脱していないか審査せよ。`DESIGN.md` / `.claude/plan.md` / `.claude/design/<active>.md` / `docs/conventions.md`。逸脱があれば `file:line — 該当ドキュ:該当節 — 何が逸脱か — 修正案` の形で列挙。逸脱が無ければ「整合」と 1 行で返答。「やらない」リストに載っているものを実装している、フェーズスコープを超えた変更が混じっている、conventions.md の明文に反している、を主に見る。
+
+#### (4) 公式ドキュ準拠レビュー
+
+差分で触れたライブラリ / API / SDK / CLI ツールについて、context7 で**最新の公式ドキュメント**を取得し、ベストプラクティスから外れていないか審査する。Agent への指示テンプレ:
+
+> `git diff {{base}}...HEAD --name-only` の差分で扱われている外部ライブラリ・API・SDK・CLI を抽出。それぞれについて `mcp__context7__query-docs` で公式ドキュメントを引き、現行ベストプラクティスから外れている書き方があれば指摘せよ。形式: `file:line — <ライブラリ/API> — 公式推奨: ... — 現コード: ... — 修正案`。学習データの記憶ではなく、必ず context7 を引いた上で根拠を提示する。AWS CloudFront / nginx / njs / BoltDB / Go 標準ライブラリの慣用は特に注意。
+
+### 役割定義
+
+- **肯定派（コードの擁護側）**: 「この指摘は採用しなくてよい」と主張する。根拠の例:
+  - 既存挙動の継承であり本フェーズの責務外
+  - 修正コスト > 得られる便益
+  - 指摘ルールが本コードベースの慣習と合わない
+  - false positive（confidence が見かけ高いが文脈で問題にならない）
+- **否定派（コードの批判側）**: 「この指摘は採用すべき」と主張する。根拠の例:
+  - 新規導入のバグ / regression
+  - DESIGN.md / conventions.md / 着手中 design ドキュメントに明確に違反
+  - 設計思想（フェーズスコープ・「やらない」リスト）から逸脱している
+  - 公式ドキュメントが推奨する書き方から外れている（context7 の根拠付き）
+  - セキュリティ・データ破損などの不可逆リスク
+  - 修正コストが極めて低い（数行で済む）
+
+### 出力フォーマット（採否提案の前段に挿入）
+
+```markdown
+### 指摘ごとのディベート
+
+#### 1. <指摘の要約> (<file:line>, conf <N> / <severity>)
+
+- 肯定派（不採用寄り）: <根拠 1〜2 行>
+- 否定派（採用寄り）: <根拠 1〜2 行>
+- ジャッジ: 採用 / 不採用 — <最終判断の根拠 1 行>
+```
+
+### ジャッジの優先順位
+
+両論が拮抗したときは以下の順で判断する:
+
+1. **不可逆 / 安全性** に関わる指摘は否定派寄り（採用）に倒す
+2. **DESIGN.md / conventions.md / 設計思想** からの逸脱は否定派寄り（採用）。フェーズスコープ越境・「やらない」リスト抵触は特に強く採用
+3. **公式ドキュ推奨からの逸脱**（context7 で根拠が取れたもの）は否定派寄り（採用）。ただし慣用と推奨が分かれる領域はジャッジで判断
+4. **既存挙動の継承で本 PR の責務外** は肯定派寄り（不採用）
+5. それ以外で迷ったら **修正コストが小さい方** を採用
+
+### 適用範囲
+
+- `/phase-review` の Step 3「採否提案」生成時に、このディベートを内部的に実行してから表を出す
+- 指摘が 1 件もないときはディベート不要
+- 同じ `file:line` で重複統合された指摘は 1 件としてディベートする
+- ユーザーが `--fix` で番号指定してきた場合、ジャッジ結果と異なる指示でも **ユーザーの判断を優先**（ジャッジは提案）
