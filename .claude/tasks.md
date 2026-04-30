@@ -31,7 +31,7 @@
 - [x] 3-2 spike: `nginx-modules/ngx_cache_purge` v2.5.5 を `--with-compat` で dynamic module ビルド検証 — PASS (`nginx/spike/README.md`)
 - [x] 3-2 本実装 (A.1): multi-stage Dockerfile + ngx_cache_purge v2.5.5 dynamic module + nginx.conf に `load_module` 追加 (実発火 location は A.5 で追加、α regression PASS)
 - [ ] 3-2 残: 内部 purge endpoint 設計 (cache_key と purge key の整合) — A.5 で扱う
-- [ ] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD)
+- [x] 3-3 Go 基盤 (`cmd/cf-local/main.go`) + `internal/config` loader (TDD) — A.3a/A.3b の 2 コミットで完了。独自 Schema 型 (flat array) → AWS SDK Go v2 cloudfront/types 変換 + Phase 3 制約 (distributions 1 ファイル限定) + cross-ref validation。テーブル駆動テストで Happy 6 + Error 14 ケース。REV-7 (MinTTL 負値 / MinTTL > MaxTTL) は Go loader 側でも fail-fast (njs 側は別タスクで残置)
 - [ ] 3-4 `internal/nginx` で `nginx.conf` + `policies.json` 生成器 (golden file テスト)
 - [x] 3-5 spike: 共有 named volume + inotify sidecar の reload 経路検証 — PASS (`nginx/spike/README.md`、debounce は busybox 制約で 1 秒に確定)
 - [x] 3-5 本実装 (A.2): sidecar スクリプト `nginx/scripts/` 配置 + Dockerfile に inotify-tools + nginx.conf を `include /etc/nginx/cf-local/*.conf` 化 + bind mount 追加 (α regression PASS、macOS bind mount + inotify は VirtioFS 制約で動かないが A.4 で named volume に切替後解決)
