@@ -39,6 +39,12 @@ func (p *NginxPurger) Purge(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
+	// Phase 3 MVP は "AE=identity" の 1 variant を purge する。Go の
+	// http.Transport は Accept-Encoding 未設定時に "gzip" を自動付与する
+	// ため、明示的に identity を立てる。これがないと njs の cache_key 計算
+	// で gzip variant が選ばれ、本番リクエスト (AE 無し → identity) と別
+	// slot を purge してしまう。
+	req.Header.Set("Accept-Encoding", "identity")
 
 	client := p.HTTPClient
 	if client == nil {

@@ -35,7 +35,7 @@
     - [x] A.5.2 `internal/api/invalidation/` package + handler skeleton + table-driven test (path validation / JSON schema / 不正リクエスト 400)。upstream nginx 呼び出しは interface で抽象化、test は fake で。16 ケース PASS
     - [x] A.5.3 `cmd/cf-local/main.go` を ListenAndServe 化 + `:4566` listen + graceful shutdown (`--addr` / `--nginx-url` flag)。docker-compose.yml で 4566 expose + flag 配線
     - [x] A.5.4 nginx 内部 purge への HTTP client 実装 (`internal/api/invalidation/purger.go`) + handler に配線。200/204/404/412 を success として扱う (412 = ngx_cache_purge v2.5.5 の「slot 不在」)。11 ケース PASS。実機検証: `curl -X POST http://localhost:4566/_invalidate -d '{"paths":["/foo","/bar"]}'` → `{"invalidated":2}` HTTP 200。A.5.3 実機検証で control plane → nginx が docker network private IP で 127.0.0.1 only allow に弾かれる問題を発見、purge location に RFC1918 private CIDR (10/8 + 172.16/12 + 192.168/16) allow 追加 + 全 fixture golden 更新
-    - [ ] A.5.5 α 統合テスト (`tests/integration/invalidation_alpha_test.go`): config → docker up → curl で HIT → `POST /_invalidate` → curl で MISS
+    - [x] A.5.5 α 統合テスト (`tests/integration/invalidation_alpha_test.go`) 4 ケース全 PASS: warm→HIT→invalidate→MISS / multi paths / 非キャッシュ path 200 / 不正 schema 400。発見した bug fix: NginxPurger が AE 未設定で Go 標準 Transport が "gzip" 自動付与 → cache_key で gzip variant を計算 → 本番 (AE=identity) と別 slot を purge していた。`Accept-Encoding: identity` を明示 + 回帰防止テスト追加
     - [ ] A.5.6 variants 制約 / API 仕様を `docs/limitations.md` + `docs/config-schema.md` に記載 (「default policy 1 variant のみ purge」を明記)
 
 ### Phase 4-B / 後半に持ち越すタスク (A.5 で起こすだけ、本フェーズでは触らない)

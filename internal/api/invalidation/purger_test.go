@@ -85,6 +85,26 @@ func TestNginxPurger_BuildsCorrectURL(t *testing.T) {
 	}
 }
 
+func TestNginxPurger_SendsAcceptEncodingIdentity(t *testing.T) {
+	// Go default transport injects "gzip" when AE is unset. The purger must
+	// override this so the cache_key calculation lands on the same identity
+	// variant that the production code path stores into.
+	var ae string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ae = r.Header.Get("Accept-Encoding")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := &NginxPurger{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	if err := p.Purge(context.Background(), "/foo"); err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if ae != "identity" {
+		t.Fatalf("Accept-Encoding sent: got %q want %q", ae, "identity")
+	}
+}
+
 func TestNginxPurger_ContextDeadline(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
