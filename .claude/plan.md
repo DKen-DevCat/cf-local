@@ -31,6 +31,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4c` | 未着手 | 仕上げ |
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
+| `chore-1` | 未着手 | Claude 開発フロー強化 (review infra) |
 
 ---
 
@@ -272,6 +273,67 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - ブランディング（ロゴ、カラー、トーン）
 - ドキュメントサイトを立てるか（vercel/netlify上にdocsサイト）
 - どのコミュニティに告知するか（Reddit r/aws, Hacker News, Zenn等）
+
+---
+
+## chore-1: Claude 開発フロー強化 (review infra)
+
+> ステータス: planned
+> ブランチ案: `chore/claude-flow`
+> 作成日: 2026-04-30
+
+### 目的 / 背景
+
+Phase 3 完了直後に cf-local の `.claude/` 配下に `/check` + `/review-diff` + `.claude/rules/` 一式を整備した（nestify 構造の移植）。ただし `/review-diff` の subagent_type は `general-purpose` フォールバックで、レビュー粒度が粗くなりがちな状態。Phase 4a (Terraform 対応) 以降はレビュー対象が AWS API ハンドラ / XML マーシャリング / BoltDB ストア等に広がり、専用 code-reviewer agent の投資価値が高まる。
+
+詳細背景: `~/.claude/docs/phase-flow-comparison.md` §1 (構成要素対応表), §2 (差分とその理由), §4 (課題リスト)。
+
+### スコープ
+
+- in:
+  - `.claude/agents/code-reviewer.md` を cf-local 用に新規作成（Go + njs/nginx + Markdown を担当）
+  - `.claude/skills/review-diff/SKILL.md` の subagent_type 切替 + 必要なプロンプト調整
+  - （任意）`.claude/rules/` の領域別分割の要否判断
+  - （任意）次の PR を対象に `/phase-review --pr <番号>` を試走し、指摘の質を観測してフィードバック
+- out:
+  - global 側 (`~/.claude/CLAUDE.md`, `~/.claude/templates/`) の整備 — 別リポ (`~/.claude/`) の管理対象
+  - 本体 Go コード / nginx / docker-compose の変更
+  - Phase 4a / 4b 本体の実装
+
+### 影響範囲
+
+| レイヤー | 内容 |
+|---|---|
+| FE | N/A |
+| BE | N/A |
+| DB | N/A |
+| Infra | N/A |
+| Tooling (.claude/) | `agents/` 新規 / `skills/review-diff/SKILL.md` 編集 / `rules/` 構成見直し（任意） |
+
+### タスク（実装ステップ）
+
+- [ ] **chore-1-1**: `.claude/agents/code-reviewer.md` を cf-local 用に新規作成（Go + njs/nginx + Markdown 観点、`.claude/rules/` を参照してレビュー）
+- [ ] **chore-1-2**: `.claude/skills/review-diff/SKILL.md` の Step 3 で subagent_type を `general-purpose` → `code-reviewer` に切替 + 必要なプロンプト調整
+- [ ] **chore-1-3** (任意): `.claude/rules/code-style.md` の領域別分割を判断。採用なら `go.md` / `njs-nginx.md` / `markdown.md` 等に分割し、`review-diff` の Read 対象を更新
+- [ ] **chore-1-4** (任意): Phase 4a kickoff 後の最初の PR で `/phase-review --pr <番号>` を試走 → 観測結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
+
+### テスト方針
+
+| レイヤー | 何をテストするか |
+|---|---|
+| Tooling | 自動テスト不可。実 PR 上で `/review-diff` / `/phase-review` を走らせて指摘の質を主観評価 |
+
+### 完了条件
+
+- [ ] `.claude/agents/code-reviewer.md` が配置されている
+- [ ] `.claude/skills/review-diff/SKILL.md` が code-reviewer agent を呼ぶ構成になっている
+- [ ] 実 PR で `/phase-review --pr <番号>` を 1 回走らせ、`general-purpose` 比で指摘の質改善が確認できる（ネガティブだった場合は SKILL.md / agent 定義の調整で対応）
+
+### リスク・未決事項
+
+- chore-1-3 の rules 分割は **未決**。今分割するか、Phase 4a 着手で必要性が顕在化してから分割するかは chore-1-1/2 完了後にもう一度判断
+- chore-1-4 のドッグフード対象を Phase 4a の最初の PR にするか、本 chore の PR にするかは未決
+- nestify の `code-reviewer.md` を直輸入できない（TypeScript / Bun 前提のため）。Go 用に書き直す必要があり、初版の精度は試走で調整
 
 ---
 
