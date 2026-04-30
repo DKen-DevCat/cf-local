@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 )
@@ -321,6 +322,11 @@ func validateCacheBehavior(b CacheBehaviorSchema, ctx, file string, requirePathP
 	if requirePathPattern && b.PathPattern == "" {
 		return fmt.Errorf("%s: %s.PathPattern is required", file, ctx)
 	}
+	if b.PathPattern != "" {
+		if err := validatePathPattern(b.PathPattern); err != nil {
+			return fmt.Errorf("%s: %s.PathPattern: %v", file, ctx, err)
+		}
+	}
 	if b.TargetOriginId == "" {
 		return fmt.Errorf("%s: %s.TargetOriginId is required", file, ctx)
 	}
@@ -328,6 +334,42 @@ func validateCacheBehavior(b CacheBehaviorSchema, ctx, file string, requirePathP
 		return fmt.Errorf("%s: %s.ViewerProtocolPolicy is required", file, ctx)
 	}
 	return nil
+}
+
+// validatePathPattern は CloudFront PathPattern が Phase 3 で受理可能な形か
+// 検証する。
+//
+// Phase 3 受理:
+//
+//   - `*`        : 全パス (DefaultCacheBehavior と同等の挙動になる)
+//   - `/path/*`  : prefix wildcard。任意の prefix で良い (`/`, `/api`, `/foo/bar` 等)
+//
+// Phase 3 reject (Phase 4-A で解禁予定: P3→P4A-1):
+//
+//   - `*.jpg`         : suffix wildcard — nginx regex location が必要
+//   - `/api/*/foo`    : middle wildcard — nginx regex location が必要
+//   - `/exact-path`   : exact match — `*` 不在で wildcard ではない
+//   - 先頭 `/` 不在 (例: `api/*`)
+//
+// 受理規則の輪郭は `.claude/design/phase-3-invalidation-config-2026-04-30.md`
+// §「PathPattern 受理規則」と同期。renderer (`internal/nginx/conf.go` の
+// pathPatternToLocation) は二重防衛として同じルールで再 validate するが、
+// 第一防衛は本関数。
+func validatePathPattern(p string) error {
+	if p == "*" {
+		return nil
+	}
+	// 受理形式は `/<prefix>/*` のみ。leading `/` 不在 (`api/*` や `*.jpg`) /
+	// trailing `/*` 不在 (`/exact-path`) はすべて「Phase 3 では未サポート」で
+	// 統一エラー。middle wildcard は別メッセージで返す (発見しやすさのため)。
+	if strings.HasPrefix(p, "/") && strings.HasSuffix(p, "/*") {
+		inner := strings.TrimSuffix(p, "/*")
+		if strings.Contains(inner, "*") {
+			return fmt.Errorf("%q has a wildcard in the middle (Phase 3 supports only a single trailing `/*`)", p)
+		}
+		return nil
+	}
+	return fmt.Errorf("%q is not supported in Phase 3 (only prefix wildcard `…/*` or `*` is accepted; suffix `*.ext` / middle `/a/*/b` / exact `/path` / no leading `/` are deferred to Phase 4-A)", p)
 }
 
 func validateCrossReferences(res *LoadResult) error {

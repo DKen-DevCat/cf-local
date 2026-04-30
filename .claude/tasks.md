@@ -40,7 +40,7 @@
     - [x] A.4.2 policies.json 生成 (intermediate struct で flatten + omitempty marshal) + 全 4 ケース policies.json golden PASS。subtest は cf-local.conf 側で依然 FAIL なので最終 PASS は A.4.6 で達成
     - [x] A.4.3 nginx.conf 生成: upstream + DefaultCacheBehavior の outer/inner ペア + `min` / `ae-flags` golden PASS。ついでに A.4.6 disabled 分岐も Render dispatch のついでに同コミットで実装 (disabled comment 1 行返す)
     - [x] A.4.4 PathPattern → location 変換 + sanitize + `multi-policy` golden PASS。`pathPatternToLocation` で `/api/*` → `/api/`、`*` → `/`。inner dedup は sanitized policy id ベース (同 policy 複数 behavior で 1 つ)。CacheBehaviors[] 出力順は SDK Items 配列順、inner 出力順は sanitized id alphabetical
-    - [ ] A.4.5 loader 側 PathPattern 受理規則 (prefix `/path/*` のみ) + `pathpattern-reject` テスト追加
+    - [x] A.4.5 loader 側 PathPattern 受理規則 (prefix `/path/*` / `*` のみ) + `pathpattern-reject` テスト 4 ケース追加 (suffix wildcard / middle wildcard / exact / no leading `/`)。renderer 側 (pathPatternToLocation) は二重防衛として残置
     - [x] A.4.6 `disabled` ケース (Distribution.Enabled=false で空出力) + golden PASS — A.4.3 で先取り実装。Render() の switch case で disabled comment を返す経路を分けた
     - [ ] A.4.7 `internal/nginx/writer.go` の `WriteAtomic` 実装 + unit test (3-5 残)
     - [ ] A.4.8 `cmd/cf-local/main.go` を renderer 配線形に書き直し (`--out-dir` 追加 + render → write → sleep) — A.3b の dump コード撤去

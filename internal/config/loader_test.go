@@ -9,6 +9,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 )
 
+// pathPatternDist は CacheBehaviors[0].PathPattern を埋め込んだ最小 distribution
+// JSON を返す。PathPattern 受理規則 (Phase 3) のテストに使う。
+func pathPatternDist(pattern string) string {
+	return `{
+		"CallerReference": "x",
+		"Comment": "x",
+		"Enabled": true,
+		"Origins": [{ "Id": "o1", "DomainName": "a" }],
+		"DefaultCacheBehavior": {
+			"TargetOriginId":       "o1",
+			"ViewerProtocolPolicy": "allow-all"
+		},
+		"CacheBehaviors": [
+			{
+				"PathPattern":          "` + pattern + `",
+				"TargetOriginId":       "o1",
+				"ViewerProtocolPolicy": "allow-all"
+			}
+		]
+	}`
+}
+
 // writeFiles はテンポラリ root 配下に "subdir/file.json" → 内容のマップで
 // ファイル群を一括作成するテストヘルパー。
 func writeFiles(t *testing.T, root string, files map[string]string) {
@@ -496,6 +518,34 @@ func TestLoad_Errors(t *testing.T) {
 				}`,
 			},
 			wantError: "CacheBehaviors[0].PathPattern is required",
+		},
+		{
+			name: "PathPattern suffix wildcard rejected (Phase 3)",
+			files: map[string]string{
+				"distributions/main.json": pathPatternDist("*.jpg"),
+			},
+			wantError: `"*.jpg" is not supported in Phase 3`,
+		},
+		{
+			name: "PathPattern middle wildcard rejected (Phase 3)",
+			files: map[string]string{
+				"distributions/main.json": pathPatternDist("/api/*/foo"),
+			},
+			wantError: `"/api/*/foo" is not supported in Phase 3`,
+		},
+		{
+			name: "PathPattern exact path rejected (Phase 3)",
+			files: map[string]string{
+				"distributions/main.json": pathPatternDist("/exact-path"),
+			},
+			wantError: `"/exact-path" is not supported in Phase 3`,
+		},
+		{
+			name: "PathPattern without leading slash rejected",
+			files: map[string]string{
+				"distributions/main.json": pathPatternDist("api/*"),
+			},
+			wantError: `"api/*" is not supported in Phase 3`,
 		},
 	}
 
