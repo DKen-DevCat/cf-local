@@ -19,6 +19,10 @@
 - **rename 順序 race** の根本解決 (staging dir 方式 / cf-local.conf only reload trigger 方式の比較検討)
 - **P3→P4A-1** PathPattern 拡張 (suffix wildcard / middle wildcard / exact / 複数 wildcard) + 優先順位の正式設計
 - **3-Rv 残**: REV-7 sanitize は njs 側だけ実装済。Go loader (`internal/config`) でも Terraform 入力に対する同等の validation を再実装する必要あり
+- **chore-1 引き継ぎ** (任意 / 最初の PR で対応):
+  - chore-1-3 rules 領域別分割の判断 — `/phase-review` 試走で混線症状の有無を観測 → 必要なら `.claude/rules/code-style.md` を分割
+  - chore-1-4 ドッグフード結果フィードバック — `~/.claude/docs/phase-flow-comparison.md` §4 に追記
+  - 詳細条件: `.claude/plan.md` §phase-4a「Phase chore-1 からの繰越し」
 
 ### phase-4b: Invalidation API 互換 (未着手)
 
@@ -29,3 +33,16 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - 後半-3 multi-variant invalidation (cookie / header / AE 違いの全 slot を一括 purge)
 - 後半-4 非同期実行 + status + `GetInvalidation` / `ListInvalidations`
 - 後半-5 invalidation 履歴の永続化 (BoltDB)
+
+---
+
+## Phase chore-1: Claude 開発フロー強化 (review infra) — 進行中
+
+ブランチ: `chore/claude-flow`（develop @ `8d69fb2` 起点）
+
+設計: [`.claude/design/claude-flow-2026-04-30.md`](design/claude-flow-2026-04-30.md)
+
+- [x] **chore-1-1**: `.claude/agents/code-reviewer.md` を cf-local 用に新規作成（Go + njs/nginx + Markdown 観点、`.claude/rules/` 参照）
+- [x] **chore-1-2**: `.claude/skills/review-diff/SKILL.md` の Step 3 で subagent_type を `general-purpose` → `code-reviewer` に切替 + プロンプト調整
+- [ ] **chore-1-3** (任意): `.claude/rules/code-style.md` の領域別分割を試走後に判断
+- [ ] **chore-1-4** (任意): 実 PR で `/phase-review --pr <番号>` を試走し、観測結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
