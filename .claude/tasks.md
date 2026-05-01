@@ -19,6 +19,10 @@
 - **rename 順序 race** の根本解決 (staging dir 方式 / cf-local.conf only reload trigger 方式の比較検討)
 - **P3→P4A-1** PathPattern 拡張 (suffix wildcard / middle wildcard / exact / 複数 wildcard) + 優先順位の正式設計
 - **3-Rv 残**: REV-7 sanitize は njs 側だけ実装済。Go loader (`internal/config`) でも Terraform 入力に対する同等の validation を再実装する必要あり
+- **chore-1 引き継ぎ** (任意 / 最初の PR で対応):
+  - chore-1-3 rules 領域別分割の判断 — `/phase-review` 試走で混線症状の有無を観測 → 必要なら `.claude/rules/code-style.md` を分割
+  - chore-1-4 ドッグフード結果フィードバック — `~/.claude/docs/phase-flow-comparison.md` §4 に追記
+  - 詳細条件: `.claude/plan.md` §phase-4a「Phase chore-1 からの繰越し」
 
 ### phase-4b: Invalidation API 互換 (未着手)
 

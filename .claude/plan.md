@@ -159,6 +159,11 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
   - **複数 wildcard** (`/a/*/b/*`) → regex で対応
   優先順位の規則 (より具体的な PathPattern が優先) も Phase 4-A で正式設計。Phase 3 では prefix のみなので nginx の prefix-longest-match に乗せていれば同じ挙動が得られるが、混在時の決定性は AWS 仕様への準拠が必要。詳細: `.claude/design/phase-3-invalidation-config-2026-04-30.md` §「A.4 詳細設計」「PathPattern 受理規則」。
 
+**Phase chore-1 からの繰越し** (任意項目を本フェーズ kickoff 時に判断):
+
+- **chore-1-3** rules 領域別分割の判断: Phase 4a の最初の PR で `/phase-review --pr <番号>` を試走し、Markdown / Go / njs/nginx 規則が混じって精度が落ちる症状が出るかを観測。出れば `.claude/rules/code-style.md` を `go.md` / `njs-nginx.md` / `markdown.md` に分割し、`code-reviewer.md` の必読資料リストと SKILL.md の Read 対象を更新する。出なければ据え置き。判断は試走後 1 度だけ。
+- **chore-1-4** ドッグフード結果のフィードバック: Phase 4a 最初の PR で実施した `/phase-review` の指摘の質を主観評価し、`~/.claude/docs/phase-flow-comparison.md` §4 に追記。観測する軸: (a) `general-purpose` 比で粒度・正確性が改善したか、(b) 公式ドキュ準拠 (軸4) は code-reviewer 単独だと素通りする傾向 — `/phase-review` 側の 4 軸並列起動が機能しているか、(c) 設計思想整合 (軸3) で `.claude/design/<active>.md` の参照が効いているか。詳細: `.claude/design/claude-flow-2026-04-30.md` §「テスト方針」「ドッグフード手順」。
+
 詳細: commit `440ffc8` (Phase 2 pro/con レビュー記録)。
 
 ---
