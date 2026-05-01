@@ -26,12 +26,12 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-1` | 完了 | cache key動的計算 |
 | `phase-2` | 完了 | TTL正確化 |
 | `phase-3` | 完了 (2026-04-30) | Invalidation API + 設定ファイル方式 |
-| `phase-4a` | 未着手 | Terraform対応・最小 |
+| `phase-4a` | 進行中 | Terraform対応・最小 |
 | `phase-4b` | 未着手 | Invalidation API互換 |
 | `phase-4c` | 未着手 | 仕上げ |
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
-| `chore-1` | 進行中 | Claude 開発フロー強化 (review infra) |
+| `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 
 ---
 
@@ -283,9 +283,10 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ## chore-1: Claude 開発フロー強化 (review infra)
 
-> ステータス: in-progress
+> ステータス: 完了 (2026-05-01) - PR #6 で develop に merge 済
 > ブランチ: `chore/claude-flow`
 > 作成日: 2026-04-30
+> 任意項目 chore-1-3 / chore-1-4 は phase-4a の最初の PR で消化（registry §phase-4a 「Phase chore-1 からの繰越し」参照）
 
 ### 目的 / 背景
 
