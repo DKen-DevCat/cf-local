@@ -77,7 +77,7 @@ func NewMemoryStore() *MemoryStore {
 // with an existing record (mirrors AWS's CachePolicyAlreadyExists semantics).
 func (s *MemoryStore) Create(ctx context.Context, cfg *types.CachePolicyConfig) (*Record, error) {
 	if cfg == nil || cfg.Name == nil {
-		return nil, fmt.Errorf("cache policy: missing name")
+		return nil, errors.New("cache policy: missing name")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,7 +117,7 @@ func (s *MemoryStore) Get(_ context.Context, id string) (*Record, error) {
 // ifMatch handling is permissive: the value is accepted but not compared.
 func (s *MemoryStore) Update(_ context.Context, id string, cfg *types.CachePolicyConfig, ifMatch string) (*Record, error) {
 	if cfg == nil || cfg.Name == nil {
-		return nil, fmt.Errorf("cache policy: missing name")
+		return nil, errors.New("cache policy: missing name")
 	}
 	_ = ifMatch // tolerant: see Store doc comment.
 

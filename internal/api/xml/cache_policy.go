@@ -7,9 +7,9 @@ package awsxml
 
 import "encoding/xml"
 
-// XmlnsCloudFront is the CloudFront API XML namespace for the 2020-05-31 API
+// XMLNSCloudFront is the CloudFront API XML namespace for the 2020-05-31 API
 // version, used as the default namespace on every top-level request/response root.
-const XmlnsCloudFront = "http://cloudfront.amazonaws.com/doc/2020-05-31/"
+const XMLNSCloudFront = "http://cloudfront.amazonaws.com/doc/2020-05-31/"
 
 // CachePolicyConfig is the request body of CreateCachePolicy / UpdateCachePolicy
 // and the inner element of GetCachePolicy / CreateCachePolicy / UpdateCachePolicy

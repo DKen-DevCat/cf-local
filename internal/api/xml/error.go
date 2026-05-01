@@ -22,7 +22,11 @@ func WriteXMLError(w http.ResponseWriter, status int, code, message string) {
 	}
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
+	// Encode error is intentionally ignored: the response status is already
+	// committed and we cannot send a new status. A partial body is preferable
+	// to a panic.
 	_ = enc.Encode(&resp)
+	_ = enc.Close()
 }
 
 // errType selects the AWS <Type> value for an HTTP status. AWS uses "Sender"

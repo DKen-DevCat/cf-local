@@ -216,6 +216,42 @@ func TestCachePolicyConfig_QuantityRecompute(t *testing.T) {
 	}
 }
 
+// TestFromSDKCachePolicyConfig_QuantityRecompute mirrors QuantityRecompute in
+// the SDK→wrapper direction: a stale Quantity on the SDK side must not leak
+// into the wrapper. FromSDK derives Quantity from len(Items) so the wire
+// invariant Quantity == len(Items) holds in both conversion directions.
+func TestFromSDKCachePolicyConfig_QuantityRecompute(t *testing.T) {
+	in := &types.CachePolicyConfig{
+		Name:   aws.String("stale-quantity-sdk"),
+		MinTTL: aws.Int64(0),
+		ParametersInCacheKeyAndForwardedToOrigin: &types.ParametersInCacheKeyAndForwardedToOrigin{
+			EnableAcceptEncodingBrotli: aws.Bool(false),
+			EnableAcceptEncodingGzip:   aws.Bool(false),
+			CookiesConfig: &types.CachePolicyCookiesConfig{
+				CookieBehavior: types.CachePolicyCookieBehaviorNone,
+			},
+			HeadersConfig: &types.CachePolicyHeadersConfig{
+				HeaderBehavior: types.CachePolicyHeaderBehaviorWhitelist,
+				Headers: &types.Headers{
+					Quantity: aws.Int32(99), // stale; FromSDK must overwrite from len(Items)
+					Items:    []string{"X-A", "X-B"},
+				},
+			},
+			QueryStringsConfig: &types.CachePolicyQueryStringsConfig{
+				QueryStringBehavior: types.CachePolicyQueryStringBehaviorNone,
+			},
+		},
+	}
+
+	got := FromSDKCachePolicyConfig(in)
+	if got.Parameters == nil || got.Parameters.HeadersConfig == nil || got.Parameters.HeadersConfig.Headers == nil {
+		t.Fatal("Headers should be set for whitelist with items")
+	}
+	if q := got.Parameters.HeadersConfig.Headers.Quantity; q != 2 {
+		t.Errorf("Quantity not recomputed: got %d want 2", q)
+	}
+}
+
 func TestCachePolicyConfig_NilSafe(t *testing.T) {
 	if got := (*CachePolicyConfig)(nil).ToSDK(); got != nil {
 		t.Errorf("nil wrapper.ToSDK should return nil, got %#v", got)

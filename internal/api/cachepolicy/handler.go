@@ -112,22 +112,27 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list := awsxml.CachePolicyList{
-		Quantity: len(records),
-		MaxItems: 100,
-	}
+	list := awsxml.CachePolicyList{MaxItems: 100}
 	for _, rec := range records {
 		list.Items.CachePolicySummary = append(list.Items.CachePolicySummary, awsxml.CachePolicySummary{
 			Type:        "custom",
 			CachePolicy: *toResponseCachePolicy(rec),
 		})
 	}
+	// Quantity must equal len(Items) on the wire (InconsistentQuantities 400);
+	// derive it from the slice we just built rather than from len(records),
+	// so future filtering (Type=managed/custom in 4a-9) keeps the invariant.
+	list.Quantity = len(list.Items.CachePolicySummary)
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
+	// Encode error is intentionally ignored: the response status is already
+	// committed and we cannot send a new status. A partial body is preferable
+	// to a panic.
 	_ = enc.Encode(&list)
+	_ = enc.Close()
 }
 
 // decodeConfig reads the XML request body and returns the SDK-shaped config.
@@ -161,7 +166,11 @@ func writeCachePolicyResponse(w http.ResponseWriter, status int, rec *Record) {
 	cp := toResponseCachePolicy(rec)
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
+	// Encode error is intentionally ignored: the response status is already
+	// committed and we cannot send a new status. A partial body is preferable
+	// to a panic.
 	_ = enc.Encode(cp)
+	_ = enc.Close()
 }
 
 // toResponseCachePolicy projects a Record into the XML wrapper shape AWS

@@ -48,8 +48,8 @@ func TestCachePolicyConfig_Unmarshal(t *testing.T) {
 	}
 
 	// X1: namespace landed on XMLName.Space.
-	if got.XMLName.Space != XmlnsCloudFront {
-		t.Errorf("XMLName.Space: got %q want %q", got.XMLName.Space, XmlnsCloudFront)
+	if got.XMLName.Space != XMLNSCloudFront {
+		t.Errorf("XMLName.Space: got %q want %q", got.XMLName.Space, XMLNSCloudFront)
 	}
 	if got.XMLName.Local != "CachePolicyConfig" {
 		t.Errorf("XMLName.Local: got %q", got.XMLName.Local)
@@ -211,8 +211,8 @@ func TestCachePolicy_ResponseWrapper(t *testing.T) {
 	if got.CachePolicyConfig.Name != "basic" {
 		t.Errorf("inner Name: got %q", got.CachePolicyConfig.Name)
 	}
-	if got.CachePolicyConfig.XMLName.Space != XmlnsCloudFront {
-		t.Errorf("inner xmlns: got %q want %q", got.CachePolicyConfig.XMLName.Space, XmlnsCloudFront)
+	if got.CachePolicyConfig.XMLName.Space != XMLNSCloudFront {
+		t.Errorf("inner xmlns: got %q want %q", got.CachePolicyConfig.XMLName.Space, XMLNSCloudFront)
 	}
 
 	// Marshal and confirm the inner xmlns survives, and the outer <CachePolicy>
@@ -247,8 +247,8 @@ func TestErrorResponse_RoundTrip(t *testing.T) {
 	if err := xml.Unmarshal([]byte(sample), &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got.XMLName.Space != XmlnsCloudFront {
-		t.Errorf("xmlns: got %q want %q", got.XMLName.Space, XmlnsCloudFront)
+	if got.XMLName.Space != XMLNSCloudFront {
+		t.Errorf("xmlns: got %q want %q", got.XMLName.Space, XMLNSCloudFront)
 	}
 	if got.Error.Code != "NoSuchCachePolicy" {
 		t.Errorf("Error.Code: got %q", got.Error.Code)

@@ -36,8 +36,8 @@ func TestWriteXMLError(t *testing.T) {
 			if err := xml.NewDecoder(resp.Body).Decode(&body); err != nil {
 				t.Fatalf("decode body: %v", err)
 			}
-			if body.XMLName.Space != XmlnsCloudFront {
-				t.Errorf("xmlns: got %q want %q", body.XMLName.Space, XmlnsCloudFront)
+			if body.XMLName.Space != XMLNSCloudFront {
+				t.Errorf("xmlns: got %q want %q", body.XMLName.Space, XMLNSCloudFront)
 			}
 			if body.Error.Code != tt.code {
 				t.Errorf("Code: got %q want %q", body.Error.Code, tt.code)

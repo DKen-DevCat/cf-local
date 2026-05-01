@@ -6,7 +6,7 @@ CloudFront API は AWS SDK Go v2 の `aws-sdk-go-v2/service/cloudfront/types` �
 
 ## 名前空間
 
-CloudFront 2020-05-31 API の XML namespace は `http://cloudfront.amazonaws.com/doc/2020-05-31/`。`internal/api/xml.XmlnsCloudFront` 定数で参照。
+CloudFront 2020-05-31 API の XML namespace は `http://cloudfront.amazonaws.com/doc/2020-05-31/`。`internal/api/xml.XMLNSCloudFront` 定数で参照。
 
 トップレベル要素 (`CachePolicyConfig` / `Distribution` / `ErrorResponse` 等) には xmlns を付ける。Container 要素 (例: `CachePolicy` レスポンスエンベロープ) は AWS Reference の Syntax 上 xmlns が記載されておらず、cf-local もそれに揃える。
 
@@ -155,7 +155,7 @@ Phase 4-A の最初の `terraform apply` 検証時 (4a-16) に Q1〜Q5 を一括
 
 ## 参考: Provider の挙動
 
-Phase 4-A kickoff 調査 (`/Users/ooizumiyou/cf-local/.claude/design/phase-4a-terraform-2026-05-01.md` §D 参照) で確認した Provider の HTTP API map:
+Phase 4-A kickoff 調査 ([`.claude/design/phase-4a-terraform-2026-05-01.md`](../.claude/design/phase-4a-terraform-2026-05-01.md) §D 参照) で確認した Provider の HTTP API map:
 
 | Lifecycle | Method | Path | If-Match |
 |---|---|---|---|
