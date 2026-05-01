@@ -17,6 +17,7 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
+	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
 )
 
 // shutdownTimeout is the grace period applied when the parent context is
@@ -42,6 +43,9 @@ type Config struct {
 	// DistributionStore backs the AWS REST Distribution handlers. nil
 	// disables the Distribution routes entirely.
 	DistributionStore distribution.Store
+	// OriginRequestPolicyStore backs the AWS REST OriginRequestPolicy
+	// handlers. nil disables those routes entirely.
+	OriginRequestPolicyStore originrequestpolicy.Store
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
@@ -102,6 +106,14 @@ func buildMux(cfg Config) http.Handler {
 		mux.HandleFunc("PUT /2020-05-31/distribution/{id}", dh.Update)
 		mux.HandleFunc("DELETE /2020-05-31/distribution/{id}", dh.Delete)
 		mux.HandleFunc("GET /2020-05-31/distribution", dh.List)
+	}
+	if cfg.OriginRequestPolicyStore != nil {
+		oh := &originrequestpolicy.Handler{Store: cfg.OriginRequestPolicyStore}
+		mux.HandleFunc("POST /2020-05-31/origin-request-policy", oh.Create)
+		mux.HandleFunc("GET /2020-05-31/origin-request-policy/{id}", oh.Get)
+		mux.HandleFunc("PUT /2020-05-31/origin-request-policy/{id}", oh.Update)
+		mux.HandleFunc("DELETE /2020-05-31/origin-request-policy/{id}", oh.Delete)
+		mux.HandleFunc("GET /2020-05-31/origin-request-policy", oh.List)
 	}
 	return mux
 }

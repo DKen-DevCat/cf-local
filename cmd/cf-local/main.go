@@ -30,6 +30,7 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api"
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
+	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
 	"github.com/DKen-DevCat/cf-local/internal/config"
 	cfnginx "github.com/DKen-DevCat/cf-local/internal/nginx"
 )
@@ -95,13 +96,15 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL string, stdout i
 	cpStore := cachepolicy.NewMemoryStore()
 	cpStore.SeedManaged()
 	distStore := distribution.NewMemoryStore()
+	orpStore := originrequestpolicy.NewMemoryStore()
 
 	return api.Run(ctx, api.Config{
-		Addr:              addr,
-		NginxURL:          nginxURL,
-		Stdout:            stdout,
-		CachePolicyStore:  cpStore,
-		DistributionStore: distStore,
+		Addr:                     addr,
+		NginxURL:                 nginxURL,
+		Stdout:                   stdout,
+		CachePolicyStore:         cpStore,
+		DistributionStore:        distStore,
+		OriginRequestPolicyStore: orpStore,
 	})
 }
 

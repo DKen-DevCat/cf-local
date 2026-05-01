@@ -133,7 +133,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - [x] AWS APIエンドポイントのrouting (CachePolicy + Distribution)
 - [x] aws_cloudfront_distribution CRUD
 - [x] aws_cloudfront_cache_policy CRUD
-- [ ] aws_cloudfront_origin_request_policy CRUD
+- [x] aws_cloudfront_origin_request_policy CRUD
 - [ ] BoltDBストア実装
 - [ ] nginx auto-reload (debounce付き)
 - [x] Managed Cache Policies組込み (5 件 seed、Update/Delete を IllegalUpdate で拒否)
