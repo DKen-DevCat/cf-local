@@ -20,6 +20,39 @@ import "encoding/xml"
 // Naming convention: AWS uppercases acronyms (ACM, ARN, IAM, SSL, TLS, IP);
 // follow conventions.md §命名 and use those forms in Go identifiers.
 
+// DistributionConfigWithTags is the request body of
+// CreateDistributionWithTags (POST /2020-05-31/distribution?WithTags).
+// Terraform AWS Provider always uses this variant — even when no tags
+// are configured — so cf-local must accept both <DistributionConfig> and
+// <DistributionConfigWithTags> root envelopes on Create.
+//
+// The inner <DistributionConfig> here does NOT carry its own xmlns
+// attribute on the wire (it inherits from this parent), but encoding/xml
+// resolves the namespace correctly during Unmarshal. cf-local silently
+// drops the tags on persistence — distribution tagging is out of scope
+// for phase-4a.
+type DistributionConfigWithTags struct {
+	XMLName            xml.Name            `xml:"http://cloudfront.amazonaws.com/doc/2020-05-31/ DistributionConfigWithTags"`
+	DistributionConfig *DistributionConfig `xml:"DistributionConfig"`
+	Tags               *Tags               `xml:"Tags,omitempty"`
+}
+
+// Tags is the optional tag list attached to a DistributionConfigWithTags.
+type Tags struct {
+	Items *TagsItems `xml:"Items,omitempty"`
+}
+
+// TagsItems holds the repeated <Tag> children.
+type TagsItems struct {
+	Tag []Tag `xml:"Tag"`
+}
+
+// Tag is one key/value pair attached to a CloudFront resource.
+type Tag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value,omitempty"`
+}
+
 // DistributionConfig is the request body of CreateDistribution /
 // UpdateDistribution and the inner element of GetDistribution responses.
 // Field order follows the AWS public API Reference Syntax (alphabetical).

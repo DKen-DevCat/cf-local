@@ -65,7 +65,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [ ] **4a-13** (P3 繰越し): rename 順序 race の根本解決 (staging dir / cf-local.conf only trigger 比較)
 - [ ] **4a-14** (P3→P4A-1 繰越し): PathPattern 拡張 (suffix / middle / exact / 複数 wildcard + 優先順位)
 - [ ] **4a-15** (3-Rv REV-7 残): Go loader sanitize (njs 側の validation 相当を Go で再実装)
-- [ ] **4a-16**: terraform apply / destroy E2E 検証 (TF 1.9.x / AWS provider 5.x)
+- [x] **4a-16**: terraform apply / destroy E2E 検証 (TF 1.9.8 / AWS provider 5.100.0)。`examples/terraform-integration/` に最小 TF コードを追加。検証中に Provider 実挙動 4 件を `examples/.../README.md` と `docs/aws-xml-quirks.md` に記録
 - [ ] **4a-17** (任意 / chore-1-3 引き継ぎ): rules 領域別分割の判断 — 最初の `/phase-review` 試走で観測
 - [ ] **4a-18** (任意 / chore-1-4 引き継ぎ): ドッグフード結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
 
@@ -86,11 +86,12 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - `7752dac` 4a-5 Distribution XML wrapper + SDK conversion (decode-permissive、約 30 type、convert + tests)
 - `95461d0` 4a-6 Distribution CRUD ハンドラ (POST/GET/PUT/DELETE/list 5 本、ARN/DomainName/Status は ID から派生合成)
 - `390b36b` 4a-7 OriginRequestPolicy CRUD (xml wrapper + convert + handler + 配線)
-- (本コミット) 4a-8 BoltDB persistence (3 bucket、--db-path フラグ、Managed CP は re-seed)
+- `da873a8` 4a-8 BoltDB persistence (3 bucket、--db-path フラグ、Managed CP は re-seed)
+- (本コミット) 4a-16 terraform apply E2E (DistributionConfigWithTags / Origins+OriginGroups always non-nil / Distribution `/config` sub-path / tagging stub の 4 件を実機検証で発見・修正)
 
-到達状態: AWS REST/XML 互換の CachePolicy / Distribution / OriginRequestPolicy CRUD + Managed CachePolicy seed が `:4566` で **永続化済**。restart で全 state 復元、bbolt v1.4.3 採用。Phase 3 の invalidation API (`POST /_invalidate`) は維持。nginx auto-reload / terraform apply E2E は未着手。
+到達状態: AWS REST/XML 互換の CachePolicy / Distribution / OriginRequestPolicy CRUD + Managed CachePolicy seed + tagging stub が `:4566` で永続化済 + **terraform 1.9.8 + aws 5.100.0 で apply / plan no-drift / destroy が通る**。Phase 3 の invalidation API (`POST /_invalidate`) は維持。nginx auto-reload / chore-1-4 ドッグフード結果フィードバックは未着手。
 
-### 次セッションの着手順序 (4a-10 → 4a-16 → 4a-18)
+### 次セッションの着手順序 (4a-10 → 4a-18)
 
 #### (1) 4a-10 nginx auto-reload ← ここから再開
 

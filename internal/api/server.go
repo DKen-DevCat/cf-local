@@ -18,6 +18,7 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
+	"github.com/DKen-DevCat/cf-local/internal/api/tagging"
 )
 
 // shutdownTimeout is the grace period applied when the parent context is
@@ -103,7 +104,12 @@ func buildMux(cfg Config) http.Handler {
 		dh := &distribution.Handler{Store: cfg.DistributionStore}
 		mux.HandleFunc("POST /2020-05-31/distribution", dh.Create)
 		mux.HandleFunc("GET /2020-05-31/distribution/{id}", dh.Get)
-		mux.HandleFunc("PUT /2020-05-31/distribution/{id}", dh.Update)
+		// AWS UpdateDistribution / GetDistributionConfig live under the
+		// /config sub-path (unlike CachePolicy / OriginRequestPolicy where
+		// Update/Get share the bare ID path). PUT body is bare
+		// <DistributionConfig> (no DistributionConfigWithTags wrapper).
+		mux.HandleFunc("PUT /2020-05-31/distribution/{id}/config", dh.Update)
+		mux.HandleFunc("GET /2020-05-31/distribution/{id}/config", dh.GetConfig)
 		mux.HandleFunc("DELETE /2020-05-31/distribution/{id}", dh.Delete)
 		mux.HandleFunc("GET /2020-05-31/distribution", dh.List)
 	}
@@ -115,5 +121,11 @@ func buildMux(cfg Config) http.Handler {
 		mux.HandleFunc("DELETE /2020-05-31/origin-request-policy/{id}", oh.Delete)
 		mux.HandleFunc("GET /2020-05-31/origin-request-policy", oh.List)
 	}
+	// Tagging endpoints are stub handlers (cf-local does not track tags;
+	// the Provider's ListTagsForResource / TagResource calls must succeed
+	// to complete a Distribution Create / Update cycle).
+	th := &tagging.Handler{}
+	mux.HandleFunc("GET /2020-05-31/tagging", th.Get)
+	mux.HandleFunc("POST /2020-05-31/tagging", th.Post)
 	return mux
 }

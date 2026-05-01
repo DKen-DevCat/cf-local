@@ -599,8 +599,13 @@ func fromSDKAliases(in *types.Aliases) *Aliases {
 }
 
 func fromSDKOrigins(in *types.Origins) *Origins {
+	// Origins is always non-nil on the wire so that Provider's
+	// distributionConfig.Origins.Quantity dereference (provider source
+	// internal/service/cloudfront/distribution.go) never panics. cf-local
+	// validates Origins on Create, so this nil branch only fires for
+	// hypothetical legacy records.
 	if in == nil {
-		return nil
+		return &Origins{Items: OriginsItems{Origin: []Origin{}}, Quantity: 0}
 	}
 	items := make([]Origin, 0, len(in.Items))
 	for _, src := range in.Items {
@@ -690,10 +695,15 @@ func fromSDKCustomHeaders(in *types.CustomHeaders) *CustomHeaders {
 }
 
 func fromSDKOriginGroups(in *types.OriginGroups) *OriginGroups {
-	if in == nil {
-		return nil
-	}
+	// OriginGroups is always non-nil on the wire — Terraform AWS Provider
+	// dereferences distributionConfig.OriginGroups.Quantity without a nil
+	// guard (resourceDistributionRead). Real AWS responses always include
+	// <OriginGroups><Quantity>0</Quantity></OriginGroups> even when no
+	// origin groups are configured, so cf-local mirrors that shape.
 	out := &OriginGroups{Quantity: 0}
+	if in == nil {
+		return out
+	}
 	if len(in.Items) > 0 {
 		items := make([]OriginGroup, 0, len(in.Items))
 		for _, src := range in.Items {

@@ -29,6 +29,7 @@ var distributionRoundTripCases = []struct {
 			CallerReference: "phase3-min",
 			Comment:         "minimum",
 			Enabled:         true,
+			OriginGroups:    &OriginGroups{Quantity: 0},
 			Origins: &Origins{
 				Quantity: 1,
 				Items: OriginsItems{Origin: []Origin{
@@ -69,6 +70,7 @@ var distributionRoundTripCases = []struct {
 			Enabled:           aws.Bool(true),
 			DefaultRootObject: aws.String(""),
 			WebACLId:          aws.String(""),
+			OriginGroups:      &types.OriginGroups{Quantity: aws.Int32(0)},
 			Origins: &types.Origins{
 				Quantity: aws.Int32(1),
 				Items: []types.Origin{
@@ -115,6 +117,7 @@ var distributionRoundTripCases = []struct {
 			PriceClass:        "PriceClass_All",
 			DefaultRootObject: "",
 			Aliases:           &Aliases{Quantity: 0},
+			OriginGroups:      &OriginGroups{Quantity: 0},
 			Origins: &Origins{
 				Quantity: 1,
 				Items: OriginsItems{Origin: []Origin{
@@ -159,6 +162,7 @@ var distributionRoundTripCases = []struct {
 			DefaultRootObject: aws.String(""),
 			WebACLId:          aws.String(""),
 			Aliases:           &types.Aliases{Quantity: aws.Int32(0)},
+			OriginGroups:      &types.OriginGroups{Quantity: aws.Int32(0)},
 			Origins: &types.Origins{
 				Quantity: aws.Int32(1),
 				Items: []types.Origin{
@@ -208,6 +212,7 @@ var distributionRoundTripCases = []struct {
 			CallerReference: "behaviors-1",
 			Comment:         "with-extra-behavior",
 			Enabled:         true,
+			OriginGroups:    &OriginGroups{Quantity: 0},
 			Origins: &Origins{
 				Quantity: 1,
 				Items: OriginsItems{Origin: []Origin{
@@ -250,6 +255,7 @@ var distributionRoundTripCases = []struct {
 			Enabled:           aws.Bool(true),
 			DefaultRootObject: aws.String(""),
 			WebACLId:          aws.String(""),
+			OriginGroups:      &types.OriginGroups{Quantity: aws.Int32(0)},
 			Origins: &types.Origins{
 				Quantity: aws.Int32(1),
 				Items: []types.Origin{

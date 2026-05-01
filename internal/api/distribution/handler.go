@@ -1,6 +1,7 @@
 package distribution
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -62,7 +63,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	writeDistributionResponse(w, http.StatusOK, rec)
 }
 
-// Update handles PUT /2020-05-31/distribution/{id}.
+// Update handles PUT /2020-05-31/distribution/{id}/config.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	cfg, ok := decodeConfig(w, r)
 	if !ok {
@@ -81,6 +82,31 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeDistributionResponse(w, http.StatusOK, rec)
+}
+
+// GetConfig handles GET /2020-05-31/distribution/{id}/config. Returns the
+// bare <DistributionConfig> envelope (no <Distribution> metadata wrapper).
+// Provider uses this to fetch the latest ETag before an Update.
+func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, err := h.Store.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchDistribution",
+				fmt.Sprintf("the distribution does not exist: %s", id))
+			return
+		}
+		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	w.Header().Set("ETag", rec.ETag)
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	// See List handler for why the encode error is ignored.
+	_ = enc.Encode(awsxml.FromSDKDistributionConfig(rec.Config))
+	_ = enc.Close()
 }
 
 // Delete handles DELETE /2020-05-31/distribution/{id}. AWS requires the
@@ -132,19 +158,48 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // decodeConfig reads the XML request body and returns the SDK-shaped
-// config. On any failure it has already emitted the AWS error envelope and
-// the caller should return.
+// config. Accepts both <DistributionConfig> (CreateDistribution /
+// UpdateDistribution path) and <DistributionConfigWithTags>
+// (CreateDistributionWithTags path; Terraform AWS Provider always uses
+// this variant). On any failure it has already emitted the AWS error
+// envelope and the caller should return.
 func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.DistributionConfig, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "read body: "+err.Error())
 		return nil, false
 	}
-	var wrapper awsxml.DistributionConfig
-	if err := xml.Unmarshal(body, &wrapper); err != nil {
+
+	rootName, err := peekRootElement(body)
+	if err != nil {
 		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
 		return nil, false
 	}
+
+	var wrapper *awsxml.DistributionConfig
+	switch rootName {
+	case "DistributionConfigWithTags":
+		var withTags awsxml.DistributionConfigWithTags
+		if err := xml.Unmarshal(body, &withTags); err != nil {
+			awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+			return nil, false
+		}
+		// Tags are intentionally dropped: cf-local does not track tags
+		// (out of scope for phase-4a).
+		wrapper = withTags.DistributionConfig
+	case "DistributionConfig":
+		var direct awsxml.DistributionConfig
+		if err := xml.Unmarshal(body, &direct); err != nil {
+			awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+			return nil, false
+		}
+		wrapper = &direct
+	default:
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML",
+			fmt.Sprintf("expected element type <DistributionConfig> or <DistributionConfigWithTags> but have <%s>", rootName))
+		return nil, false
+	}
+
 	cfg := wrapper.ToSDK()
 	if cfg == nil || cfg.CallerReference == nil || *cfg.CallerReference == "" {
 		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "CallerReference is required")
@@ -235,4 +290,20 @@ func distributionARN(id string) string {
 // CloudFront DNS names if state files leak.
 func distributionDomainName(id string) string {
 	return strings.ToLower(id) + ".cloudfront.local"
+}
+
+// peekRootElement returns the local name of the first XML start element
+// in body so the caller can dispatch on <DistributionConfig> vs
+// <DistributionConfigWithTags> without first decoding the entire body.
+func peekRootElement(body []byte) (string, error) {
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", fmt.Errorf("peek root: %w", err)
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			return se.Name.Local, nil
+		}
+	}
 }

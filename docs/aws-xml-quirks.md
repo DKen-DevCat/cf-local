@@ -143,15 +143,30 @@ cf-local の `RequestId` は UUIDv4 をハンドラごとに採番する (BoltDB
 
 ## 未検証項目 (本実装で再確認)
 
-| # | 項目 | 検証手段 |
-|---|---|---|
-| Q1 | Provider が実際に送る生 request body (XML byte 列) との一致 | `terraform apply` 実行時の HTTP trace (`AWS_DEBUG=true` or mitmproxy) |
-| Q2 | `LastModifiedTime` の time format (`2026-05-01T12:00:00Z` ISO8601 / microsec の有無) | AWS 実 API のレスポンスサンプル取得 |
-| Q3 | `Quantity = 0` のときに `<Items />` を出すか省略するか | AWS 実 API レスポンス取得 (現状は省略で実装、互換性に問題があれば見直し) |
-| Q4 | `<ErrorResponse>` の `<Type>` フィールドに `"Sender"` / `"Receiver"` 以外を SDK が許容するか | AWS SDK の error decoder ソース確認 (`smithy.APIError` 経由) |
-| Q5 | `If-Match` ヘッダのフォーマットに `W/"..."` (weak ETag) が来ることがあるか | Provider のテストコード or 実 API trace |
+| # | 項目 | 検証手段 | 解消 |
+|---|---|---|---|
+| Q1 | Provider が実際に送る生 request body (XML byte 列) との一致 | `terraform apply` 実行時の HTTP trace (`AWS_DEBUG=true` or mitmproxy) | 4a-16 で `TF_LOG=DEBUG` apply で確認済。下記「Provider 実 wire の知見」参照 |
+| Q2 | `LastModifiedTime` の time format (`2026-05-01T12:00:00Z` ISO8601 / microsec の有無) | AWS 実 API のレスポンスサンプル取得 | cf-local は `time.RFC3339` (microsec なし) を返し、Provider は `time.Time.String()` で再 format するので microsec の有無は drift にならない (4a-16 で検証) |
+| Q3 | `Quantity = 0` のときに `<Items />` を出すか省略するか | AWS 実 API レスポンス取得 | **省略で OK** (cf-local 現実装、4a-16 で検証)。例外: `Origins` と `OriginGroups` は **Provider が `.Quantity` を nil-unsafe deref するため、wrapper 親要素自体は常に出す** (Items 子要素は省略可) |
+| Q4 | `<ErrorResponse>` の `<Type>` フィールドに `"Sender"` / `"Receiver"` 以外を SDK が許容するか | AWS SDK の error decoder ソース確認 | 4a-16 では Sender/Receiver のみで Provider 側問題なし |
+| Q5 | `If-Match` ヘッダのフォーマットに `W/"..."` (weak ETag) が来ることがあるか | Provider のテストコード or 実 API trace | 4a-16 では Provider は cf-local が返した ETag をそのまま If-Match に設定 (weak/strong マークなし)、cf-local 側 strict 検証は phase-4a スコープ外 |
 
-Phase 4-A の最初の `terraform apply` 検証時 (4a-16) に Q1〜Q5 を一括解消する。
+## Provider 実 wire の知見 (4a-16 検証)
+
+terraform-provider-aws v5.100.0 / terraform 1.9.8 で `aws_cloudfront_distribution` / `aws_cloudfront_cache_policy` / `aws_cloudfront_origin_request_policy` の apply / plan / destroy を回した際の観測結果。
+
+### Distribution 専用の path / wire 仕様
+
+- **`POST /2020-05-31/distribution?WithTags`** (CreateDistributionWithTags) のみを使う。CreateDistribution (no `?WithTags`) は呼ばれない
+- リクエスト body の root 要素は `<DistributionConfigWithTags>` (内側に `<DistributionConfig>` + `<Tags>`)。`<DistributionConfig>` 単独 root は受け付ける必要があるが、Provider は使わない
+- **`PUT /2020-05-31/distribution/<id>/config`** (UpdateDistribution) と **`GET /2020-05-31/distribution/<id>/config`** (GetDistributionConfig) は `/config` サブパス必須。CachePolicy / ORP の Update は同パスサフィックス無し
+- `Distribution.DistributionConfig.Origins` と `Distribution.DistributionConfig.OriginGroups` は **常に non-nil** で返す必要がある (Provider の `resourceDistributionRead` が `.Quantity` を nil 検査なしで deref)
+
+### 共通 (3 リソース全部)
+
+- **`GET /2020-05-31/tagging?Resource=<ARN>`** (ListTagsForResource) を Create 後に必ず呼ぶ。404 を返すと apply 全体が失敗。空タグの `<Tags><Items /></Tags>` を 200 で返せば OK
+- SigV4 署名は付くが cf-local 側は検証しない (DESIGN.md 「認証・認可は不要」と整合)
+- Provider は自動で再試行を行う (5xx / 一部 4xx) — cf-local が安定して 200/201/204 を返すなら問題ない
 
 ## 参考: Provider の挙動
 
