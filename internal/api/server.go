@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
+	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 )
 
@@ -38,6 +39,9 @@ type Config struct {
 	// the CachePolicy routes entirely (used by tests that only exercise
 	// invalidation).
 	CachePolicyStore cachepolicy.Store
+	// DistributionStore backs the AWS REST Distribution handlers. nil
+	// disables the Distribution routes entirely.
+	DistributionStore distribution.Store
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
@@ -90,6 +94,14 @@ func buildMux(cfg Config) http.Handler {
 		mux.HandleFunc("PUT /2020-05-31/cache-policy/{id}", cph.Update)
 		mux.HandleFunc("DELETE /2020-05-31/cache-policy/{id}", cph.Delete)
 		mux.HandleFunc("GET /2020-05-31/cache-policy", cph.List)
+	}
+	if cfg.DistributionStore != nil {
+		dh := &distribution.Handler{Store: cfg.DistributionStore}
+		mux.HandleFunc("POST /2020-05-31/distribution", dh.Create)
+		mux.HandleFunc("GET /2020-05-31/distribution/{id}", dh.Get)
+		mux.HandleFunc("PUT /2020-05-31/distribution/{id}", dh.Update)
+		mux.HandleFunc("DELETE /2020-05-31/distribution/{id}", dh.Delete)
+		mux.HandleFunc("GET /2020-05-31/distribution", dh.List)
 	}
 	return mux
 }

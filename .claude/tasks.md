@@ -54,8 +54,8 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [x] **4a-3**: XML wrapper struct (CachePolicy) + SDK 型相互変換テスト
 - [x] **4a-4-1**: CachePolicy CRUD 共通基盤 (Store interface + in-memory 実装 + ID/ETag 採番 + XML error helper)
 - [x] **4a-4-2**: aws_cloudfront_cache_policy CRUD ハンドラ + AWS REST routing 配線
-- [ ] **4a-5**: XML wrapper struct (Distribution)
-- [ ] **4a-6**: aws_cloudfront_distribution CRUD ハンドラ
+- [x] **4a-5**: XML wrapper struct (Distribution) — `internal/api/xml/distribution.go` + convert + tests (decode-permissive で Provider 全主要フィールドを受理)
+- [x] **4a-6**: aws_cloudfront_distribution CRUD ハンドラ — `internal/api/distribution/` + `internal/api/server.go` + `cmd/cf-local/main.go` 配線
 - [ ] **4a-7**: aws_cloudfront_origin_request_policy CRUD ハンドラ (phase-3 持ち越し)
 - [ ] **4a-8**: BoltDB ストア実装 (4 bucket)
 - [x] **4a-9**: Managed Cache Policies built-in seed (5 件、read-only) — `internal/api/cachepolicy/managed.go` で AWS 公式 5 件を Type=managed で seed、Update/Delete は IllegalUpdate (400) で弾く
@@ -82,13 +82,15 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - `e19aed8` (refactor) xmlerror を awsxml パッケージへ移設 (cycle 回避)
 - `88cc0fe` 4a-4-2 CachePolicy CRUD handler + AWS REST routing (4a-2 統合)
 - `034b6db` /phase-review --fix で REV-1〜REV-7 反映 (XMLNSCloudFront 略語化 / errors.New / List Quantity invariant / xml.Encoder.Close / FromSDK Quantity test)
-- (本コミット) 4a-9 Managed Cache Policies built-in seed (5 件、Type=managed、Update/Delete を IllegalUpdate で拒否)
+- `11b85c2` 4a-9 Managed Cache Policies built-in seed (5 件、Type=managed、Update/Delete を IllegalUpdate で拒否)
+- `7752dac` 4a-5 Distribution XML wrapper + SDK conversion (decode-permissive、約 30 type、convert + tests)
+- (本コミット) 4a-6 Distribution CRUD ハンドラ (POST/GET/PUT/DELETE/list 5 本、ARN/DomainName/Status は ID から派生合成)
 
-到達状態: AWS REST/XML 互換の CachePolicy CRUD endpoints (POST/GET/PUT/DELETE/list 5 本) + Managed Cache Policies 5 件 seed が `:4566` で動作。in-memory store ベース。Phase 3 の invalidation API (`POST /_invalidate`) は維持。Distribution / OriginRequestPolicy / BoltDB 永続化 / auto-reload は未着手。
+到達状態: AWS REST/XML 互換の CachePolicy CRUD + Managed seed (5 件) + **Distribution CRUD** が `:4566` で動作。in-memory store ベース。Phase 3 の invalidation API (`POST /_invalidate`) は維持。OriginRequestPolicy / BoltDB 永続化 / auto-reload は未着手。
 
-### 次セッションの着手順序 (B → C-followup)
+### 次セッションの着手順序 (4a-7 → 4a-8 → 4a-10 → 4a-16)
 
-#### (B) 4a-5 / 4a-6 Distribution wrapper + handler ← ここから再開
+#### (1) 4a-7 OriginRequestPolicy CRUD ハンドラ ← ここから再開
 
 目的: CachePolicy と同パターンを Distribution に拡大。spike 不要 (4a-0 で確立)。
 
