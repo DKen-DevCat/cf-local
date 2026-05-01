@@ -1,12 +1,10 @@
-package api
+package awsxml
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/xml"
 	"net/http"
-
-	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
 )
 
 // WriteXMLError writes an AWS REST/XML <ErrorResponse> envelope with the given
@@ -18,8 +16,8 @@ import (
 func WriteXMLError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(status)
-	resp := awsxml.ErrorResponse{
-		Error:     awsxml.ErrorBody{Type: errType(status), Code: code, Message: message},
+	resp := ErrorResponse{
+		Error:     ErrorBody{Type: errType(status), Code: code, Message: message},
 		RequestID: NewRequestID(),
 	}
 	enc := xml.NewEncoder(w)

@@ -1,12 +1,10 @@
-package api
+package awsxml
 
 import (
 	"encoding/xml"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
 )
 
 func TestWriteXMLError(t *testing.T) {
@@ -34,12 +32,12 @@ func TestWriteXMLError(t *testing.T) {
 				t.Errorf("Content-Type: got %q", ct)
 			}
 
-			var body awsxml.ErrorResponse
+			var body ErrorResponse
 			if err := xml.NewDecoder(resp.Body).Decode(&body); err != nil {
 				t.Fatalf("decode body: %v", err)
 			}
-			if body.XMLName.Space != awsxml.XmlnsCloudFront {
-				t.Errorf("xmlns: got %q want %q", body.XMLName.Space, awsxml.XmlnsCloudFront)
+			if body.XMLName.Space != XmlnsCloudFront {
+				t.Errorf("xmlns: got %q want %q", body.XMLName.Space, XmlnsCloudFront)
 			}
 			if body.Error.Code != tt.code {
 				t.Errorf("Code: got %q want %q", body.Error.Code, tt.code)
