@@ -1,0 +1,16 @@
+# Terraform standard ignores. Local state and the downloaded provider
+# plugin binary (~50 MB per plugin) must never be committed; the lock
+# file (.terraform.lock.hcl) is fine to track because it pins provider
+# versions across teammates.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfstate.lock.info
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
