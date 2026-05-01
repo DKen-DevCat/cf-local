@@ -43,6 +43,11 @@ type BoltStore struct {
 	nowFn   func() time.Time
 	idGen   func() (string, error)
 	etagGen func(cfg *types.CachePolicyConfig) string
+	// onChange fires after a successful Create / Update / Delete persist.
+	// Wired by main.go to nginx.Reloader.Trigger so cf-local.conf
+	// regenerates without restarting cf-local. Non-blocking caller is
+	// expected (the reloader debounces).
+	onChange func()
 }
 
 // NewBoltStore creates the cache_policies bucket if needed, loads every
@@ -100,6 +105,17 @@ func (s *BoltStore) load() error {
 			return nil
 		})
 	})
+}
+
+// SetOnChange registers a callback fired after every successful
+// mutation (Create / Update / Delete). The callback is invoked while
+// the store mutex is held; implementers must therefore avoid calling
+// back into the store. nginx.Reloader.Trigger satisfies this with a
+// non-blocking channel send.
+func (s *BoltStore) SetOnChange(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onChange = fn
 }
 
 // SeedManaged adds the AWS-published managed cache policies to the
@@ -182,6 +198,9 @@ func (s *BoltStore) Create(_ context.Context, cfg *types.CachePolicyConfig) (*Re
 	}
 	s.byID[id] = rec
 	s.byName[*cfg.Name] = id
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return rec, nil
 }
 
@@ -231,6 +250,9 @@ func (s *BoltStore) Update(_ context.Context, id string, cfg *types.CachePolicyC
 		s.byName[*cfg.Name] = id
 	}
 	s.byID[id] = newRec
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return newRec, nil
 }
 
@@ -253,6 +275,9 @@ func (s *BoltStore) Delete(_ context.Context, id string, ifMatch string) error {
 	}
 	delete(s.byID, id)
 	delete(s.byName, stringDeref(rec.Config.Name))
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return nil
 }
 

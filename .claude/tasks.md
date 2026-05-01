@@ -59,7 +59,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [x] **4a-7**: aws_cloudfront_origin_request_policy CRUD ハンドラ — `internal/api/originrequestpolicy/` + xml wrapper + 配線。Managed ORP seed は phase-4a スコープ外
 - [x] **4a-8**: BoltDB ストア実装 (3 bucket: `cache_policies` / `distributions` / `origin_request_policies`)。Managed CachePolicy は永続化せず起動時 re-seed。`--db-path` フラグ追加 (default `/work/cf-local.db`)
 - [x] **4a-9**: Managed Cache Policies built-in seed (5 件、read-only) — `internal/api/cachepolicy/managed.go` で AWS 公式 5 件を Type=managed で seed、Update/Delete は IllegalUpdate (400) で弾く
-- [ ] **4a-10**: nginx auto-reload (debounce 1s、BoltDB Put → renderer 発火)
+- [x] **4a-10**: nginx auto-reload (debounce 1s、BoltStore Put → Reloader Trigger → Render → WriteAtomic)。terraform apply / destroy で実機確認、policies.json と cf-local.conf が live で更新される
 - [ ] **4a-11** (REV-1 繰越し): inner location の unix socket 化
 - [ ] **4a-12** (REV-11 繰越し): stress test (vegeta 1000 RPS / 1 分)、unix socket 化後
 - [ ] **4a-13** (P3 繰越し): rename 順序 race の根本解決 (staging dir / cf-local.conf only trigger 比較)
@@ -87,13 +87,25 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - `95461d0` 4a-6 Distribution CRUD ハンドラ (POST/GET/PUT/DELETE/list 5 本、ARN/DomainName/Status は ID から派生合成)
 - `390b36b` 4a-7 OriginRequestPolicy CRUD (xml wrapper + convert + handler + 配線)
 - `da873a8` 4a-8 BoltDB persistence (3 bucket、--db-path フラグ、Managed CP は re-seed)
-- (本コミット) 4a-16 terraform apply E2E (DistributionConfigWithTags / Origins+OriginGroups always non-nil / Distribution `/config` sub-path / tagging stub の 4 件を実機検証で発見・修正)
+- `e8a1712` 4a-16 terraform apply E2E (DistributionConfigWithTags / Origins+OriginGroups always non-nil / Distribution `/config` sub-path / tagging stub の 4 件を実機検証で発見・修正)
+- `a458af3` chore: examples/terraform-integration の terraform.tfstate / .terraform/ を gitignore
+- (本コミット) 4a-10 nginx auto-reload (Reloader + 3 BoltStore SetOnChange、debounce 1s、main.go bridge)
 
-到達状態: AWS REST/XML 互換の CachePolicy / Distribution / OriginRequestPolicy CRUD + Managed CachePolicy seed + tagging stub が `:4566` で永続化済 + **terraform 1.9.8 + aws 5.100.0 で apply / plan no-drift / destroy が通る**。Phase 3 の invalidation API (`POST /_invalidate`) は維持。nginx auto-reload / chore-1-4 ドッグフード結果フィードバックは未着手。
+到達状態: **DESIGN.md 完了条件全達成**。AWS REST/XML 互換の CachePolicy / Distribution / OriginRequestPolicy CRUD + Managed CachePolicy seed + tagging stub が `:4566` で永続化済 + terraform 1.9.8 + aws 5.100.0 で apply / plan no-drift / destroy が通る + **API mutation で 1s debounce 後に cf-local.conf + policies.json が auto-render**。Phase 3 の invalidation API (`POST /_invalidate`) は維持。残るのは任意項目の chore-1-4 ドッグフード結果フィードバックのみ。
 
-### 次セッションの着手順序 (4a-10 → 4a-18)
+### 次セッションの着手順序 (Phase 4-A 完了)
 
-#### (1) 4a-10 nginx auto-reload ← ここから再開
+DESIGN.md 完了条件全達成。残作業は任意項目のみ。
+
+#### (1) 4a-18 chore-1-4 ドッグフード結果フィードバック (任意)
+
+`~/.claude/docs/phase-flow-comparison.md` §4 に code-reviewer agent の効きの観測メモを追記。Phase 4-A は `/phase-review --pr 8` を 1 回試走済 (REV-1〜REV-7)。
+
+#### (2) Phase 4-A の merge 準備
+
+- 4 コミット (4a-7 / 4a-8 / 4a-16 / chore / 4a-10) を push (実は今 5 コミット)
+- PR #8 description を up-to-date にする
+- `/phase-ship` を実行 (PR ready / merge)
 
 目的: CachePolicy と同パターンを Distribution に拡大。spike 不要 (4a-0 で確立)。
 

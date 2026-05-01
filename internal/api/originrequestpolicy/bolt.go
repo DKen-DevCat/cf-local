@@ -36,6 +36,16 @@ type BoltStore struct {
 	nowFn   func() time.Time
 	idGen   func() (string, error)
 	etagGen func(cfg *types.OriginRequestPolicyConfig) string
+	// onChange fires after a successful Create / Update / Delete persist.
+	// See cachepolicy.BoltStore.SetOnChange for the contract.
+	onChange func()
+}
+
+// SetOnChange registers a callback fired after every successful mutation.
+func (s *BoltStore) SetOnChange(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onChange = fn
 }
 
 // NewBoltStore opens the origin_request_policies bucket, loads existing
@@ -143,6 +153,9 @@ func (s *BoltStore) Create(_ context.Context, cfg *types.OriginRequestPolicyConf
 	}
 	s.byID[id] = rec
 	s.byName[*cfg.Name] = id
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return rec, nil
 }
 
@@ -186,6 +199,9 @@ func (s *BoltStore) Update(_ context.Context, id string, cfg *types.OriginReques
 		s.byName[*cfg.Name] = id
 	}
 	s.byID[id] = newRec
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return newRec, nil
 }
 
@@ -203,6 +219,9 @@ func (s *BoltStore) Delete(_ context.Context, id string, ifMatch string) error {
 	}
 	delete(s.byID, id)
 	delete(s.byName, stringDeref(rec.Config.Name))
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return nil
 }
 

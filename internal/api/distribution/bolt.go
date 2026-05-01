@@ -35,6 +35,16 @@ type BoltStore struct {
 	nowFn    func() time.Time
 	idGen    func() (string, error)
 	etagGen  func(cfg *types.DistributionConfig) string
+	// onChange fires after a successful Create / Update / Delete persist.
+	// See cachepolicy.BoltStore.SetOnChange for the contract.
+	onChange func()
+}
+
+// SetOnChange registers a callback fired after every successful mutation.
+func (s *BoltStore) SetOnChange(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onChange = fn
 }
 
 // NewBoltStore opens the distributions bucket, loads existing records
@@ -144,6 +154,9 @@ func (s *BoltStore) Create(_ context.Context, cfg *types.DistributionConfig) (*R
 	}
 	s.byID[id] = rec
 	s.byCaller[caller] = id
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return rec, nil
 }
 
@@ -180,6 +193,9 @@ func (s *BoltStore) Update(_ context.Context, id string, cfg *types.Distribution
 		return nil, fmt.Errorf("persist: %w", err)
 	}
 	s.byID[id] = newRec
+	if s.onChange != nil {
+		s.onChange()
+	}
 	return newRec, nil
 }
 
@@ -198,6 +214,9 @@ func (s *BoltStore) Delete(_ context.Context, id string, ifMatch string) error {
 	delete(s.byID, id)
 	if rec.Config != nil && rec.Config.CallerReference != nil {
 		delete(s.byCaller, *rec.Config.CallerReference)
+	}
+	if s.onChange != nil {
+		s.onChange()
 	}
 	return nil
 }

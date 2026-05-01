@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"go.etcd.io/bbolt"
 
 	"github.com/DKen-DevCat/cf-local/internal/api"
@@ -122,6 +123,20 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath string, 
 		return fmt.Errorf("origin_request_policies store: %w", err)
 	}
 
+	// Build the auto-reload pipeline: every API mutation triggers a
+	// debounced render of cf-local.conf + policies.json into out-dir.
+	// The fetch closure snapshots all 3 stores into a *config.LoadResult
+	// shape so the existing nginx.Render code path can be reused.
+	fetch := func() *config.LoadResult {
+		return snapshotLoadResult(ctx, cpStore, distStore)
+	}
+	reloader := cfnginx.NewReloader(outDir, fetch, stdout)
+	cpStore.SetOnChange(reloader.Trigger)
+	distStore.SetOnChange(reloader.Trigger)
+	orpStore.SetOnChange(reloader.Trigger)
+	go reloader.Run(ctx)
+	fmt.Fprintf(stdout, "  reloader      : debounce=%s, out-dir=%s\n", cfnginx.DefaultReloadDebounce, outDir)
+
 	return api.Run(ctx, api.Config{
 		Addr:                     addr,
 		NginxURL:                 nginxURL,
@@ -130,6 +145,40 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath string, 
 		DistributionStore:        distStore,
 		OriginRequestPolicyStore: orpStore,
 	})
+}
+
+// snapshotLoadResult builds a *config.LoadResult from the live BoltStore
+// state. Map keys are CachePolicy IDs (not Names) because Distribution's
+// CachePolicyId field carries the ID in phase-4a — the renderer's
+// `policies.json` lookup must match what `Distribution` references.
+//
+// Phase-3 file-based config used Names as keys; this is a deliberate
+// schema break for phase-4a (4a-10). See examples/terraform-integration/
+// for the documented behaviour.
+//
+// OriginRequestPolicy is not part of LoadResult — phase-3 renderer does
+// not consume it. ORP records persist to BoltDB but currently do not
+// affect cf-local.conf output. Future phases (4-D Lambda@Edge or later)
+// can wire ORP into the renderer.
+func snapshotLoadResult(ctx context.Context, cpStore *cachepolicy.BoltStore, distStore *distribution.BoltStore) *config.LoadResult {
+	res := &config.LoadResult{
+		CachePolicies: make(map[string]*types.CachePolicyConfig),
+	}
+	if cps, err := cpStore.List(ctx); err == nil {
+		for _, rec := range cps {
+			if rec.Config != nil {
+				res.CachePolicies[rec.ID] = rec.Config
+			}
+		}
+	}
+	if dists, err := distStore.List(ctx); err == nil && len(dists) > 0 {
+		// Phase-4a renderer consumes a single Distribution. If multiple
+		// distributions are persisted, the first one (by map iteration
+		// order) wins — multi-Distribution rendering is a future-phase
+		// concern (phase-3 contract).
+		res.Distribution = dists[0].Config
+	}
+	return res
 }
 
 func requireDir(path, label string) error {
