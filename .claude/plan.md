@@ -312,8 +312,8 @@ Phase 3 完了直後に cf-local の `.claude/` 配下に `/check` + `/review-di
 
 ### タスク（実装ステップ）
 
-- [ ] **chore-1-1**: `.claude/agents/code-reviewer.md` を cf-local 用に新規作成（Go + njs/nginx + Markdown 観点、`.claude/rules/` を参照してレビュー）
-- [ ] **chore-1-2**: `.claude/skills/review-diff/SKILL.md` の Step 3 で subagent_type を `general-purpose` → `code-reviewer` に切替 + 必要なプロンプト調整
+- [x] **chore-1-1**: `.claude/agents/code-reviewer.md` を cf-local 用に新規作成（Go + njs/nginx + Markdown 観点、`.claude/rules/` を参照してレビュー）
+- [x] **chore-1-2**: `.claude/skills/review-diff/SKILL.md` の Step 3 で subagent_type を `general-purpose` → `code-reviewer` に切替 + 必要なプロンプト調整
 - [ ] **chore-1-3** (任意): `.claude/rules/code-style.md` の領域別分割を判断。採用なら `go.md` / `njs-nginx.md` / `markdown.md` 等に分割し、`review-diff` の Read 対象を更新
 - [ ] **chore-1-4** (任意): Phase 4a kickoff 後の最初の PR で `/phase-review --pr <番号>` を試走 → 観測結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
 

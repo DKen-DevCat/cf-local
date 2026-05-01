@@ -39,14 +39,14 @@ nestify の `code-reviewer.md` は TypeScript / Bun 前提なので直輸入不�
 ---
 name: code-reviewer
 description: cf-local の差分を rules / DESIGN.md / conventions.md に照らしてレビューする
-tools: Read, Grep, Glob, Bash(git diff:*), Bash(git status:*), Bash(git log:*)
+tools: Glob, Grep, Read
 ---
 ```
 
 責務:
-- 入力: 差分 + 適用ルール抜粋 + 観点指示
+- 入力: 差分 + 適用ルール抜粋 + 観点指示（差分は呼び出し側 SKILL.md Step 3 がプロンプトに埋め込む。agent 側で git を叩かない）
 - 出力: `severity / confidence / file:line / 説明 / 該当ルール / 修正案` 形式の指摘リスト（confidence ≥ 80 のみ）
-- write 系ツールは持たせない（read-only レビュー）
+- write 系・Bash も持たせない（read-only レビュー / プロンプト経由で受領した差分のみを参照）
 
 ### 3. review-diff 側の調整
 
