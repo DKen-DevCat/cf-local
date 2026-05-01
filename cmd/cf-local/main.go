@@ -1,11 +1,13 @@
 // Package main is the cf-local Control Plane entry point.
 //
-// Phase 3 A.5.3: render 完了後に invalidation API (POST /_invalidate) を
-// `:4566` で listen する。SIGINT/SIGTERM 受信で graceful shutdown (5s)。
+// Phase 4-A 4a-1: render 完了後に control-plane HTTP API を `:4566` で listen
+// する。Phase 3 で導入した invalidation API (POST /_invalidate) はそのまま
+// 維持し、AWS API 互換ハンドラ (CreateCachePolicy / CreateDistribution など)
+// は同 listener 上に後続 4a タスクで足し込んでいく。
 //
-// Phase 3 では HTTP API は invalidation 1 つだけ。AWS API 互換 (CreateDistribution
-// 等) は Phase 4-A 以降で同 listener に追加していく想定で port は :4566 (LocalStack
-// 互換 port を意識した固定値) を採用。
+// HTTP lifecycle 自体は internal/api の Run() に切り出されており、main は
+// flag parse + render + Run 呼び出しの薄い shell に留める。port は :4566
+// (LocalStack 互換 port を意識した固定値) を継承。
 //
 // 起動例:
 //
@@ -21,13 +23,11 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
+	"github.com/DKen-DevCat/cf-local/internal/api"
 	"github.com/DKen-DevCat/cf-local/internal/config"
 	cfnginx "github.com/DKen-DevCat/cf-local/internal/nginx"
 )
@@ -37,14 +37,13 @@ const (
 	defaultOutDir    = "/work/cf-local-conf"
 	defaultAddr      = ":4566"
 	defaultNginxURL  = "http://nginx:8080"
-	version          = "0.0.0-phase3-a5.3"
-	shutdownTimeout  = 5 * time.Second
+	version          = "0.0.0-phase4a-4a.1"
 )
 
 func main() {
 	configDir := flag.String("config-dir", defaultConfigDir, "directory containing cache-policies/ and distributions/ JSON files")
 	outDir := flag.String("out-dir", defaultOutDir, "directory to write cf-local.conf and policies.json (named volume mount in docker compose)")
-	addr := flag.String("addr", defaultAddr, "HTTP listener address for the invalidation API")
+	addr := flag.String("addr", defaultAddr, "HTTP listener address for the control-plane API")
 	nginxURL := flag.String("nginx-url", defaultNginxURL, "base URL of the nginx data plane (used by the invalidation purger)")
 	flag.Parse()
 
@@ -91,43 +90,11 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL string, stdout i
 	fmt.Fprintf(stdout, "  cache policies: %d\n", len(res.CachePolicies))
 	fmt.Fprintf(stdout, "  distribution  : %s\n", distributionSummary(res))
 
-	return serveInvalidationAPI(ctx, addr, nginxURL, stdout)
-}
-
-func serveInvalidationAPI(ctx context.Context, addr, nginxURL string, stdout io.Writer) error {
-	mux := http.NewServeMux()
-	mux.Handle("/_invalidate", &invalidation.Handler{
-		Purger: invalidation.NewNginxPurger(nginxURL),
+	return api.Run(ctx, api.Config{
+		Addr:     addr,
+		NginxURL: nginxURL,
+		Stdout:   stdout,
 	})
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		fmt.Fprintf(stdout, "  invalidation API listening on %s (purger -> %s)\n", addr, nginxURL)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("listen: %w", err)
-			return
-		}
-		errCh <- nil
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		fmt.Fprintln(stdout, "received signal, shutting down (5s grace)")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown: %w", err)
-		}
-		return <-errCh
-	}
 }
 
 func requireDir(path, label string) error {

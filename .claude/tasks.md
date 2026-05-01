@@ -49,7 +49,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 ### タスク
 
 - [x] **4a-0**: spike — CreateCachePolicy XML I/O (X1〜X4) を実機検証、知見を `docs/aws-xml-quirks.md` に集約
-- [ ] **4a-1**: Go HTTP Server 基盤 (Port 4566)、phase-3 の Invalidation API と統合
+- [x] **4a-1**: Go HTTP Server 基盤 (Port 4566)、phase-3 の Invalidation API と統合
 - [ ] **4a-2**: AWS API path router (`/2020-05-31/...` prefix routing)
 - [ ] **4a-3**: XML wrapper struct (CachePolicy) + SDK 型相互変換テスト
 - [ ] **4a-4**: aws_cloudfront_cache_policy CRUD ハンドラ
