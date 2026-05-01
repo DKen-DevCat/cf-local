@@ -77,6 +77,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrAlreadyExists):
 			awsxml.WriteXMLError(w, http.StatusConflict, "CachePolicyAlreadyExists",
 				fmt.Sprintf("a cache policy already exists with the same name: %s", *cfg.Name))
+		case errors.Is(err, ErrManagedImmutable):
+			// AWS の正規 error code は未確認 (managed policy への
+			// UpdateCachePolicy / DeleteCachePolicy は AWS 公式ドキュメント
+			// にエラーレスポンス例が無い)。aws-xml-quirks.md の Code 表に
+			// 載っている IllegalUpdate (400) を採用 — 4a-16 (terraform
+			// apply E2E) で実 AWS 挙動を取り、必要なら差し替える。
+			awsxml.WriteXMLError(w, http.StatusBadRequest, "IllegalUpdate",
+				fmt.Sprintf("the managed cache policy cannot be modified: %s", id))
 		default:
 			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		}
@@ -90,12 +98,17 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ifMatch := r.Header.Get("If-Match")
 	if err := h.Store.Delete(r.Context(), id, ifMatch); err != nil {
-		if errors.Is(err, ErrNotFound) {
+		switch {
+		case errors.Is(err, ErrNotFound):
 			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchCachePolicy",
 				fmt.Sprintf("the cache policy does not exist: %s", id))
-			return
+		case errors.Is(err, ErrManagedImmutable):
+			// See Update for the IllegalUpdate code rationale.
+			awsxml.WriteXMLError(w, http.StatusBadRequest, "IllegalUpdate",
+				fmt.Sprintf("the managed cache policy cannot be deleted: %s", id))
+		default:
+			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -115,7 +128,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	list := awsxml.CachePolicyList{MaxItems: 100}
 	for _, rec := range records {
 		list.Items.CachePolicySummary = append(list.Items.CachePolicySummary, awsxml.CachePolicySummary{
-			Type:        "custom",
+			Type:        rec.Type,
 			CachePolicy: *toResponseCachePolicy(rec),
 		})
 	}

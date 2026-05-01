@@ -129,14 +129,14 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 **完了条件**:
 
-- [ ] Go HTTP Server基盤 (Port 4566)
-- [ ] AWS APIエンドポイントのrouting
+- [x] Go HTTP Server基盤 (Port 4566)
+- [x] AWS APIエンドポイントのrouting (CachePolicy 部分)
 - [ ] aws_cloudfront_distribution CRUD
-- [ ] aws_cloudfront_cache_policy CRUD
+- [x] aws_cloudfront_cache_policy CRUD
 - [ ] aws_cloudfront_origin_request_policy CRUD
 - [ ] BoltDBストア実装
 - [ ] nginx auto-reload (debounce付き)
-- [ ] Managed Cache Policies組込み
+- [x] Managed Cache Policies組込み (5 件 seed、Update/Delete を IllegalUpdate で拒否)
 - [ ] terraform apply/destroy 通過
 
 **着手前にユーザーと相談する点**:

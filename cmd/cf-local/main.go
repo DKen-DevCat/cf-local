@@ -91,11 +91,14 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL string, stdout i
 	fmt.Fprintf(stdout, "  cache policies: %d\n", len(res.CachePolicies))
 	fmt.Fprintf(stdout, "  distribution  : %s\n", distributionSummary(res))
 
+	cpStore := cachepolicy.NewMemoryStore()
+	cpStore.SeedManaged()
+
 	return api.Run(ctx, api.Config{
 		Addr:             addr,
 		NginxURL:         nginxURL,
 		Stdout:           stdout,
-		CachePolicyStore: cachepolicy.NewMemoryStore(),
+		CachePolicyStore: cpStore,
 	})
 }
 

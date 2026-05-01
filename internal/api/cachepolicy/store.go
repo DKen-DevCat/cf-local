@@ -19,18 +19,28 @@ import (
 // failure modes. Handlers map these to AWS error codes (NoSuchCachePolicy,
 // CachePolicyAlreadyExists, ...).
 var (
-	ErrNotFound      = errors.New("cache policy not found")
-	ErrAlreadyExists = errors.New("cache policy name already exists")
+	ErrNotFound         = errors.New("cache policy not found")
+	ErrAlreadyExists    = errors.New("cache policy name already exists")
+	ErrManagedImmutable = errors.New("managed cache policy cannot be modified or deleted")
+)
+
+// Record.Type values. Managed records are AWS built-in policies seeded at
+// startup (see managed.go); their Update / Delete is rejected at the handler.
+const (
+	TypeCustom  = "custom"
+	TypeManaged = "managed"
 )
 
 // Record is the canonical in-memory representation of a stored cache policy:
-// the SDK config plus the metadata fields (Id, ETag, LastModifiedTime) that
-// AWS returns alongside it in <CachePolicy> responses.
+// the SDK config plus the metadata fields (Id, ETag, LastModifiedTime, Type)
+// that AWS returns alongside it in <CachePolicy> / <CachePolicySummary>
+// responses.
 type Record struct {
 	ID               string
 	ETag             string
 	Config           *types.CachePolicyConfig
 	LastModifiedTime time.Time
+	Type             string
 }
 
 // Store is the persistence boundary for cache policies. The handler talks only
@@ -95,6 +105,7 @@ func (s *MemoryStore) Create(ctx context.Context, cfg *types.CachePolicyConfig) 
 		ETag:             s.etagGen(cfg),
 		Config:           cfg,
 		LastModifiedTime: s.nowFn().UTC(),
+		Type:             TypeCustom,
 	}
 	s.byID[id] = rec
 	s.byName[*cfg.Name] = id
@@ -127,6 +138,9 @@ func (s *MemoryStore) Update(_ context.Context, id string, cfg *types.CachePolic
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if rec.Type == TypeManaged {
+		return nil, ErrManagedImmutable
+	}
 	if existingID, dup := s.byName[*cfg.Name]; dup && existingID != id {
 		return nil, ErrAlreadyExists
 	}
@@ -142,6 +156,7 @@ func (s *MemoryStore) Update(_ context.Context, id string, cfg *types.CachePolic
 		ETag:             s.etagGen(cfg),
 		Config:           cfg,
 		LastModifiedTime: s.nowFn().UTC(),
+		Type:             rec.Type,
 	}
 	s.byID[id] = newRec
 	return newRec, nil
@@ -157,6 +172,9 @@ func (s *MemoryStore) Delete(_ context.Context, id string, ifMatch string) error
 	if !ok {
 		return ErrNotFound
 	}
+	if rec.Type == TypeManaged {
+		return ErrManagedImmutable
+	}
 	delete(s.byID, id)
 	delete(s.byName, stringDeref(rec.Config.Name))
 	return nil
@@ -171,6 +189,23 @@ func (s *MemoryStore) List(_ context.Context) ([]*Record, error) {
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// SeedManaged inserts the AWS-published managed cache policies (see
+// managed.go) into the store. The cf-local startup path calls this once on
+// the live MemoryStore so Distributions can reference the built-in IDs
+// (Managed-CachingOptimized, Managed-CachingDisabled, ...) without prior
+// CreateCachePolicy calls. Tests that need a clean store skip it.
+//
+// Subsequent attempts to Update / Delete a managed Id are blocked at the
+// handler layer via Record.Type == TypeManaged.
+func (s *MemoryStore) SeedManaged() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rec := range ManagedPolicies() {
+		s.byID[rec.ID] = rec
+		s.byName[*rec.Config.Name] = rec.ID
+	}
 }
 
 func stringDeref(p *string) string {

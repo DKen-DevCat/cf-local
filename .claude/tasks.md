@@ -58,7 +58,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [ ] **4a-6**: aws_cloudfront_distribution CRUD ハンドラ
 - [ ] **4a-7**: aws_cloudfront_origin_request_policy CRUD ハンドラ (phase-3 持ち越し)
 - [ ] **4a-8**: BoltDB ストア実装 (4 bucket)
-- [ ] **4a-9**: Managed Cache Policies built-in seed (5 件、read-only)
+- [x] **4a-9**: Managed Cache Policies built-in seed (5 件、read-only) — `internal/api/cachepolicy/managed.go` で AWS 公式 5 件を Type=managed で seed、Update/Delete は IllegalUpdate (400) で弾く
 - [ ] **4a-10**: nginx auto-reload (debounce 1s、BoltDB Put → renderer 発火)
 - [ ] **4a-11** (REV-1 繰越し): inner location の unix socket 化
 - [ ] **4a-12** (REV-11 繰越し): stress test (vegeta 1000 RPS / 1 分)、unix socket 化後
@@ -69,9 +69,9 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [ ] **4a-17** (任意 / chore-1-3 引き継ぎ): rules 領域別分割の判断 — 最初の `/phase-review` 試走で観測
 - [ ] **4a-18** (任意 / chore-1-4 引き継ぎ): ドッグフード結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
 
-### 進捗 (2026-05-01 時点)
+### 進捗 (2026-05-02 時点)
 
-直近 push: PR #8 (draft) https://github.com/DKen-DevCat/cf-local/pull/8
+直近 push: PR #8 (draft) https://github.com/DKen-DevCat/cf-local/pull/8 — 未 push のローカルコミットあり
 
 完了済 commits (`git log feat/phase-4a-terraform --oneline` で確認):
 
@@ -81,51 +81,14 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - `d550966` 4a-4-1 store + id/etag + xmlerror
 - `e19aed8` (refactor) xmlerror を awsxml パッケージへ移設 (cycle 回避)
 - `88cc0fe` 4a-4-2 CachePolicy CRUD handler + AWS REST routing (4a-2 統合)
+- `034b6db` /phase-review --fix で REV-1〜REV-7 反映 (XMLNSCloudFront 略語化 / errors.New / List Quantity invariant / xml.Encoder.Close / FromSDK Quantity test)
+- (本コミット) 4a-9 Managed Cache Policies built-in seed (5 件、Type=managed、Update/Delete を IllegalUpdate で拒否)
 
-到達状態: AWS REST/XML 互換の CachePolicy CRUD endpoints (POST/GET/PUT/DELETE/list 5 本) が `:4566` で動作。in-memory store ベース。Phase 3 の invalidation API (`POST /_invalidate`) は維持。Distribution / OriginRequestPolicy / BoltDB 永続化 / Managed seed / auto-reload は未着手。
+到達状態: AWS REST/XML 互換の CachePolicy CRUD endpoints (POST/GET/PUT/DELETE/list 5 本) + Managed Cache Policies 5 件 seed が `:4566` で動作。in-memory store ベース。Phase 3 の invalidation API (`POST /_invalidate`) は維持。Distribution / OriginRequestPolicy / BoltDB 永続化 / auto-reload は未着手。
 
-### 次セッションの着手順序 (C → A → B)
+### 次セッションの着手順序 (B → C-followup)
 
-#### (C) /phase-review 試走 ← ここから再開
-
-目的: chore-1-4 引き継ぎ消化。code-reviewer agent (chore-1 導入) の効きを観測し、Distribution 着手前に CachePolicy 部分の品質を上げる。
-
-実行コマンド:
-
-```
-/phase-review --pr 8
-```
-
-観測軸:
-
-- 粒度・正確性 (`general-purpose` 比で改善があるか)
-- 公式ドキュ準拠 (軸 4) — `awsxml` の wrapper struct が AWS REST/XML 仕様から逸脱していないか (context7 で AWS docs 引いて検証)
-- 設計思想整合 (軸 3) — DESIGN.md / `.claude/design/phase-4a-terraform-2026-05-01.md` / `docs/conventions.md` との整合
-- chore-1-3 rules 領域別分割の判断 — Go / njs/nginx / Markdown 混線症状の有無
-
-試走後:
-
-1. 指摘採用は `/phase-review --fix <番号>` で承認ベース反映 → 自動コミット → push
-2. 観測結果を `~/.claude/docs/phase-flow-comparison.md` §4 に追記 (chore-1-4 = 4a-18 完了)
-3. 混線症状があれば `.claude/rules/code-style.md` を `go.md` / `njs-nginx.md` / `markdown.md` に分割 + `code-reviewer.md` の必読資料リスト更新 (chore-1-3 = 4a-17 完了)
-
-#### (A) 4a-9 Managed Cache Policies built-in seed
-
-目的: AWS 公式 5 ID を起動時に MemoryStore へ read-only seed。Distribution が CachePolicyId 参照する 4a-5/6 の準備。
-
-対象 ID (詳細: `.claude/design/phase-4a-terraform-2026-05-01.md` §「Managed Cache Policies seed」):
-
-| Name | ID |
-|---|---|
-| `Managed-CachingOptimized` | `658327ea-f89d-4fab-a63d-7e88639e58f6` |
-| `Managed-CachingDisabled` | `4135ea2d-6df8-44a3-9df3-4b5a84be39ad` |
-| `Managed-CachingOptimizedForUncompressedObjects` | `b2884449-e4de-46a7-ac36-70bc7f1ddd6d` |
-| `Managed-Elemental-MediaPackage` | `08627262-05a9-4f76-9ded-b50ca2e3a84f` |
-| `Managed-Amplify` | `2e54312d-136d-493c-8eb9-b001f22f67d2` |
-
-実装案: `internal/api/cachepolicy/managed.go` に seed 関数 + 起動時呼び出し。Type=managed で List に出る。`Update` / `Delete` は `IllegalUpdate` / `IllegalDelete` で弾く (managed は immutable)。
-
-#### (B) 4a-5 / 4a-6 Distribution wrapper + handler
+#### (B) 4a-5 / 4a-6 Distribution wrapper + handler ← ここから再開
 
 目的: CachePolicy と同パターンを Distribution に拡大。spike 不要 (4a-0 で確立)。
 
@@ -140,9 +103,13 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 
 詳細: `.claude/design/phase-4a-terraform-2026-05-01.md` §「スコープ」4a-5 / 4a-6。
 
+#### (C-followup) PR #8 push + 4a-16 で IllegalUpdate コード確認
+
+- 4a-9 で managed Update/Delete に `IllegalUpdate` (400) を採用したが、AWS の正規エラーコードは未確認 (公式ドキュメントにエラーレスポンス例なし)。`internal/api/cachepolicy/handler.go` Update / Delete のエラー分岐にコメントで残してある
+- 4a-16 (terraform apply E2E) で実 AWS 挙動を取得 → 必要なら handler のコード分岐を差し替え
+
 ### 新セッション再開手順
 
 1. `/phase-resume` を実行 (現状自動診断)
-2. 上記 (C) のコマンド `/phase-review --pr 8` を即実行
-3. 指摘採用 → コミット → push
-4. (A) → (B) を順に進める
+2. 4a-9 までのローカルコミットを `git push` で PR #8 に反映
+3. (B) 4a-5 / 4a-6 Distribution wrapper + handler に着手

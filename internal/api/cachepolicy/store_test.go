@@ -131,6 +131,62 @@ func TestMemoryStore_RenameToExistingNameRejected(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_SeedManagedAndImmutable(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	s.SeedManaged()
+
+	all, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 5 {
+		t.Errorf("seeded count: got %d want 5", len(all))
+	}
+
+	const cachingOptimizedID = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+	rec, err := s.Get(ctx, cachingOptimizedID)
+	if err != nil {
+		t.Fatalf("Get managed: %v", err)
+	}
+	if rec.Type != TypeManaged {
+		t.Errorf("seeded Type: got %q want %q", rec.Type, TypeManaged)
+	}
+
+	// Update on a managed id must be rejected at the store layer (not just the
+	// handler) so any future caller path also fails closed.
+	if _, err := s.Update(ctx, cachingOptimizedID, newPolicyConfig("rename-attempt"), ""); !errors.Is(err, ErrManagedImmutable) {
+		t.Errorf("Update managed: got %v want ErrManagedImmutable", err)
+	}
+	if err := s.Delete(ctx, cachingOptimizedID, ""); !errors.Is(err, ErrManagedImmutable) {
+		t.Errorf("Delete managed: got %v want ErrManagedImmutable", err)
+	}
+
+	// Custom policy created alongside managed must remain mutable.
+	c, err := s.Create(ctx, newPolicyConfig("custom-alongside-managed"))
+	if err != nil {
+		t.Fatalf("Create custom alongside managed: %v", err)
+	}
+	if c.Type != TypeCustom {
+		t.Errorf("Create Type: got %q want %q", c.Type, TypeCustom)
+	}
+	if _, err := s.Update(ctx, c.ID, newPolicyConfig("custom-renamed"), ""); err != nil {
+		t.Errorf("Update custom (after seed): %v", err)
+	}
+	if err := s.Delete(ctx, c.ID, ""); err != nil {
+		t.Errorf("Delete custom (after seed): %v", err)
+	}
+
+	// SeedManaged is idempotent in the sense that calling it twice on a fresh
+	// store produces the same final state; here we only assert it does not
+	// panic when the keys already exist (Update path is skipped because the
+	// records are managed).
+	s.SeedManaged()
+	if again, _ := s.List(ctx); len(again) != 5 {
+		t.Errorf("re-seed count: got %d want 5", len(again))
+	}
+}
+
 func TestMemoryStore_Injection(t *testing.T) {
 	ctx := context.Background()
 	fixed := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)

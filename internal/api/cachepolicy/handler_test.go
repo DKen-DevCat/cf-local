@@ -38,7 +38,12 @@ const sampleUpdateXML = `<?xml version="1.0" encoding="UTF-8"?>
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	h := &Handler{Store: NewMemoryStore()}
+	return newTestServerWithStore(t, NewMemoryStore())
+}
+
+func newTestServerWithStore(t *testing.T, s Store) *httptest.Server {
+	t.Helper()
+	h := &Handler{Store: s}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /2020-05-31/cache-policy", h.Create)
 	mux.HandleFunc("GET /2020-05-31/cache-policy/{id}", h.Get)
@@ -248,6 +253,104 @@ func TestHandler_MissingName(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: got %d want 400", resp.StatusCode)
+	}
+}
+
+func TestHandler_ManagedImmutable(t *testing.T) {
+	store := NewMemoryStore()
+	store.SeedManaged()
+	srv := newTestServerWithStore(t, store)
+
+	const cachingOptimizedID = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+
+	// Get on a managed id is allowed (Provider data source reads it).
+	resp := doXML(t, srv, http.MethodGet, "/2020-05-31/cache-policy/"+cachingOptimizedID, "", "")
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("Get managed: got %d want 200", resp.StatusCode)
+	}
+	var got awsxml.CachePolicy
+	if err := xml.NewDecoder(resp.Body).Decode(&got); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode managed Get: %v", err)
+	}
+	resp.Body.Close()
+	if got.CachePolicyConfig == nil || got.CachePolicyConfig.Name != "Managed-CachingOptimized" {
+		t.Errorf("Get managed body: %+v", got.CachePolicyConfig)
+	}
+
+	// Update on a managed id is rejected.
+	resp = doXML(t, srv, http.MethodPut, "/2020-05-31/cache-policy/"+cachingOptimizedID, sampleUpdateXML, "any-etag")
+	if resp.StatusCode != http.StatusBadRequest {
+		resp.Body.Close()
+		t.Errorf("Update managed: got %d want 400", resp.StatusCode)
+	}
+	var errBody awsxml.ErrorResponse
+	if err := xml.NewDecoder(resp.Body).Decode(&errBody); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode error: %v", err)
+	}
+	resp.Body.Close()
+	if errBody.Error.Code != "IllegalUpdate" {
+		t.Errorf("Update managed code: got %q want IllegalUpdate", errBody.Error.Code)
+	}
+
+	// Delete on a managed id is rejected.
+	resp = doXML(t, srv, http.MethodDelete, "/2020-05-31/cache-policy/"+cachingOptimizedID, "", "any-etag")
+	if resp.StatusCode != http.StatusBadRequest {
+		resp.Body.Close()
+		t.Errorf("Delete managed: got %d want 400", resp.StatusCode)
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&errBody); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode error: %v", err)
+	}
+	resp.Body.Close()
+	if errBody.Error.Code != "IllegalUpdate" {
+		t.Errorf("Delete managed code: got %q want IllegalUpdate", errBody.Error.Code)
+	}
+
+	// Managed must still appear in Get-after-rejected-Update — no state corruption.
+	resp = doXML(t, srv, http.MethodGet, "/2020-05-31/cache-policy/"+cachingOptimizedID, "", "")
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Errorf("Get managed after rejected mutate: got %d want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestHandler_ListManagedAndCustom(t *testing.T) {
+	store := NewMemoryStore()
+	store.SeedManaged()
+	srv := newTestServerWithStore(t, store)
+
+	// Add one custom alongside the 5 managed.
+	resp := doXML(t, srv, http.MethodPost, "/2020-05-31/cache-policy", sampleCreateXML, "")
+	resp.Body.Close()
+
+	resp = doXML(t, srv, http.MethodGet, "/2020-05-31/cache-policy", "", "")
+	defer resp.Body.Close()
+	var list awsxml.CachePolicyList
+	if err := xml.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if list.Quantity != 6 || len(list.Items.CachePolicySummary) != 6 {
+		t.Errorf("list size: Quantity=%d items=%d want 6/6", list.Quantity, len(list.Items.CachePolicySummary))
+	}
+
+	var managed, custom int
+	for _, it := range list.Items.CachePolicySummary {
+		switch it.Type {
+		case "managed":
+			managed++
+		case "custom":
+			custom++
+		default:
+			t.Errorf("unexpected Type %q for id=%s", it.Type, it.CachePolicy.ID)
+		}
+	}
+	if managed != 5 || custom != 1 {
+		t.Errorf("Type distribution: managed=%d custom=%d want 5/1", managed, custom)
 	}
 }
 
