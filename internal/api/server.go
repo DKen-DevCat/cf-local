@@ -1,10 +1,9 @@
 // Package api wires the cf-local control-plane HTTP server.
 //
-// Phase 4-A 4a-1: extracts the HTTP lifecycle out of cmd/cf-local/main.go and
-// gives subsequent 4a tasks a single mux to attach handlers to (4a-2 path
-// router, 4a-4 CachePolicy CRUD, 4a-6 Distribution CRUD, 4a-7
-// OriginRequestPolicy CRUD). Phase 3's invalidation API is preserved here so
-// existing tests and E2E flows continue to work without divergence.
+// Phase 4-A 4a-1: extracts the HTTP lifecycle out of cmd/cf-local/main.go.
+// Phase 4-A 4a-4-2: wires up the AWS-compatible CachePolicy CRUD routes so
+// the Terraform Provider can target /2020-05-31/cache-policy[/Id] alongside
+// the Phase 3 invalidation endpoint.
 package api
 
 import (
@@ -15,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 )
 
@@ -34,6 +34,10 @@ type Config struct {
 	NginxURL string
 	// Stdout is where startup and shutdown messages are written.
 	Stdout io.Writer
+	// CachePolicyStore backs the AWS REST CachePolicy handlers. nil disables
+	// the CachePolicy routes entirely (used by tests that only exercise
+	// invalidation).
+	CachePolicyStore cachepolicy.Store
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
@@ -71,12 +75,21 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 // buildMux assembles the http.Handler with all cf-local routes. AWS REST API
-// routes (/2020-05-31/...) are added by subsequent 4a tasks; this function is
-// the single place where new routes get wired in.
+// routes are registered conditionally on cfg.CachePolicyStore (and, in later
+// 4a tasks, the Distribution / OriginRequestPolicy stores).
 func buildMux(cfg Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/_invalidate", &invalidation.Handler{
 		Purger: invalidation.NewNginxPurger(cfg.NginxURL),
 	})
+
+	if cfg.CachePolicyStore != nil {
+		cph := &cachepolicy.Handler{Store: cfg.CachePolicyStore}
+		mux.HandleFunc("POST /2020-05-31/cache-policy", cph.Create)
+		mux.HandleFunc("GET /2020-05-31/cache-policy/{id}", cph.Get)
+		mux.HandleFunc("PUT /2020-05-31/cache-policy/{id}", cph.Update)
+		mux.HandleFunc("DELETE /2020-05-31/cache-policy/{id}", cph.Delete)
+		mux.HandleFunc("GET /2020-05-31/cache-policy", cph.List)
+	}
 	return mux
 }

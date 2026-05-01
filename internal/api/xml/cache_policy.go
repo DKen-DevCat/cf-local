@@ -91,3 +91,27 @@ type ErrorBody struct {
 	Code    string `xml:"Code"`
 	Message string `xml:"Message"`
 }
+
+// CachePolicyList is the response body of ListCachePolicies. The public API
+// Reference Syntax for this endpoint includes Items + MaxItems + NextMarker +
+// Quantity (notably no IsTruncated, unlike ListDistributions).
+type CachePolicyList struct {
+	XMLName    xml.Name             `xml:"CachePolicyList"`
+	Items      CachePolicyListItems `xml:"Items"`
+	MaxItems   int                  `xml:"MaxItems"`
+	NextMarker string               `xml:"NextMarker,omitempty"`
+	Quantity   int                  `xml:"Quantity"`
+}
+
+// CachePolicyListItems wraps the repeated <CachePolicySummary> children.
+type CachePolicyListItems struct {
+	CachePolicySummary []CachePolicySummary `xml:"CachePolicySummary"`
+}
+
+// CachePolicySummary is one row of the ListCachePolicies response. Type is
+// "managed" for AWS-built-in policies (4a-9) and "custom" for user-created
+// ones.
+type CachePolicySummary struct {
+	CachePolicy CachePolicy `xml:"CachePolicy"`
+	Type        string      `xml:"Type"`
+}

@@ -53,7 +53,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [ ] **4a-2**: AWS API path router (`/2020-05-31/...` prefix routing)
 - [x] **4a-3**: XML wrapper struct (CachePolicy) + SDK 型相互変換テスト
 - [x] **4a-4-1**: CachePolicy CRUD 共通基盤 (Store interface + in-memory 実装 + ID/ETag 採番 + XML error helper)
-- [ ] **4a-4-2**: aws_cloudfront_cache_policy CRUD ハンドラ + AWS REST routing 配線
+- [x] **4a-4-2**: aws_cloudfront_cache_policy CRUD ハンドラ + AWS REST routing 配線
 - [ ] **4a-5**: XML wrapper struct (Distribution)
 - [ ] **4a-6**: aws_cloudfront_distribution CRUD ハンドラ
 - [ ] **4a-7**: aws_cloudfront_origin_request_policy CRUD ハンドラ (phase-3 持ち越し)
