@@ -50,7 +50,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 
 - [x] **4a-0**: spike — CreateCachePolicy XML I/O (X1〜X4) を実機検証、知見を `docs/aws-xml-quirks.md` に集約
 - [x] **4a-1**: Go HTTP Server 基盤 (Port 4566)、phase-3 の Invalidation API と統合
-- [ ] **4a-2**: AWS API path router (`/2020-05-31/...` prefix routing)
+- [x] **4a-2**: AWS API path router (`/2020-05-31/...` prefix routing) — 4a-4-2 で `internal/api/server.go` の `buildMux` に統合 (B プラン採用、独立 router.go は不要と判断)
 - [x] **4a-3**: XML wrapper struct (CachePolicy) + SDK 型相互変換テスト
 - [x] **4a-4-1**: CachePolicy CRUD 共通基盤 (Store interface + in-memory 実装 + ID/ETag 採番 + XML error helper)
 - [x] **4a-4-2**: aws_cloudfront_cache_policy CRUD ハンドラ + AWS REST routing 配線
@@ -68,3 +68,81 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [ ] **4a-16**: terraform apply / destroy E2E 検証 (TF 1.9.x / AWS provider 5.x)
 - [ ] **4a-17** (任意 / chore-1-3 引き継ぎ): rules 領域別分割の判断 — 最初の `/phase-review` 試走で観測
 - [ ] **4a-18** (任意 / chore-1-4 引き継ぎ): ドッグフード結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
+
+### 進捗 (2026-05-01 時点)
+
+直近 push: PR #8 (draft) https://github.com/DKen-DevCat/cf-local/pull/8
+
+完了済 commits (`git log feat/phase-4a-terraform --oneline` で確認):
+
+- `df9d0af` 4a-0 spike (XML wrapper round-trip)
+- `8904191` 4a-1 server lifecycle 切り出し
+- `413a55e` 4a-3 SDK 型 ⇔ XML wrapper 相互変換
+- `d550966` 4a-4-1 store + id/etag + xmlerror
+- `e19aed8` (refactor) xmlerror を awsxml パッケージへ移設 (cycle 回避)
+- `88cc0fe` 4a-4-2 CachePolicy CRUD handler + AWS REST routing (4a-2 統合)
+
+到達状態: AWS REST/XML 互換の CachePolicy CRUD endpoints (POST/GET/PUT/DELETE/list 5 本) が `:4566` で動作。in-memory store ベース。Phase 3 の invalidation API (`POST /_invalidate`) は維持。Distribution / OriginRequestPolicy / BoltDB 永続化 / Managed seed / auto-reload は未着手。
+
+### 次セッションの着手順序 (C → A → B)
+
+#### (C) /phase-review 試走 ← ここから再開
+
+目的: chore-1-4 引き継ぎ消化。code-reviewer agent (chore-1 導入) の効きを観測し、Distribution 着手前に CachePolicy 部分の品質を上げる。
+
+実行コマンド:
+
+```
+/phase-review --pr 8
+```
+
+観測軸:
+
+- 粒度・正確性 (`general-purpose` 比で改善があるか)
+- 公式ドキュ準拠 (軸 4) — `awsxml` の wrapper struct が AWS REST/XML 仕様から逸脱していないか (context7 で AWS docs 引いて検証)
+- 設計思想整合 (軸 3) — DESIGN.md / `.claude/design/phase-4a-terraform-2026-05-01.md` / `docs/conventions.md` との整合
+- chore-1-3 rules 領域別分割の判断 — Go / njs/nginx / Markdown 混線症状の有無
+
+試走後:
+
+1. 指摘採用は `/phase-review --fix <番号>` で承認ベース反映 → 自動コミット → push
+2. 観測結果を `~/.claude/docs/phase-flow-comparison.md` §4 に追記 (chore-1-4 = 4a-18 完了)
+3. 混線症状があれば `.claude/rules/code-style.md` を `go.md` / `njs-nginx.md` / `markdown.md` に分割 + `code-reviewer.md` の必読資料リスト更新 (chore-1-3 = 4a-17 完了)
+
+#### (A) 4a-9 Managed Cache Policies built-in seed
+
+目的: AWS 公式 5 ID を起動時に MemoryStore へ read-only seed。Distribution が CachePolicyId 参照する 4a-5/6 の準備。
+
+対象 ID (詳細: `.claude/design/phase-4a-terraform-2026-05-01.md` §「Managed Cache Policies seed」):
+
+| Name | ID |
+|---|---|
+| `Managed-CachingOptimized` | `658327ea-f89d-4fab-a63d-7e88639e58f6` |
+| `Managed-CachingDisabled` | `4135ea2d-6df8-44a3-9df3-4b5a84be39ad` |
+| `Managed-CachingOptimizedForUncompressedObjects` | `b2884449-e4de-46a7-ac36-70bc7f1ddd6d` |
+| `Managed-Elemental-MediaPackage` | `08627262-05a9-4f76-9ded-b50ca2e3a84f` |
+| `Managed-Amplify` | `2e54312d-136d-493c-8eb9-b001f22f67d2` |
+
+実装案: `internal/api/cachepolicy/managed.go` に seed 関数 + 起動時呼び出し。Type=managed で List に出る。`Update` / `Delete` は `IllegalUpdate` / `IllegalDelete` で弾く (managed は immutable)。
+
+#### (B) 4a-5 / 4a-6 Distribution wrapper + handler
+
+目的: CachePolicy と同パターンを Distribution に拡大。spike 不要 (4a-0 で確立)。
+
+スコープ:
+
+- **4a-5 wrapper**: `internal/api/xml/distribution.go` + `_test.go` + SDK 変換 (`distribution_convert.go`)
+  - 構造: Origins / CacheBehaviors / DefaultCacheBehavior / Aliases / Logging / Restrictions など 10+ 入れ子
+  - phase-3 `internal/config/convert.go` の Distribution 変換ロジックを参考に
+- **4a-6 handler**: `internal/api/distribution/handler.go` + tests + `internal/api/server.go` の buildMux に routing 配線
+  - DefaultCacheBehavior が CachePolicyId 参照 → Managed seed (4a-9) 必須
+  - `internal/api/cachepolicy/` のコードを雛形にコピー
+
+詳細: `.claude/design/phase-4a-terraform-2026-05-01.md` §「スコープ」4a-5 / 4a-6。
+
+### 新セッション再開手順
+
+1. `/phase-resume` を実行 (現状自動診断)
+2. 上記 (C) のコマンド `/phase-review --pr 8` を即実行
+3. 指摘採用 → コミット → push
+4. (A) → (B) を順に進める
