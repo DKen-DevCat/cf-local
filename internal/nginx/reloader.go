@@ -36,10 +36,6 @@ type Reloader struct {
 
 	trigger chan struct{}
 
-	// nowFn / sleepFn are injected for testing; production uses time.Now
-	// and time.After.
-	nowFn func() time.Time
-
 	// mu guards the most-recent-error field for tests; the production
 	// path never reads it.
 	mu      sync.Mutex
@@ -59,7 +55,6 @@ func NewReloader(outDir string, fetch func() *config.LoadResult, stdout io.Write
 		debounce: DefaultReloadDebounce,
 		stdout:   stdout,
 		trigger:  make(chan struct{}, 1),
-		nowFn:    time.Now,
 	}
 }
 

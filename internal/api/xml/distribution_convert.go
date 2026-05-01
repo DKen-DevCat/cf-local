@@ -35,7 +35,7 @@ func (c *DistributionConfig) ToSDK() *types.DistributionConfig {
 		Origins:              c.Origins.toSDK(),
 		DefaultCacheBehavior: c.DefaultCacheBehavior.toSDK(),
 		DefaultRootObject:    aws.String(c.DefaultRootObject),
-		WebACLId:             aws.String(c.WebACLId),
+		WebACLId:             aws.String(c.WebACLID),
 	}
 	if c.HTTPVersion != "" {
 		out.HttpVersion = types.HttpVersion(c.HTTPVersion)
@@ -564,7 +564,7 @@ func FromSDKDistributionConfig(in *types.DistributionConfig) *DistributionConfig
 		DefaultRootObject: aws.ToString(in.DefaultRootObject),
 		HTTPVersion:       string(in.HttpVersion),
 		PriceClass:        string(in.PriceClass),
-		WebACLId:          aws.ToString(in.WebACLId),
+		WebACLID:          aws.ToString(in.WebACLId),
 	}
 	if in.IsIPV6Enabled != nil {
 		v := *in.IsIPV6Enabled

@@ -75,7 +75,7 @@ type DistributionConfig struct {
 	Restrictions         *Restrictions         `xml:"Restrictions,omitempty"`
 	Staging              *bool                 `xml:"Staging,omitempty"`
 	ViewerCertificate    *ViewerCertificate    `xml:"ViewerCertificate,omitempty"`
-	WebACLId             string                `xml:"WebACLId,omitempty"`
+	WebACLID             string                `xml:"WebACLId,omitempty"`
 }
 
 // Distribution is the response envelope of GetDistribution /
@@ -135,7 +135,7 @@ type DistributionSummary struct {
 	Staging              *bool                 `xml:"Staging,omitempty"`
 	Status               string                `xml:"Status"`
 	ViewerCertificate    *ViewerCertificate    `xml:"ViewerCertificate,omitempty"`
-	WebACLId             string                `xml:"WebACLId,omitempty"`
+	WebACLID             string                `xml:"WebACLId,omitempty"`
 }
 
 // ---- Aliases ----

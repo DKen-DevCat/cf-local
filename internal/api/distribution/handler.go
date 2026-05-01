@@ -272,7 +272,7 @@ func toDistributionSummary(rec *Record) awsxml.DistributionSummary {
 		s.Restrictions = cfg.Restrictions
 		s.Staging = cfg.Staging
 		s.ViewerCertificate = cfg.ViewerCertificate
-		s.WebACLId = cfg.WebACLId
+		s.WebACLID = cfg.WebACLID
 	}
 	return s
 }
