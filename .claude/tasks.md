@@ -57,7 +57,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [x] **4a-5**: XML wrapper struct (Distribution) — `internal/api/xml/distribution.go` + convert + tests (decode-permissive で Provider 全主要フィールドを受理)
 - [x] **4a-6**: aws_cloudfront_distribution CRUD ハンドラ — `internal/api/distribution/` + `internal/api/server.go` + `cmd/cf-local/main.go` 配線
 - [x] **4a-7**: aws_cloudfront_origin_request_policy CRUD ハンドラ — `internal/api/originrequestpolicy/` + xml wrapper + 配線。Managed ORP seed は phase-4a スコープ外
-- [ ] **4a-8**: BoltDB ストア実装 (4 bucket)
+- [x] **4a-8**: BoltDB ストア実装 (3 bucket: `cache_policies` / `distributions` / `origin_request_policies`)。Managed CachePolicy は永続化せず起動時 re-seed。`--db-path` フラグ追加 (default `/work/cf-local.db`)
 - [x] **4a-9**: Managed Cache Policies built-in seed (5 件、read-only) — `internal/api/cachepolicy/managed.go` で AWS 公式 5 件を Type=managed で seed、Update/Delete は IllegalUpdate (400) で弾く
 - [ ] **4a-10**: nginx auto-reload (debounce 1s、BoltDB Put → renderer 発火)
 - [ ] **4a-11** (REV-1 繰越し): inner location の unix socket 化
@@ -85,13 +85,14 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - `11b85c2` 4a-9 Managed Cache Policies built-in seed (5 件、Type=managed、Update/Delete を IllegalUpdate で拒否)
 - `7752dac` 4a-5 Distribution XML wrapper + SDK conversion (decode-permissive、約 30 type、convert + tests)
 - `95461d0` 4a-6 Distribution CRUD ハンドラ (POST/GET/PUT/DELETE/list 5 本、ARN/DomainName/Status は ID から派生合成)
-- (本コミット) 4a-7 OriginRequestPolicy CRUD (xml wrapper + convert + handler + 配線)
+- `390b36b` 4a-7 OriginRequestPolicy CRUD (xml wrapper + convert + handler + 配線)
+- (本コミット) 4a-8 BoltDB persistence (3 bucket、--db-path フラグ、Managed CP は re-seed)
 
-到達状態: AWS REST/XML 互換の CachePolicy CRUD + Managed seed (5 件) + Distribution CRUD + **OriginRequestPolicy CRUD** が `:4566` で動作。in-memory store ベース。Phase 3 の invalidation API (`POST /_invalidate`) は維持。BoltDB 永続化 / nginx auto-reload / terraform apply E2E は未着手。
+到達状態: AWS REST/XML 互換の CachePolicy / Distribution / OriginRequestPolicy CRUD + Managed CachePolicy seed が `:4566` で **永続化済**。restart で全 state 復元、bbolt v1.4.3 採用。Phase 3 の invalidation API (`POST /_invalidate`) は維持。nginx auto-reload / terraform apply E2E は未着手。
 
-### 次セッションの着手順序 (4a-8 → 4a-10 → 4a-16 → 4a-18)
+### 次セッションの着手順序 (4a-10 → 4a-16 → 4a-18)
 
-#### (1) 4a-8 BoltDB ストア実装 ← ここから再開
+#### (1) 4a-10 nginx auto-reload ← ここから再開
 
 目的: CachePolicy と同パターンを Distribution に拡大。spike 不要 (4a-0 で確立)。
 

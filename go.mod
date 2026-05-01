@@ -7,4 +7,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.62.0
 )
 
-require github.com/aws/smithy-go v1.25.1 // indirect
+require (
+	github.com/aws/smithy-go v1.25.1 // indirect
+	go.etcd.io/bbolt v1.4.3 // indirect
+	golang.org/x/sys v0.29.0 // indirect
+)

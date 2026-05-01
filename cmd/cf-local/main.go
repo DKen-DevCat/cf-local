@@ -12,7 +12,8 @@
 // 起動例:
 //
 //	cf-local --config-dir ./cf-local --out-dir /work/cf-local-conf \
-//	         --addr :4566 --nginx-url http://nginx:8080
+//	         --addr :4566 --nginx-url http://nginx:8080 \
+//	         --db-path /work/cf-local.db
 package main
 
 import (
@@ -27,6 +28,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"go.etcd.io/bbolt"
+
 	"github.com/DKen-DevCat/cf-local/internal/api"
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
@@ -40,6 +43,7 @@ const (
 	defaultOutDir    = "/work/cf-local-conf"
 	defaultAddr      = ":4566"
 	defaultNginxURL  = "http://nginx:8080"
+	defaultDBPath    = "/work/cf-local.db"
 	version          = "0.0.0-phase4a-4a.1"
 )
 
@@ -48,18 +52,19 @@ func main() {
 	outDir := flag.String("out-dir", defaultOutDir, "directory to write cf-local.conf and policies.json (named volume mount in docker compose)")
 	addr := flag.String("addr", defaultAddr, "HTTP listener address for the control-plane API")
 	nginxURL := flag.String("nginx-url", defaultNginxURL, "base URL of the nginx data plane (used by the invalidation purger)")
+	dbPath := flag.String("db-path", defaultDBPath, "BoltDB file path for AWS API state (cache_policies / distributions / origin_request_policies)")
 	flag.Parse()
 
 	log.SetFlags(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *configDir, *outDir, *addr, *nginxURL, os.Stdout); err != nil {
+	if err := run(ctx, *configDir, *outDir, *addr, *nginxURL, *dbPath, os.Stdout); err != nil {
 		log.Fatalf("cf-local: %v", err)
 	}
 }
 
-func run(ctx context.Context, configDir, outDir, addr, nginxURL string, stdout io.Writer) error {
+func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath string, stdout io.Writer) error {
 	if err := requireDir(configDir, "config-dir"); err != nil {
 		return err
 	}
@@ -93,10 +98,29 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL string, stdout i
 	fmt.Fprintf(stdout, "  cache policies: %d\n", len(res.CachePolicies))
 	fmt.Fprintf(stdout, "  distribution  : %s\n", distributionSummary(res))
 
-	cpStore := cachepolicy.NewMemoryStore()
+	// Open the BoltDB file. bbolt locks the file with flock; concurrent
+	// cf-local processes against the same file fail fast at Open() rather
+	// than corrupting state.
+	db, err := bbolt.Open(dbPath, 0o600, nil)
+	if err != nil {
+		return fmt.Errorf("open db %q: %w", dbPath, err)
+	}
+	defer db.Close()
+	fmt.Fprintf(stdout, "  bolt db       : %s\n", dbPath)
+
+	cpStore, err := cachepolicy.NewBoltStore(db)
+	if err != nil {
+		return fmt.Errorf("cache_policies store: %w", err)
+	}
 	cpStore.SeedManaged()
-	distStore := distribution.NewMemoryStore()
-	orpStore := originrequestpolicy.NewMemoryStore()
+	distStore, err := distribution.NewBoltStore(db)
+	if err != nil {
+		return fmt.Errorf("distributions store: %w", err)
+	}
+	orpStore, err := originrequestpolicy.NewBoltStore(db)
+	if err != nil {
+		return fmt.Errorf("origin_request_policies store: %w", err)
+	}
 
 	return api.Run(ctx, api.Config{
 		Addr:                     addr,

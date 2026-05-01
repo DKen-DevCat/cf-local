@@ -134,7 +134,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - [x] aws_cloudfront_distribution CRUD
 - [x] aws_cloudfront_cache_policy CRUD
 - [x] aws_cloudfront_origin_request_policy CRUD
-- [ ] BoltDBストア実装
+- [x] BoltDBストア実装 (3 bucket: cache_policies / distributions / origin_request_policies; managed CachePolicy は in-memory re-seed)
 - [ ] nginx auto-reload (debounce付き)
 - [x] Managed Cache Policies組込み (5 件 seed、Update/Delete を IllegalUpdate で拒否)
 - [ ] terraform apply/destroy 通過
