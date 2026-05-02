@@ -22,8 +22,8 @@
 ### タスク
 
 - [x] **4b-0**: spike (2026-05-02) — A 案 (ngx_cache_purge native wildcard) を `nginx/spike/wildcard-purge/` で実機検証、3 strategy (uri at END / uri at FRONT / uri only) を比較、**A 案 不可**と確定。B 案 (Go 側 cache directory walk + exact-key purge) へ pivot。詳細: `nginx/spike/wildcard-purge/README.md`
-- [ ] **4b-1**: wildcard matcher 実装 (TDD) — `internal/invalidation/matcher.go` + `_test.go`、AWS 厳格 prefix match、`~` reject、unsafe char URL-encode validation、table-driven 20 件以上
-- [ ] **4b-2**: cache key 末尾 `$uri` 化 — `nginx/njs/cache_key.js` + `internal/nginx/conf.go` (renderer) + 既存 phase-1/2/3 regression テスト全 PASS 維持。**理由は B 案で Go walk 時に uri 抽出するため** (4b-0 で A 案不可と判明後の改めて維持判断)
+- [x] **4b-1**: wildcard matcher 実装 (2026-05-02) — `internal/invalidation/{matcher.go,matcher_test.go}`、AWS 厳格 prefix match、`~` reject (literal + URL-encoded `%7E`)、RFC 1738 unsafe char + 非 ASCII reject、TestParsePattern 35 + TestPatternMatch 24 = 59 ケース全 PASS
+- [x] **4b-2**: cache key 末尾 `$uri` 化 (2026-05-02) — `nginx/njs/cache_key.js` の `compute()` 出力を `<sha256>` → `<sha256>:<uri>` に、FORMAT_VERSION v2 → v3、`tests/integration/cache_key_test.go` T15 を新 format に更新、`docs/cache-policy.md` 反映。phase-1/2/3 integration test は cache key 形式に依存しないので無回帰想定 (実機 α 確認は次 docker rebuild 時)
 - [ ] **4b-3**: Invalidation XML wrapper struct + SDK 型相互変換 — `internal/api/xml/invalidation.go` + `_test.go`、phase-4a の wrapper を雛形
 - [ ] **4b-4**: BoltDB `invalidations` bucket + Store 実装 — `internal/store/invalidation.go` + `_test.go`、phase-4a 3 bucket + 1 = 4 bucket 構成
 - [ ] **4b-5**: CreateInvalidation handler — `internal/api/invalidation/handler.go` + `_test.go`、ID 採番 (`I…`) + ETag、Status=InProgress 即返し、worker enqueue
