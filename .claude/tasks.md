@@ -67,7 +67,7 @@ Phase 3 で「後半-1〜5」として tasks に起こした内容を消化:
 - [ ] **4a-15** (3-Rv REV-7 残): Go loader sanitize (njs 側の validation 相当を Go で再実装)
 - [x] **4a-16**: terraform apply / destroy E2E 検証 (TF 1.9.8 / AWS provider 5.100.0)。`examples/terraform-integration/` に最小 TF コードを追加。検証中に Provider 実挙動 4 件を `examples/.../README.md` と `docs/aws-xml-quirks.md` に記録
 - [ ] **4a-17** (任意 / chore-1-3 引き継ぎ): rules 領域別分割の判断 — 最初の `/phase-review` 試走で観測
-- [ ] **4a-18** (任意 / chore-1-4 引き継ぎ): ドッグフード結果を `~/.claude/docs/phase-flow-comparison.md` §4 にフィードバック
+- [x] **4a-18** (任意 / chore-1-4 引き継ぎ): ドッグフード結果を `~/.claude/docs/phase-flow-comparison.md` §4.7 にフィードバック (PR #8 計 11 件採用、軸 (1)(2)(3) は効き確認 / 軸 (4) 公式ドキュ準拠は空振り → phase-4b で再検証)
 
 ### 進捗 (2026-05-02 時点)
 
