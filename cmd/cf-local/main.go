@@ -1,9 +1,12 @@
 // Package main is the cf-local Control Plane entry point.
 //
 // Phase 4-A 4a-1: render 完了後に control-plane HTTP API を `:4566` で listen
-// する。Phase 3 で導入した invalidation API (POST /_invalidate) はそのまま
-// 維持し、AWS API 互換ハンドラ (CreateCachePolicy / CreateDistribution など)
-// は同 listener 上に後続 4a タスクで足し込んでいく。
+// し、AWS API 互換ハンドラ (CachePolicy / Distribution / OriginRequestPolicy)
+// を提供する。Phase 4-B 4b-9 で phase-3 の独自 simple-JSON
+// `POST /_invalidate` を撤去し、AWS REST/XML
+// `POST /2020-05-31/distribution/{Id}/invalidation` (CreateInvalidation) に
+// 一本化した — 非同期 worker は cache directory を直接 walk するため、旧
+// `/_cf_purge<path>` 経由の HTTP 呼び出し (= --nginx-url flag) も不要になった。
 //
 // HTTP lifecycle 自体は internal/api の Run() に切り出されており、main は
 // flag parse + render + Run 呼び出しの薄い shell に留める。port は :4566
@@ -12,8 +15,8 @@
 // 起動例:
 //
 //	cf-local --config-dir ./cf-local --out-dir /work/cf-local-conf \
-//	         --addr :4566 --nginx-url http://nginx:8080 \
-//	         --db-path /work/cf-local.db
+//	         --addr :4566 --db-path /work/cf-local.db \
+//	         --cache-dir /var/cache/nginx
 package main
 
 import (
@@ -45,21 +48,19 @@ const (
 	defaultConfigDir = "./cf-local"
 	defaultOutDir    = "/work/cf-local-conf"
 	defaultAddr      = ":4566"
-	defaultNginxURL  = "http://nginx:8080"
 	defaultDBPath    = "/work/cf-local.db"
 	// defaultCacheDir mirrors proxy_cache_path in nginx/internal/nginx/conf.go;
 	// the invalidation worker walks this directory to find cache slots that
 	// match invalidation patterns (4b-6 / B-2 direct file removal).
 	defaultCacheDir = "/var/cache/nginx"
-	version         = "0.0.0-phase4b-4b.6"
+	version         = "0.0.0-phase4b-4b.9"
 )
 
 func main() {
 	configDir := flag.String("config-dir", defaultConfigDir, "directory containing cache-policies/ and distributions/ JSON files")
 	outDir := flag.String("out-dir", defaultOutDir, "directory to write cf-local.conf and policies.json (named volume mount in docker compose)")
 	addr := flag.String("addr", defaultAddr, "HTTP listener address for the control-plane API")
-	nginxURL := flag.String("nginx-url", defaultNginxURL, "base URL of the nginx data plane (used by the invalidation purger)")
-	dbPath := flag.String("db-path", defaultDBPath, "BoltDB file path for AWS API state (cache_policies / distributions / origin_request_policies)")
+	dbPath := flag.String("db-path", defaultDBPath, "BoltDB file path for AWS API state (cache_policies / distributions / origin_request_policies / invalidations)")
 	cacheDir := flag.String("cache-dir", defaultCacheDir, "nginx proxy_cache_path directory (walked by the invalidation worker)")
 	flag.Parse()
 
@@ -67,12 +68,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *configDir, *outDir, *addr, *nginxURL, *dbPath, *cacheDir, os.Stdout); err != nil {
+	if err := run(ctx, *configDir, *outDir, *addr, *dbPath, *cacheDir, os.Stdout); err != nil {
 		log.Fatalf("cf-local: %v", err)
 	}
 }
 
-func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath, cacheDir string, stdout io.Writer) error {
+func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, stdout io.Writer) error {
 	if err := requireDir(configDir, "config-dir"); err != nil {
 		return err
 	}
@@ -169,7 +170,6 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath, cacheDi
 
 	return api.Run(ctx, api.Config{
 		Addr:                     addr,
-		NginxURL:                 nginxURL,
 		Stdout:                   stdout,
 		CachePolicyStore:         cpStore,
 		DistributionStore:        distStore,

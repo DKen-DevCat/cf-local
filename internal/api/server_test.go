@@ -7,11 +7,12 @@ import (
 	"testing"
 )
 
-// TestBuildMux_Routes is a smoke test that the assembled mux carries the
-// existing /_invalidate route and rejects unknown paths. AWS REST routes are
-// added in 4a-2 / 4a-4 / 4a-6 and exercised by their own handler tests.
+// TestBuildMux_Routes is a smoke test that the assembled mux routes unknown
+// paths to 404 and serves the tagging stubs (always registered). AWS REST
+// routes are registered conditionally on each store and exercised by their
+// own handler tests.
 func TestBuildMux_Routes(t *testing.T) {
-	mux := buildMux(Config{NginxURL: "http://nginx-stub", Stdout: io.Discard})
+	mux := buildMux(Config{Stdout: io.Discard})
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -23,8 +24,15 @@ func TestBuildMux_Routes(t *testing.T) {
 		wantStatus int
 	}{
 		{"unknown path returns 404", http.MethodGet, "/missing", http.StatusNotFound},
-		{"invalidate GET rejected by handler", http.MethodGet, "/_invalidate", http.StatusMethodNotAllowed},
-		{"invalidate POST without JSON content-type", http.MethodPost, "/_invalidate", http.StatusUnsupportedMediaType},
+		{
+			"tagging GET stub is wired",
+			http.MethodGet,
+			// Resource query is required by the stub; supplying it confirms
+			// the route is registered (a missing route would 404 before
+			// reaching the validation branch).
+			"/2020-05-31/tagging?Resource=arn:aws:cloudfront::000000000000:distribution/EX",
+			http.StatusOK,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
