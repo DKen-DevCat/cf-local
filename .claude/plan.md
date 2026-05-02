@@ -26,7 +26,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-1` | 完了 | cache key動的計算 |
 | `phase-2` | 完了 | TTL正確化 |
 | `phase-3` | 完了 (2026-04-30) | Invalidation API + 設定ファイル方式 |
-| `phase-4a` | 進行中 | Terraform対応・最小 |
+| `phase-4a` | 完了 (2026-05-02) | Terraform対応・最小 |
 | `phase-4b` | 未着手 | Invalidation API互換 |
 | `phase-4c` | 未着手 | 仕上げ |
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
@@ -113,9 +113,9 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-4a: Terraform対応・最小
+## phase-4a: Terraform対応・最小 (完了 2026-05-02)
 
-**到達状態**: `terraform apply` を本番Terraformコードのまま（endpointsだけ変えて）ローカルcf-localに対して実行できるようにする。
+**到達状態**: `terraform apply` を本番Terraformコードのまま（endpointsだけ変えて）ローカルcf-localに対して実行できるようにする。PR #8 (`feat/phase-4a-terraform`) で develop に merge 済 (`1d0981e`)。タスク履歴: `.claude/tasks-archive/phase-4a-2026-05-02.md`、設計および完了時メモ: `.claude/design/phase-4a-terraform-2026-05-01.md`。
 
 **ゴールイメージ**:
 
@@ -189,6 +189,12 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - ワイルドカードのマッチング戦略（正規表現? glob?）
 - cache_keys_zone の走査方法
 - Invalidationの履歴をどこまで保持するか
+
+**Phase 4a からの繰越し** (任意項目を本フェーズ kickoff 時に判断):
+
+- **4a-17** rules 領域別分割の判断: phase-4b 最初の PR で `/phase-review` を試走し、Markdown / Go / njs/nginx 規則が混じって精度が落ちる症状が phase-4a 比でも残っているかを観測。出れば `.claude/rules/code-style.md` を `go.md` / `njs-nginx.md` / `markdown.md` に分割。出なければ据え置き。判断は試走後 1 度だけ
+- **軸 (4) 公式ドキュ準拠レビュー再観測**: phase-4a は AWS XML 互換が中心で context7 で根拠が取りにくく軸 (4) は空振り。phase-4b は wildcard マッチング戦略 / ngx_cache_purge / CloudFront Invalidation API XML と外部仕様の比重が大きいので、軸 (4) の効きを再観測 (`~/.claude/docs/phase-flow-comparison.md` §4.7 にフィードバック)
+- **保留事項 (任意 / phase-4b スコープ判断)**: 4a-11 unix socket 化 / 4a-12 stress test / 4a-13 rename 順序 race / 4a-14 PathPattern 拡張 / 4a-15 Go loader sanitize は phase-4a 完了時に保留。phase-4b 設計時に scope 検討。特に **4a-14 PathPattern 拡張** は phase-4b の wildcard invalidation と仕様面で重なるため、phase-4b 内で統合実装するか別フェーズに切り出すかをキックオフ時に判断
 
 ---
 

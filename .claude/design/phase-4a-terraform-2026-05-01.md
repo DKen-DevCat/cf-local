@@ -199,3 +199,30 @@ phase-3 では Control Plane と nginx を別 container にする方針 (DESIGN.
 - **stress test (REV-11) の閾値設定**。1000 RPS / 1 分で問題が出なかった場合、どこで線引きするか未決
 - **rename 順序 race (P3 繰越し) の修正方針**。staging dir 方式 vs cf-local.conf only reload trigger 方式の比較は spike 性質。4a-13 着手時に再判断
 - **既存ファイルベース経路を 4a 完了時に消すか**: 4a 完了後に判断。examples 側で TF 経由とファイル経由の併存をどう示すか
+
+## Phase 完了時メモ (2026-05-02)
+
+到達: PR #8 で develop に merge 済（merge commit `1d0981e`）。
+
+### 想定外だった点
+
+- **Distribution XML 入れ子の規模**: 設計時の想定より入れ子が深く、wrapper struct が約 30 type に膨らんだ (4a-5)。decode-permissive 方針で Provider が送る全主要フィールドを受理する形に倒し、型定義の精度より素通り優先で着地
+- **Terraform Provider の挙動 4 件**: 4a-16 の terraform apply E2E で実機検証中に判明した互換性ギャップ。`DistributionConfigWithTags` ラッパー / `Origins` と `OriginGroups` の always non-nil / Distribution の `/config` サブパス / tagging stub。いずれも公式ドキュメントに記載がなく実機ログから取得 → `docs/aws-xml-quirks.md` と `examples/terraform-integration/README.md` に記録
+- **`IllegalUpdate` エラーコード未確認**: managed CachePolicy の Update/Delete 拒否で 400 + `IllegalUpdate` を採用したが AWS 正規コードは未確認。実 AWS で managed policy を Update/Delete 試行する機会がなく、phase-4b 以降の宿題として handler コメントに残置
+- **公式ドキュ準拠レビュー (軸 4) の空振り**: `/phase-review` 4 軸並列の (4) は phase-4a では context7 で根拠が取れず空振り。AWS XML 互換は公開仕様が薄いため当然の結果。phase-4b の wildcard / ngx_cache_purge / Invalidation API は外部仕様の比重が大きいので軸 (4) の効きを再観測
+
+### 次フェーズへの引き継ぎ事項
+
+- **4a-11 / 4a-12 / 4a-13 / 4a-14 / 4a-15** の保留 5 件: いずれも phase-4a スコープ外として未着手。phase-4b 以降で必要性を再評価
+  - 4a-11 unix socket 化: nginx inner location の loopback 制限強化、phase-4b で control plane と nginx の同居形態が固まったタイミングで実施判断
+  - 4a-12 stress test: 4a-11 完了後の再計測が前提
+  - 4a-13 rename 順序 race: 現状 atomic rename + debounce 1s で実機問題は出ていない。staging dir 化は問題が再発するまで保留
+  - 4a-14 PathPattern 拡張: phase-4b の wildcard invalidation と仕様面で重なる領域。phase-4b 設計時に統合検討
+  - 4a-15 Go loader sanitize: njs validation との二重化で旨味が薄い。phase-4b で必要性を再判断
+- **4a-17 (rules 領域別分割)**: phase-4b 最初の PR で `/phase-review` の指摘の質を再観測してから判断
+- **軸 (4) 公式ドキュ準拠レビュー**: phase-4b で再検証
+- **CloudFront managed CachePolicy 5 件のメンテナンス**: AWS が新規 managed policy を追加しても phase-4a の seed には反映されない。`internal/api/cachepolicy/managed.go` を更新するタイミングは phase-5 で再検討
+
+### DESIGN.md 更新が必要な点
+
+- 現状不要。phase-4b で「Invalidation の wildcard マッチング戦略」と「履歴の保持範囲」を確定したら、DESIGN.md §「実装スコープ」に 1〜2 行で追記する想定
