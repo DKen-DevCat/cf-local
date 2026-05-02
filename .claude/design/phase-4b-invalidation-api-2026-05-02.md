@@ -210,3 +210,40 @@ phase-4b スコープ外として明示的に保留する項目。phase-4c 以�
 - **`POST /_invalidate` (phase-3 独自) の処遇 (4b-9)**: examples / CMS webhook 連携 doc が依存している。AWS 互換 handler を経由した薄いラッパーとして残すか、削除して examples を AWS CLI 互換に書き換えるかは 4b-9 着手時に判断
 - **非同期 worker の status 遷移タイミング**: cf-local の Status=Completed は「Go の walk + exact-key purge 完了」を意味し、AWS の本物 Status=Completed (edge cache から消えた瞬間) とは厳密には異なる。ローカル開発用途では許容範囲
 - **AWS Invalidation の `CallerReference` の重複検出**: 同じ CallerReference で複数 CreateInvalidation を投げると本物 AWS は冪等性のため 2 回目を無視する。cf-local で同等の挙動を作るか、シンプルに毎回新規 ID 採番するかは 4b-5 で決定
+
+---
+
+## Phase 完了時メモ (2026-05-03)
+
+到達: PR #9 で develop に merge 済、`/phase-review` 採用 2 件 (REV-1 / REV-2 in commit `1bb6100`)、実機検証 (`check.md`) で α 統合テスト + AWS CLI v2 + terraform-integration E2E 全 PASS。phase-4b kickoff の 12 タスク (4b-0 〜 4b-11) すべて消化。
+
+### 想定外だった点
+
+- **4b-0 spike で A 案不可と判明**: kickoff 時点では「ngx_cache_purge native wildcard purge」を第一案としていたが、spike (`nginx/spike/wildcard-purge/`) の実機検証で「PURGE は request 自身の `proxy_cache_key` を評価する」 = 外部 POST から呼ぶ AWS Invalidation API では cookie / header 不在で multi-variant 全 slot を捉えられない、と原理的に不可能と判明。即日 B 案 (Go 側 cache directory walk + `os.Remove`) へ pivot して 4b-1 以降を進めた
+- **4b-6 で B-1 (`/_cf_purge_exact_key/` HTTP endpoint 経由) を破棄**: cache key に `:` `/` を含むため URL encoding 経路 (nginx 変数 → decoded → `proxy_cache_purge`) のコストが利得 (in-memory keys_zone との整合) を上回ると判断、B-2 (`os.Remove` 直接削除) に統一。keys_zone 一時不整合は nginx が file 不在を MISS で扱うので観測上の挙動は正しい
+- **docker-compose.yml の cf-local container に `nginx-cache` volume mount が必要**だった (4b-9 で追加): 4b-6 worker は proxy_cache_path を直接 walk するので、nginx と同 named volume を共有する必要がある。kickoff 時点では nginx 単独 mount でしかなく、4b-9 撤去作業中に発覚して連動修正
+- **AWS 厳格仕様の `?` `#` 扱いの doc 乖離 (REV-2 で修正)**: matcher は AWS 仕様通り literal char として accept するが、phase-3 strict allow-list の名残で docs に「reject」と書いてしまっていた。`/phase-review` でレビューエージェントが拾い、commit `1bb6100` で実装挙動に合わせて書き換え
+- **β endpoint expose には `docker-compose.test.yml` override が必要**だった (実機検証時に発見): `requireUp` ヘルパーが `:8081/_cache_key_test/__health` を health check するが、本番 mode (`docker-compose.yml` 単独) では `:8081` は expose されない。`check.md` の D セクションを override 込みに修正
+
+### 次フェーズへの引き継ぎ事項
+
+- **`BL-OB1` (新規) HTTP request log middleware**: 実機検証 G-1 で「想定外 API 呼び出しがないか log 確認」が cf-local 自身に request log が無いため間接指標 (terraform/CLI 全成功 = 未対応 path なし) に倒した経緯。phase-4c 仕上げ候補。observability 向上 + BL-NX2 stress test での request 追跡にも有用
+- **`BL-W1` / `BL-W2`** middle / suffix wildcard、**`BL-IV1`** worker 並列度向上、**`BL-IV2`** crash recovery で `InProgress` re-execute、**`BL-IM1`** managed CachePolicy `IllegalUpdate` AWS 正規コード確認、phase-4a 繰越しの **`BL-NX1` / `BL-NX2` / `BL-NX3` / `BL-PP1` / `BL-LD1`** は継続保留
+- **`BL-RV1` (rules 領域別分割の判断)**: phase-4b の `/phase-review` で領域別の精度問題は顕在化せず、`code-reviewer` agent が 3 並列 (Style / Design / Bug) で安定動作。現時点で分割不要、phase-4c 以降で再観測候補
+- **`BL-RV2` (`/phase-review` 軸 (4) 公式ドキュ準拠の効き再観測)**: phase-4b では `/security-review` 0 件 + `/review-diff` 2 件で完結し、軸 (4) の独立起動は実施せず。AWS XML 互換は外部仕様 doc が薄く軸 (4) との相性が悪い傾向は継続。phase-5 OSS 公開準備で外部依存が増える際に再評価
+
+### DESIGN.md 更新が必要な点
+
+なし。phase-4b の方針 (AWS 互換 / B 案 cache walk / multi-variant 一括 purge / wildcard 厳格 prefix match) は kickoff の §「設計方針」がそのまま反映されており、本実装で覆った判断はない。BL-* 積みタスクはすべて DESIGN.md の「やらない」リスト範囲外。
+
+### 主要ファイル (本フェーズで追加 / 大幅変更)
+
+- `internal/invalidation/{matcher,cache,worker}.go` (新規パッケージ、合計 cache 7 + worker 7 + matcher 59 = 73 ケースのテーブル駆動テスト)
+- `internal/api/invalidation/{aws_handler,bolt,store}.go` (phase-3 simple-JSON `handler.go` / `purger.go` を撤去し AWS REST/XML に一本化)
+- `internal/api/xml/invalidation{,_convert,_test}.go` (新規 wrapper struct + SDK 双方向変換、14 ケース)
+- `nginx/njs/cache_key.js` (FORMAT_VERSION v2 → v3、cache key 末尾 `$uri` 配置)
+- `internal/nginx/conf.go` (`/_cf_purge<path>` location 撤去、3 つの golden fixture 更新)
+- `cmd/cf-local/main.go` (`--nginx-url` flag 撤去、`--cache-dir` flag 追加、worker goroutine 起動、`apiinv.BoltStore.RecoverInProgress` 起動時発火)
+- `docker-compose.yml` (cf-local container に `nginx-cache:/var/cache/nginx` mount 追加)
+- `tests/integration/invalidation_aws_alpha_test.go` (新規 α テスト、6 sub-test)
+- `docs/invalidation-api.md` (全面書き換え)、`docs/limitations.md` (§Invalidation 更新)、`examples/{nextjs-basic,terraform-integration}/README.md` (AWS CLI / SDK 経由に書き換え)

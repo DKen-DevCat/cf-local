@@ -27,7 +27,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-2` | 完了 | TTL正確化 |
 | `phase-3` | 完了 (2026-04-30) | Invalidation API + 設定ファイル方式 |
 | `phase-4a` | 完了 (2026-05-02) | Terraform対応・最小 |
-| `phase-4b` | 進行中 | Invalidation API互換 |
+| `phase-4b` | 完了 (2026-05-03) | Invalidation API互換 |
 | `phase-4c` | 未着手 | 仕上げ |
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
@@ -168,42 +168,32 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-4b: Invalidation API互換
+## phase-4b: Invalidation API互換 (完了 2026-05-03)
 
-**到達状態**: `aws cloudfront create-invalidation` がそのまま通るようにする。
-
-**ゴールイメージ**:
-
-- `CreateInvalidation` / `GetInvalidation` / `ListInvalidations` API実装
-- 非同期実行（goroutine）+ ステータス管理
-- ワイルドカードパス対応（`/posts/*`等）
+**到達状態**: AWS REST/XML 互換の `CreateInvalidation` / `GetInvalidation` / `ListInvalidations` を `:4566` で実装、phase-3 独自 `POST /_invalidate` を撤去して AWS API に一本化。multi-variant 一括 purge / 末尾 `*` wildcard / 非同期 worker (cache directory walk + os.Remove) / BoltDB 履歴永続化 / Marker pagination が `aws cloudfront ...` および Terraform Provider verbatim で動作。PR #9 で develop に merge 済。実機検証 (`check.md`) で α 統合テスト + AWS CLI v2 + terraform-integration E2E 全 PASS (2026-05-03)。タスク履歴: `.claude/tasks-archive/phase-4b-2026-05-03.md`、設計および完了時メモ: `.claude/design/phase-4b-invalidation-api-2026-05-02.md`。
 
 **完了条件**:
 
-- [ ] CreateInvalidation / GetInvalidation / ListInvalidations API
-- [ ] 非同期実行 (goroutine) + ステータス管理
-- [ ] ワイルドカード対応
+- [x] CreateInvalidation / GetInvalidation / ListInvalidations API (AWS REST/XML 互換)
+- [x] 非同期実行 (goroutine) + ステータス管理 (InProgress → Completed、BoltDB 永続化)
+- [x] ワイルドカード対応 (AWS 厳格 prefix match、末尾 `*` のみ)
 
-**着手前にユーザーと相談する点**:
+**着手前決定事項 (kickoff 2026-05-02 で確定、4b-0 spike で Q2 pivot)**:
 
-- ワイルドカードのマッチング戦略（正規表現? glob?）
-- cache_keys_zone の走査方法
-- Invalidationの履歴をどこまで保持するか
-
-**着手前決定事項 (kickoff 2026-05-02 で確定)**:
-
-- **Q1**: wildcard は AWS 厳格 prefix match (末尾 `*` のみ) を実装。middle / suffix wildcard / glob / regex は不採用 (積みタスク BL-W1 / BL-W2)
-- **Q2**: cache_keys_zone 走査は **A 案 ngx_cache_purge native wildcard purge** を第一案 + cache key 末尾を `$uri` に変更。spike (4b-0) で実機検証 → FAIL なら B 案 (Go 側 BoltDB index + exact-key purge) へ pivot
+- **Q1**: wildcard は AWS 厳格 prefix match (末尾 `*` のみ)。middle / suffix / glob / regex は不採用 (積みタスク BL-W1 / BL-W2)
+- **Q2**: 4b-0 spike で A 案 (ngx_cache_purge native wildcard) は cf-local 用途で **不可** (PURGE 時 cookie variant のみ purge / multi-variant 一括不可) と確定 → **B 案 (Go 側 cache directory walk + os.Remove) で確定**。cache key 末尾 `$uri` 化は維持
 - **Q3**: 履歴は BoltDB 全件保存、TTL なし削除なし、`ListInvalidations` は CreatedTime DESC + Marker pagination
 - **4a-14 PathPattern 拡張は phase-4b スコープ外**: CloudFront `PathPattern` (cache behavior router) と Invalidation の path wildcard は別概念。phase-4c 以降で対応 (積みタスク BL-PP1)
 
-詳細: `.claude/design/phase-4b-invalidation-api-2026-05-02.md`
+**Phase 4c 以降への繰越し** (積みタスク):
 
-**Phase 4a からの繰越し** (本フェーズ内で消化 / 積みタスクで保留):
-
-- **4a-17** rules 領域別分割の判断 → 積みタスク BL-RV1 (phase-4b 最初の `/phase-review` 試走後判断)
-- **軸 (4) 公式ドキュ準拠レビュー再観測** → 積みタスク BL-RV2 (phase-4b の `/phase-review` 後、`~/.claude/docs/phase-flow-comparison.md` §4.7 に追記)
-- **4a-11 / 4a-12 / 4a-13 / 4a-14 / 4a-15** は phase-4b スコープ外として積みタスク化 (BL-NX1 / BL-NX2 / BL-NX3 / BL-PP1 / BL-LD1)。詳細: `.claude/design/phase-4b-invalidation-api-2026-05-02.md` §「積みタスク」
+- **BL-OB1** (新規): HTTP request log middleware。実機検証 G-1 で「想定外 API 呼び出しがないか log 確認」を間接指標 (terraform/CLI 全成功) に倒した経緯。observability 向上 + BL-NX2 stress test の request 追跡用途。phase-4c 仕上げ候補
+- **BL-W1 / BL-W2**: middle / suffix wildcard。AWS 仕様拡張 or 強い要望時
+- **BL-IV1**: Invalidation worker 並列度向上 (現状 serial 1)。phase-4c 性能要件
+- **BL-IV2**: crash recovery で `InProgress` re-execute (現状は強制 Completed)。phase-5
+- **BL-IM1**: managed CachePolicy `IllegalUpdate` AWS 正規コード確認 (phase-4a 4a-9 継続)
+- **BL-NX1 / BL-NX2 / BL-NX3 / BL-PP1 / BL-LD1**: phase-4a 繰越しを継続
+- **BL-RV1 / BL-RV2**: review infra 評価。phase-4b では領域別分割不要 + 軸 (4) 空振り傾向継続。phase-5 OSS 公開準備で再評価
 
 ---
 
