@@ -2,6 +2,7 @@ package invalidation
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,6 +104,34 @@ func (h *AWSHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeInvalidationResponse(w, http.StatusCreated, rec)
+}
+
+// Get handles GET /2020-05-31/distribution/{distId}/invalidation/{id}.
+//
+// Returns 200 OK with `<Invalidation>` body when the record exists and
+// belongs to the supplied distribution. AWS treats "wrong distribution +
+// real invalidation ID" identically to a missing ID — both surface as 404
+// NoSuchInvalidation, mirroring the Store.Get tuple semantics enforced in
+// 4b-4.
+func (h *AWSHandler) Get(w http.ResponseWriter, r *http.Request) {
+	distID := r.PathValue("distId")
+	invID := r.PathValue("id")
+	if distID == "" || invID == "" {
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+			"distribution id and invalidation id are required")
+		return
+	}
+	rec, err := h.Store.Get(r.Context(), distID, invID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchInvalidation",
+				fmt.Sprintf("the invalidation does not exist: %s", invID))
+			return
+		}
+		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeInvalidationResponse(w, http.StatusOK, rec)
 }
 
 // writeInvalidationResponse emits a 201 / 200 response with the

@@ -73,6 +73,7 @@ func newAWSTestServer(t *testing.T) (*httptest.Server, *BoltStore, *recordingEnq
 	h := &AWSHandler{Store: store, EnqueueFn: enq.call}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /2020-05-31/distribution/{distId}/invalidation", h.Create)
+	mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation/{id}", h.Get)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, store, enq
@@ -258,6 +259,103 @@ func TestAWSHandler_Create_NoEnqueueFn(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status: got %d want 201", resp.StatusCode)
 	}
+}
+
+// --- Get -------------------------------------------------------------------
+
+// TestAWSHandler_Get_Happy verifies the round-trip: a Created invalidation
+// can be re-fetched by ID under the same distribution and returns the same
+// XML shape.
+func TestAWSHandler_Get_Happy(t *testing.T) {
+	srv, _, _ := newAWSTestServer(t)
+
+	// Create first.
+	createResp, err := http.Post(srv.URL+"/2020-05-31/distribution/EDIST123/invalidation",
+		"application/xml", strings.NewReader(sampleCreateXML))
+	if err != nil {
+		t.Fatalf("POST create: %v", err)
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST create: got %d", createResp.StatusCode)
+	}
+	var created awsxml.Invalidation
+	if err := xml.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	// Get by ID.
+	getResp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST123/invalidation/" + created.ID)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(getResp.Body)
+		t.Fatalf("GET status: got %d want 200\nbody: %s", getResp.StatusCode, body)
+	}
+
+	var got awsxml.Invalidation
+	if err := xml.NewDecoder(getResp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("ID round-trip: got %q want %q", got.ID, created.ID)
+	}
+	if got.Status != StatusInProgress {
+		t.Errorf("Status: got %q", got.Status)
+	}
+	if got.CreateTime != created.CreateTime {
+		t.Errorf("CreateTime drifted: got %q want %q", got.CreateTime, created.CreateTime)
+	}
+	if got.InvalidationBatch == nil ||
+		!equalStringSlice(got.InvalidationBatch.Paths.Items.Path,
+			[]string{"/index.html", "/posts/*"}) {
+		t.Errorf("Paths round-trip: got %v", got.InvalidationBatch)
+	}
+}
+
+// TestAWSHandler_Get_NotFound covers a real distribution + bogus invalidation
+// ID. AWS returns NoSuchInvalidation; cf-local mirrors the code.
+func TestAWSHandler_Get_NotFound(t *testing.T) {
+	srv, _, _ := newAWSTestServer(t)
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST123/invalidation/INOTREAL")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: got %d want 404", resp.StatusCode)
+	}
+	assertErrorBodyContains(t, resp, "NoSuchInvalidation")
+}
+
+// TestAWSHandler_Get_WrongDistribution exercises the AWS-strict tuple match:
+// a valid invalidation ID looked up under the wrong distribution must surface
+// as 404 NoSuchInvalidation, not a tenant-leaking 200.
+func TestAWSHandler_Get_WrongDistribution(t *testing.T) {
+	srv, _, _ := newAWSTestServer(t)
+
+	createResp, err := http.Post(srv.URL+"/2020-05-31/distribution/EDIST_A/invalidation",
+		"application/xml", strings.NewReader(sampleCreateXML))
+	if err != nil {
+		t.Fatalf("POST create: %v", err)
+	}
+	defer createResp.Body.Close()
+	var created awsxml.Invalidation
+	if err := xml.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST_B/invalidation/" + created.ID)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: got %d want 404", resp.StatusCode)
+	}
+	assertErrorBodyContains(t, resp, "NoSuchInvalidation")
 }
 
 // --- helpers ---------------------------------------------------------------
