@@ -253,10 +253,23 @@ func TestComputeKey_TableDriven(t *testing.T) {
 		}},
 
 		// Format guarantee
-		{"T15 hash is 64 lower-hex", func(t *testing.T) {
+		// Phase 4-B 4b-2: cache key format changed from `<sha256>` to
+		// `<sha256>:<uri>` so that the Go-side invalidation worker can
+		// extract the URI portion from a stored cache key and wildcard-match
+		// it. The 64-hex prefix is the same sha256 as before (multi-variant
+		// discriminator); everything after the first `:` is the request URI.
+		{"T15 key format is <64-hex>:<uri>", func(t *testing.T) {
 			k := computeKey(t, "default", "/a", nil)
-			if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(k) {
-				t.Fatalf("expected 64 lower-hex, got %q", k)
+			if !regexp.MustCompile(`^[0-9a-f]{64}:/.*$`).MatchString(k) {
+				t.Fatalf("expected `<64-hex>:/<path>`, got %q", k)
+			}
+			parts := strings.SplitN(k, ":", 2)
+			if len(parts) != 2 || parts[1] == "" {
+				t.Fatalf("expected single `:` separator with non-empty uri, got %q", k)
+			}
+			if !strings.HasPrefix(parts[1], "/_cache_key_test/a") {
+				t.Fatalf("uri portion should reflect r.uri %q, got %q",
+					"/_cache_key_test/a...", parts[1])
 			}
 		}},
 

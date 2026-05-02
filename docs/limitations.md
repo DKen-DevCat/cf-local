@@ -32,16 +32,25 @@ cf-localと本物のCloudFrontとの違い。意図的に再現していない�
 - `Age` ヘッダーの扱いが本物と異なる可能性
 - TTL 注入は 2-hop パターン (outer cache 層 + inner `js_header_filter` で `X-Accel-Expires` 注入) で実装。1 リクエストにつき TCP self-loop が 1 回挟まる (sub-millisecond) — 詳細は `docs/ttl.md`
 
-### Invalidation (Phase 3 MVP)
+### Invalidation (Phase 4-B)
 
-Phase 3 では cf-local 独自 simple JSON で最小構成のみ実装 (`POST /_invalidate`)。詳細仕様は [`docs/invalidation-api.md`](./invalidation-api.md)。
+AWS REST/XML 互換の `CreateInvalidation` / `GetInvalidation` / `ListInvalidations` を実装済 (4b)。詳細仕様は [`docs/invalidation-api.md`](./invalidation-api.md)。
 
-- **完全一致のみ** — wildcard (`/foo/*`, `*.jpg`) は Phase 4-B 送り
-- **default policy + AE=identity の 1 variant のみ purge** — 同じ path でも cookie / header / Accept-Encoding の違いで複数の cache slot が出来ている場合、Phase 3 で消せるのは「default policy + 空 headers/cookies/queries + AE=identity」の 1 つだけ。multi-variant 一括 invalidate は Phase 4-B
-- **同期実行** — `POST /_invalidate` は purge 完了まで待ってから 200 を返す。`InProgress`/`Completed` 等の status fields は Phase 4-B
-- **AWS API 互換ではない** — `POST /2020-05-31/distribution/{Id}/invalidation` の XML 互換は Phase 4-B
-- **invalidation 履歴は持たない** — `GetInvalidation` / `ListInvalidations` は Phase 4-B
-- **同時実行制限なし** — 本物は 3 並列上限、cf-local はローカル開発前提なので省略
+実装している:
+
+- **AWS 厳格な末尾 `*` wildcard** — `/posts/*` のような prefix wildcard は OK
+- **multi-variant 一括 purge** — 同 path に対する cookie / header / Accept-Encoding 違いの全 cache slot がまとめて消える (cache key 末尾の URI portion でマッチさせる Go 側 cache directory walk 経路)
+- **非同期実行** — 即時 201 + `Status=InProgress` を返し、worker が cache walk + `os.Remove` 完了後に `Status=Completed` に遷移
+- **履歴永続化** — BoltDB `invalidations` bucket に全件保存 (TTL なし、削除なし)
+- **AWS CLI / SDK / Terraform Provider 互換** — 本番コードはそのまま、`--endpoint-url` で cf-local に向ければ動く
+
+cf-local 側の制約:
+
+- **middle / suffix wildcard 不採用** — `/api/*/foo` や `*.jpg` は AWS 仕様でも literal `*` 扱いだが、cf-local では混乱を避けるため明示的に **400 InvalidArgument** で reject。AWS 厳格準拠の判断 (積みタスク `BL-W1` / `BL-W2`)
+- **冪等性なし** — 同 `CallerReference` で複数 CreateInvalidation を投げると、本物 AWS は同じ Invalidation を返すが cf-local は毎回新規 ID 採番
+- **worker 並列度 1** — serial 1 goroutine MVP (本物 AWS は 3 並列上限)。phase-4c 以降で必要なら並列化 (積みタスク `BL-IV1`)
+- **crash recovery 簡略化** — cf-local 起動時に `InProgress` を `Completed` に強制遷移 (実 cache は消えていない可能性あり)。本物相当の re-execution は積みタスク `BL-IV2`
+- **nginx cache file format 依存** — worker は `nginx:1.27-alpine` の cache file format に依存 (`\nKEY: <key>\n` line を parse)。base image bump 時は format 互換性の再検証が必要
 
 ### Lambda@Edge / CloudFront Functions
 
@@ -52,12 +61,15 @@ Phase 3 では cf-local 独自 simple JSON で最小構成のみ実装 (`POST /_
 
 ## 未対応のCloudFront API
 
-将来的に実装予定（Phase 4-A〜D）:
+実装済み (Phase 4-A / 4-B):
 
 - `CreateDistribution` / `GetDistribution` / `UpdateDistribution2020_05_31` / `DeleteDistribution` / `ListDistributions`
 - `CreateCachePolicy` / `GetCachePolicy` / `UpdateCachePolicy` / `DeleteCachePolicy` / `ListCachePolicies`
 - `CreateOriginRequestPolicy` / `GetOriginRequestPolicy` / `UpdateOriginRequestPolicy` / `DeleteOriginRequestPolicy` / `ListOriginRequestPolicies`
 - `CreateInvalidation` / `GetInvalidation` / `ListInvalidations`
+
+将来的に実装予定（Phase 4-C 〜 D）:
+
 - `CreateResponseHeadersPolicy` / `GetResponseHeadersPolicy` / `UpdateResponseHeadersPolicy` / `DeleteResponseHeadersPolicy` / `ListResponseHeadersPolicies`
 
 実装予定なし:

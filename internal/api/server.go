@@ -2,8 +2,10 @@
 //
 // Phase 4-A 4a-1: extracts the HTTP lifecycle out of cmd/cf-local/main.go.
 // Phase 4-A 4a-4-2: wires up the AWS-compatible CachePolicy CRUD routes so
-// the Terraform Provider can target /2020-05-31/cache-policy[/Id] alongside
-// the Phase 3 invalidation endpoint.
+// the Terraform Provider can target /2020-05-31/cache-policy[/Id].
+// Phase 4-B 4b-9: removes the legacy phase-3 simple-JSON `POST /_invalidate`
+// route (the AWS REST/XML CreateInvalidation handler in 4b-5 supersedes it
+// with multi-variant + wildcard support).
 package api
 
 import (
@@ -23,23 +25,18 @@ import (
 
 // shutdownTimeout is the grace period applied when the parent context is
 // cancelled (typically on SIGINT/SIGTERM). 5 seconds is enough for in-flight
-// invalidation purges and AWS REST handlers to finish their HTTP cycles.
+// AWS REST handlers to finish their HTTP cycles.
 const shutdownTimeout = 5 * time.Second
 
 // Config groups the parameters needed to run the cf-local control-plane HTTP
-// API. Future 4a tasks will extend this struct (BoltDB store handle, ID
-// generator, etc.) — keeping Run / Config decoupled from package main lets
-// those additions live inside internal/api.
+// API.
 type Config struct {
 	// Addr is the TCP listen address (e.g. ":4566").
 	Addr string
-	// NginxURL is the data-plane base URL the invalidation Purger talks to.
-	NginxURL string
 	// Stdout is where startup and shutdown messages are written.
 	Stdout io.Writer
 	// CachePolicyStore backs the AWS REST CachePolicy handlers. nil disables
-	// the CachePolicy routes entirely (used by tests that only exercise
-	// invalidation).
+	// the CachePolicy routes entirely.
 	CachePolicyStore cachepolicy.Store
 	// DistributionStore backs the AWS REST Distribution handlers. nil
 	// disables the Distribution routes entirely.
@@ -47,6 +44,15 @@ type Config struct {
 	// OriginRequestPolicyStore backs the AWS REST OriginRequestPolicy
 	// handlers. nil disables those routes entirely.
 	OriginRequestPolicyStore originrequestpolicy.Store
+	// InvalidationStore backs the AWS REST Invalidation handlers
+	// (CreateInvalidation / GetInvalidation / ListInvalidations). nil
+	// disables the AWS XML invalidation routes.
+	InvalidationStore invalidation.Store
+	// InvalidationEnqueue is invoked after a successful CreateInvalidation
+	// to hand the new ID + path list off to the worker (4b-6). nil is
+	// allowed — Create still returns 201 with Status=InProgress, but no
+	// purge work happens.
+	InvalidationEnqueue func(invalidationID string, paths []string)
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
@@ -61,7 +67,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		fmt.Fprintf(cfg.Stdout, "  control-plane API listening on %s (purger -> %s)\n", cfg.Addr, cfg.NginxURL)
+		fmt.Fprintf(cfg.Stdout, "  control-plane API listening on %s\n", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("listen: %w", err)
 			return
@@ -84,13 +90,9 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 // buildMux assembles the http.Handler with all cf-local routes. AWS REST API
-// routes are registered conditionally on cfg.CachePolicyStore (and, in later
-// 4a tasks, the Distribution / OriginRequestPolicy stores).
+// routes are registered conditionally on each store being non-nil.
 func buildMux(cfg Config) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/_invalidate", &invalidation.Handler{
-		Purger: invalidation.NewNginxPurger(cfg.NginxURL),
-	})
 
 	if cfg.CachePolicyStore != nil {
 		cph := &cachepolicy.Handler{Store: cfg.CachePolicyStore}
@@ -120,6 +122,15 @@ func buildMux(cfg Config) http.Handler {
 		mux.HandleFunc("PUT /2020-05-31/origin-request-policy/{id}", oh.Update)
 		mux.HandleFunc("DELETE /2020-05-31/origin-request-policy/{id}", oh.Delete)
 		mux.HandleFunc("GET /2020-05-31/origin-request-policy", oh.List)
+	}
+	if cfg.InvalidationStore != nil {
+		ah := &invalidation.AWSHandler{
+			Store:     cfg.InvalidationStore,
+			EnqueueFn: cfg.InvalidationEnqueue,
+		}
+		mux.HandleFunc("POST /2020-05-31/distribution/{distId}/invalidation", ah.Create)
+		mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation/{id}", ah.Get)
+		mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation", ah.List)
 	}
 	// Tagging endpoints are stub handlers (cf-local does not track tags;
 	// the Provider's ListTagsForResource / TagResource calls must succeed

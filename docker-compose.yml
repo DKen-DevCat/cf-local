@@ -16,15 +16,19 @@ services:
       dockerfile: Dockerfile
     container_name: cf-local
     ports:
-      # Phase 3 A.5.3: invalidation API (POST /_invalidate)。Phase 4-A 以降の
-      # AWS API 互換 endpoint も同 port に追加していく予定。
+      # AWS API 互換の control plane (CachePolicy / Distribution /
+      # OriginRequestPolicy / Invalidation) を host に expose。LocalStack 互換
+      # port (:4566) を意識した固定値。
       - "4566:4566"
     volumes:
-      # ユーザー設定 (read-only)。距離感の参考実装は examples/ 配下に置く予定 (3-8)。
+      # ユーザー設定 (read-only)。参考実装は examples/ 配下を参照。
       - ./cf-local:/cf-local:ro
       # renderer 出力先 (named volume)。nginx 側に同 volume を `/etc/nginx/cf-local/`
       # で mount している。
       - cf-local-conf:/work/cf-local-conf
+      # nginx の proxy_cache_path を共有 (4b-6 invalidation worker が cache file
+      # を直接 walk して os.Remove で消す経路で必要)。
+      - nginx-cache:/var/cache/nginx
     command:
       - --config-dir
       - /cf-local
@@ -32,8 +36,8 @@ services:
       - /work/cf-local-conf
       - --addr
       - ":4566"
-      - --nginx-url
-      - http://nginx:8080
+      - --cache-dir
+      - /var/cache/nginx
     restart: unless-stopped
 
   nginx:
