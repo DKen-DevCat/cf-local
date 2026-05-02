@@ -4,7 +4,7 @@ cf-local のキャッシュキーは **cache policy** で制御する。AWS Clou
 
 ## 何が cache key に入るか
 
-ユーザがリクエストを投げると、cf-local は以下の情報から sha256 を取って 64 文字 hex の cache key を作る。`X-Cache-Key` レスポンスヘッダで実際のキーを確認できる。
+ユーザがリクエストを投げると、cf-local は以下の情報から sha256 を取り、`<64 文字 hex>:<request URI>` 形式の cache key を作る (Phase 4-B 以降)。`X-Cache-Key` レスポンスヘッダで実際のキーを確認できる。前半 64 hex は multi-variant (cookie / header / Accept-Encoding 違い) の discriminator、後半は元 URI の plaintext で、Invalidation API の wildcard 一括 purge で使う。
 
 | 入る | 入らない (1-3 時点) |
 |---|---|
@@ -135,7 +135,7 @@ location /me {
 | ヘッダ | 内容 |
 |---|---|
 | `X-Cache-Status` | nginx の `$upstream_cache_status` の値 (`HIT` / `MISS` / `BYPASS` 等) |
-| `X-Cache-Key` | njs が計算した 64 文字 hex sha256 |
+| `X-Cache-Key` | njs が計算した `<64 文字 hex sha256>:<request URI>` (Phase 4-B 以降。前半が variant discriminator、後半が wildcard invalidation 用の URI plaintext) |
 
 cache key が想定と違うときは、`/_cache_key_test` (テスト専用) に同じリクエスト + `X-Test-Policy: <id>` ヘッダを付けて叩くと、組み立て後の hex key が body で返る。policy 別にどう違うか比較しやすい。
 

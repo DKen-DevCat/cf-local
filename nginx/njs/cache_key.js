@@ -80,7 +80,11 @@ const POLICIES = (function () {
 // material 組み立てフォーマットのバージョン。組み立て規則を変えたらここを bump して
 // 既存キャッシュを自然失効させる。Phase 3 で 4-behavior + AE 独立フラグに対応したため
 // v1 → v2 (whitelist-only と意味的に等価な policy でも key が変わる前提)。
-const FORMAT_VERSION = 'v2';
+// Phase 4-B 4b-2 で cache key の表現を `<sha256>` から `<sha256>:<uri>` に変えた
+// (Go 側 invalidation worker が末尾の uri 部分を抽出して wildcard match するため)。
+// material そのもの (sha256 計算入力) は変えていないが、formatted output が変わった
+// ので breaking change として v3 に bump する。
+const FORMAT_VERSION = 'v3';
 
 function compute(args) {
     const uri = args.uri || '/';
@@ -145,7 +149,18 @@ function compute(args) {
         !!params.EnableAcceptEncodingBrotli
     ));
 
-    return crypto.createHash('sha256').update(parts.join('\n')).digest('hex');
+    // Phase 4-B 4b-2: cache key 出力を `<sha256>:<uri>` 形式にする。sha256 部分が
+    // multi-variant (cookie/header/AE) の discriminator で、`:` 区切りの後ろに
+    // 元 URI を後置する。Go 側 invalidation worker (4b-6) が proxy_cache_path
+    // 配下の cache file の `KEY:` line から stored_key を抽出して、`:` で分割し
+    // 末尾の uri portion を wildcard pattern と match する設計のため。
+    //
+    // 4b-0 spike で ngx_cache_purge native wildcard purge は cf-local 用途では
+    // 不可と確定 (PURGE 時の cookie variant prefix のせいで multi-variant 一括
+    // invalidate ができない)。B 案 (Go 側 walk) では cache key 内に uri を
+    // plaintext で埋め込む必要がある。
+    const sha = crypto.createHash('sha256').update(parts.join('\n')).digest('hex');
+    return sha + ':' + uri;
 }
 
 // behavior に従って key→value の集合を抽出する。multiValue=true のとき値が
