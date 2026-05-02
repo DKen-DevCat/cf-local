@@ -12,8 +12,11 @@ cf-local と Next.js dev server を組み合わせる最も基本的な例。Pha
 
 [cf-local control plane :4566] ─ render → named volume cf-local-conf ─ inotify reload → [nginx]
                   ▲
-                  │ POST /_invalidate {"paths":["/foo"]}
-              CMS webhook 等
+                  │ AWS REST/XML
+                  │   POST /2020-05-31/distribution/{Id}/invalidation
+                  │   GET  /2020-05-31/distribution/{Id}/invalidation/{InvId}
+                  │   GET  /2020-05-31/distribution/{Id}/invalidation
+              AWS CLI / SDK / Terraform Provider / CMS webhook
 ```
 
 `./cf-local/cache-policies/*.json` と `./cf-local/distributions/main.json` を Control Plane (`cf-local` container) が起動時に読み込み、`nginx.conf` を生成して named volume 経由で nginx に渡す。詳細は [`docs/config-schema.md`](../../docs/config-schema.md)。
@@ -68,9 +71,11 @@ curl -I http://localhost:8080/ -H "Accept-Encoding: br"
 # X-Cache-Status: MISS, X-Cache-Key は br 用
 ```
 
-## キャッシュ無効化 (Phase 3)
+## キャッシュ無効化 (Phase 4-B)
 
-`POST /_invalidate` で完全一致パスのキャッシュを消せる。詳細仕様: [`docs/invalidation-api.md`](../../docs/invalidation-api.md)
+AWS CLI / SDK / Terraform Provider 互換の CreateInvalidation でキャッシュを消せる。詳細仕様: [`docs/invalidation-api.md`](../../docs/invalidation-api.md)
+
+事前にローカル distribution を作っておく (Terraform 経由が楽。`examples/terraform-integration/` 参照)。ここでは distribution ID を `EDIST123` とする。
 
 ```bash
 # /foo を warm
@@ -80,17 +85,38 @@ curl -I http://localhost:8080/foo
 curl -I http://localhost:8080/foo
 # X-Cache-Status: HIT
 
-# invalidate
-curl -X POST http://localhost:4566/_invalidate \
-  -H 'Content-Type: application/json' \
-  -d '{"paths":["/foo"]}'
-# {"invalidated":1}
+# AWS CLI 経由で invalidate (本番と同じコマンドを --endpoint-url で cf-local に向けるだけ)
+aws --endpoint-url http://localhost:4566 \
+    cloudfront create-invalidation \
+    --distribution-id EDIST123 \
+    --paths "/foo"
+# {
+#   "Invalidation": {
+#     "Id": "I2J0I21PCZYDI6",
+#     "Status": "InProgress",
+#     ...
+#   }
+# }
 
+# worker が cache directory を walk して file を削除 (普通は数 ms)
 curl -I http://localhost:8080/foo
 # X-Cache-Status: MISS  ← cache slot が消えた
+
+# wildcard も使える (末尾 `*` のみ、AWS 厳格仕様)
+aws --endpoint-url http://localhost:4566 \
+    cloudfront create-invalidation \
+    --distribution-id EDIST123 \
+    --paths "/posts/*"
+
+# 履歴
+aws --endpoint-url http://localhost:4566 \
+    cloudfront list-invalidations \
+    --distribution-id EDIST123
 ```
 
-Phase 3 MVP の制約 (default policy + AE=identity の 1 variant のみ消える等) は [`docs/limitations.md`](../../docs/limitations.md) §「Invalidation」を参照。
+curl で直接 XML を投げたい場合の例は [`docs/invalidation-api.md`](../../docs/invalidation-api.md) §「例: curl 経由」を参照。
+
+cf-local 側の制約 (middle / suffix wildcard 不採用、worker 並列度 1、冪等性なし、等) は [`docs/limitations.md`](../../docs/limitations.md) §「Invalidation」を参照。
 
 ## 設定をカスタマイズする
 

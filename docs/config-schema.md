@@ -211,7 +211,7 @@ allExcept 例 (UTM tracking 系を除外して全クエリをキャッシュ):
 
 ## 関連 doc
 
-- [`invalidation-api.md`](./invalidation-api.md) — `POST /_invalidate` の API spec (Phase 3 MVP)
+- [`invalidation-api.md`](./invalidation-api.md) — AWS REST/XML 互換 Invalidation API (Phase 4-B)
 - [`cache-policy.md`](./cache-policy.md) — cache policy の使い方 / 例
 - [`ttl.md`](./ttl.md) — TTL 決定ロジック (Phase 2)
 - [`limitations.md`](./limitations.md) — 制約一覧

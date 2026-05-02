@@ -20,14 +20,16 @@ Phase 4-A 4a-16 で `terraform apply` / `terraform destroy` を cf-local に対�
 ### 1. cf-local を起動
 
 ```sh
-mkdir -p /tmp/cf-local-tf-out
+mkdir -p /tmp/cf-local-tf-out /tmp/cf-local-tf-cache
 /tmp/cf-local-rev \
   --config-dir ../../cf-local \
   --out-dir /tmp/cf-local-tf-out \
   --addr :14566 \
-  --nginx-url http://localhost:9999 \
-  --db-path /tmp/cf-local-tf.db
+  --db-path /tmp/cf-local-tf.db \
+  --cache-dir /tmp/cf-local-tf-cache
 ```
+
+`--cache-dir` は invalidation worker が walk する nginx の `proxy_cache_path` を指す。本 example は AWS API CRUD 検証が目的なので、Path は実体不要 (ディレクトリだけあれば worker は空 walk して即 Completed する)。
 
 ### 2. terraform init / plan / apply
 
