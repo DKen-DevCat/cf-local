@@ -40,14 +40,14 @@ Content-Type: application/xml
 | `CallerReference` | 必須。空文字 / 欠落は **400 InvalidArgument**。AWS は本物では同 caller-reference の重複検出で冪等にするが、cf-local は重複検出なし (毎回新規 ID 発行) |
 | `Paths.Items.Path` | 必須 1 件以上、上限 1000 件。各 path は leading `/` 必須、wildcard は **末尾 `*` のみ** (AWS 厳格仕様) |
 
-#### path に使える文字 (AWS 厳格仕様)
+**path に使える文字 (AWS 厳格仕様)**
 
 `internal/invalidation/matcher.go` (4b-1) が validate。挙動は AWS 公式 ([Specifying the objects to invalidate](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Invalidation.html#invalidation-specifying-objects)) の verbatim:
 
 - **末尾 `*`** のみ wildcard。`/posts/*` は OK、`*.jpg` (suffix) や `/api/*/foo` (middle) は **literal `*` 扱い** (cf-local では reject = 400 InvalidArgument にしている)
 - `~` (literal + URL-encoded `%7E` 両方) → reject。AWS 仕様で禁止
 - 制御文字 / 非 ASCII / RFC 1738 unsafe char → reject
-- `?` `#` (query / fragment) → reject (cache key 計算で空固定なので含めても無意味)
+- `?` `#` (query / fragment) は literal char として accept される。ただし cf-local の invalidation worker は cache key 末尾の URI portion でマッチするので、`?` 以降を含む path で invalidate しても本番で warm された cache slot とは literal byte 一致しない (本番の `$uri` には query が含まれないため) のが普通。query 違いを跨いで purge したい場合は `/foo*` のような prefix wildcard を使う
 
 詳細な validation table は `internal/invalidation/matcher_test.go` の TestParsePattern (35 ケース) を参照。
 
