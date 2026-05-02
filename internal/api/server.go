@@ -47,6 +47,15 @@ type Config struct {
 	// OriginRequestPolicyStore backs the AWS REST OriginRequestPolicy
 	// handlers. nil disables those routes entirely.
 	OriginRequestPolicyStore originrequestpolicy.Store
+	// InvalidationStore backs the AWS REST Invalidation handlers (4b-5
+	// onwards: CreateInvalidation, then GetInvalidation / ListInvalidations
+	// in 4b-7 / 4b-8). nil disables the AWS XML invalidation routes; the
+	// phase-3 simple-JSON `/_invalidate` route is always registered.
+	InvalidationStore invalidation.Store
+	// InvalidationEnqueue is invoked after a successful CreateInvalidation
+	// to hand the new ID off to the worker (4b-6). nil is allowed — Create
+	// still returns 201 with Status=InProgress, but no purge work happens.
+	InvalidationEnqueue func(invalidationID string)
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
@@ -120,6 +129,15 @@ func buildMux(cfg Config) http.Handler {
 		mux.HandleFunc("PUT /2020-05-31/origin-request-policy/{id}", oh.Update)
 		mux.HandleFunc("DELETE /2020-05-31/origin-request-policy/{id}", oh.Delete)
 		mux.HandleFunc("GET /2020-05-31/origin-request-policy", oh.List)
+	}
+	if cfg.InvalidationStore != nil {
+		ah := &invalidation.AWSHandler{
+			Store:     cfg.InvalidationStore,
+			EnqueueFn: cfg.InvalidationEnqueue,
+		}
+		mux.HandleFunc("POST /2020-05-31/distribution/{distId}/invalidation", ah.Create)
+		// 4b-7 / 4b-8 will register GetInvalidation and ListInvalidations
+		// against the same {distId} pattern.
 	}
 	// Tagging endpoints are stub handlers (cf-local does not track tags;
 	// the Provider's ListTagsForResource / TagResource calls must succeed

@@ -1,0 +1,130 @@
+package invalidation
+
+import (
+	"encoding/xml"
+	"fmt"
+	"io"
+	"net/http"
+
+	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
+	matcher "github.com/DKen-DevCat/cf-local/internal/invalidation"
+)
+
+// awsMaxBodyBytes caps inbound XML request bodies. AWS's actual API caps for
+// CreateInvalidation are well under 1 MiB (the path list is the only payload
+// of substance) and cf-local does not gain anything from accepting larger.
+const awsMaxBodyBytes = 1 << 20
+
+// AWSHandler implements the AWS REST/XML Invalidation API endpoints
+// (CreateInvalidation in 4b-5; GetInvalidation / ListInvalidations are added
+// in 4b-7 / 4b-8). Distinct from the phase-3 Handler in this same package
+// which serves the legacy simple-JSON `POST /_invalidate`.
+//
+// Routing wired by api.buildMux:
+//
+//	POST /2020-05-31/distribution/{distId}/invalidation       (Create, 4b-5)
+//	GET  /2020-05-31/distribution/{distId}/invalidation/{id}  (Get,    4b-7)
+//	GET  /2020-05-31/distribution/{distId}/invalidation       (List,   4b-8)
+type AWSHandler struct {
+	Store Store
+
+	// EnqueueFn receives the newly minted invalidation ID after a successful
+	// Create. The 4b-6 worker registers a function that adds the ID to its
+	// run queue. nil is allowed (used by 4b-5 unit tests that don't care
+	// about worker dispatch); when nil, Create returns immediately with
+	// Status=InProgress and no follow-up happens until 4b-6 wires the worker.
+	EnqueueFn func(invalidationID string)
+}
+
+// Create handles POST /2020-05-31/distribution/{distId}/invalidation.
+//
+// Per AWS spec the response is 201 Created with `<Invalidation>` body and
+// Status=InProgress. The actual purge work happens asynchronously in the
+// worker (4b-6); Create only persists the record and enqueues.
+func (h *AWSHandler) Create(w http.ResponseWriter, r *http.Request) {
+	distID := r.PathValue("distId")
+	if distID == "" {
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+			"distribution id required")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, awsMaxBodyBytes))
+	if err != nil {
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+			"read body: "+err.Error())
+		return
+	}
+
+	var wrapper awsxml.InvalidationBatch
+	if err := xml.Unmarshal(body, &wrapper); err != nil {
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+		return
+	}
+
+	sdk := wrapper.ToSDK()
+	if sdk == nil || sdk.CallerReference == nil || *sdk.CallerReference == "" {
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+			"CallerReference is required")
+		return
+	}
+	if sdk.Paths == nil || len(sdk.Paths.Items) == 0 {
+		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+			"Paths must contain at least one path")
+		return
+	}
+
+	// Validate every path against the strict CloudFront rules (4b-1 matcher).
+	// Returning the first failure with index keeps the error specific enough
+	// for a developer to fix the offending path without scrolling logs.
+	for i, p := range sdk.Paths.Items {
+		if _, err := matcher.ParsePattern(p); err != nil {
+			awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+				fmt.Sprintf("Paths[%d] %q: %s", i, p, err.Error()))
+			return
+		}
+	}
+
+	rec, err := h.Store.Create(r.Context(), distID, sdk)
+	if err != nil {
+		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError",
+			err.Error())
+		return
+	}
+
+	if h.EnqueueFn != nil {
+		h.EnqueueFn(rec.ID)
+	}
+
+	writeInvalidationResponse(w, http.StatusCreated, rec)
+}
+
+// writeInvalidationResponse emits a 201 / 200 response with the
+// `<Invalidation>` body and the standard ETag header.
+//
+// AWS's actual CreateInvalidation response does NOT include ETag (unlike the
+// CachePolicy / Distribution responses) — the SDK Invalidation type has no
+// ETag field. cf-local follows the same convention.
+func writeInvalidationResponse(w http.ResponseWriter, status int, rec *Record) {
+	resp := toResponseInvalidation(rec)
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(status)
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	// Encode error is intentionally ignored: the response status is already
+	// committed and we cannot send a new status. A partial body is preferable
+	// to a panic.
+	_ = enc.Encode(resp)
+	_ = enc.Close()
+}
+
+// toResponseInvalidation projects a Record into the XML wrapper shape AWS
+// returns from Create / Get.
+func toResponseInvalidation(rec *Record) *awsxml.Invalidation {
+	return &awsxml.Invalidation{
+		ID:                rec.ID,
+		Status:            rec.Status,
+		CreateTime:        rec.CreateTime.UTC().Format("2006-01-02T15:04:05.000Z"),
+		InvalidationBatch: awsxml.FromSDKInvalidationBatch(rec.Batch),
+	}
+}
