@@ -2,7 +2,7 @@
 
 進行中フェーズの作業タスクを記録する。フェーズ完了後は `.claude/plan.md` のステータスを更新し、対応セクションを「完了」に移す（または削除）。
 
-(直近完了: Phase 3 Invalidation API + 設定ファイル方式 — `.claude/plan.md` の phase-3 セクションと `.claude/design/phase-3-invalidation-config-2026-04-30.md` を参照。タスク履歴は `.claude/tasks-archive/phase-3-2026-04-30.md`)
+(直近完了: Phase chore-1 Claude 開発フロー強化 (review infra) (2026-05-01) — `.claude/plan.md` の chore-1 セクションと `.claude/design/claude-flow-2026-04-30.md` を参照。タスク履歴は `.claude/tasks-archive/chore-1-2026-05-01.md`。前回 Phase 3: `.claude/tasks-archive/phase-3-2026-04-30.md`)
 
 ---
 
