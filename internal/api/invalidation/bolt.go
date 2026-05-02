@@ -190,6 +190,32 @@ func (s *BoltStore) UpdateStatus(_ context.Context, invalidationID, status strin
 	return updated, nil
 }
 
+// RecoverInProgress is the simplified crash-recovery hook (BL-IV2 will replace
+// this with re-execution). At cf-local startup, any record left in
+// Status=InProgress from a previous run is forced to Completed so that
+// ListInvalidations does not surface a stuck record. The actual cache state
+// is not re-checked — the user can issue a fresh invalidation if they need
+// the purge to happen.
+//
+// Returns the number of records transitioned.
+func (s *BoltStore) RecoverInProgress(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	ids := make([]string, 0)
+	for id, rec := range s.byID {
+		if rec.Status == StatusInProgress {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, id := range ids {
+		if _, err := s.UpdateStatus(ctx, id, StatusCompleted); err != nil {
+			return 0, fmt.Errorf("recover %s: %w", id, err)
+		}
+	}
+	return len(ids), nil
+}
+
 // List returns all invalidations for the supplied distribution, sorted by
 // CreateTime descending (newest first). The handler is responsible for
 // applying Marker / MaxItems pagination on top of the returned slice.

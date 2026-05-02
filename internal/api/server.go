@@ -53,9 +53,10 @@ type Config struct {
 	// phase-3 simple-JSON `/_invalidate` route is always registered.
 	InvalidationStore invalidation.Store
 	// InvalidationEnqueue is invoked after a successful CreateInvalidation
-	// to hand the new ID off to the worker (4b-6). nil is allowed — Create
-	// still returns 201 with Status=InProgress, but no purge work happens.
-	InvalidationEnqueue func(invalidationID string)
+	// to hand the new ID + path list off to the worker (4b-6). nil is
+	// allowed — Create still returns 201 with Status=InProgress, but no
+	// purge work happens.
+	InvalidationEnqueue func(invalidationID string, paths []string)
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is

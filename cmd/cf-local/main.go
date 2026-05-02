@@ -34,8 +34,10 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api"
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
+	apiinv "github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
 	"github.com/DKen-DevCat/cf-local/internal/config"
+	"github.com/DKen-DevCat/cf-local/internal/invalidation"
 	cfnginx "github.com/DKen-DevCat/cf-local/internal/nginx"
 )
 
@@ -45,7 +47,11 @@ const (
 	defaultAddr      = ":4566"
 	defaultNginxURL  = "http://nginx:8080"
 	defaultDBPath    = "/work/cf-local.db"
-	version          = "0.0.0-phase4a-4a.1"
+	// defaultCacheDir mirrors proxy_cache_path in nginx/internal/nginx/conf.go;
+	// the invalidation worker walks this directory to find cache slots that
+	// match invalidation patterns (4b-6 / B-2 direct file removal).
+	defaultCacheDir = "/var/cache/nginx"
+	version         = "0.0.0-phase4b-4b.6"
 )
 
 func main() {
@@ -54,18 +60,19 @@ func main() {
 	addr := flag.String("addr", defaultAddr, "HTTP listener address for the control-plane API")
 	nginxURL := flag.String("nginx-url", defaultNginxURL, "base URL of the nginx data plane (used by the invalidation purger)")
 	dbPath := flag.String("db-path", defaultDBPath, "BoltDB file path for AWS API state (cache_policies / distributions / origin_request_policies)")
+	cacheDir := flag.String("cache-dir", defaultCacheDir, "nginx proxy_cache_path directory (walked by the invalidation worker)")
 	flag.Parse()
 
 	log.SetFlags(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *configDir, *outDir, *addr, *nginxURL, *dbPath, os.Stdout); err != nil {
+	if err := run(ctx, *configDir, *outDir, *addr, *nginxURL, *dbPath, *cacheDir, os.Stdout); err != nil {
 		log.Fatalf("cf-local: %v", err)
 	}
 }
 
-func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath string, stdout io.Writer) error {
+func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath, cacheDir string, stdout io.Writer) error {
 	if err := requireDir(configDir, "config-dir"); err != nil {
 		return err
 	}
@@ -122,6 +129,29 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath string, 
 	if err != nil {
 		return fmt.Errorf("origin_request_policies store: %w", err)
 	}
+	invStore, err := apiinv.NewBoltStore(db)
+	if err != nil {
+		return fmt.Errorf("invalidations store: %w", err)
+	}
+	// Crash recovery: any record left InProgress on disk from a previous
+	// run is forced to Completed (BL-IV2 will replace this with
+	// re-execution).
+	if recovered, err := invStore.RecoverInProgress(ctx); err != nil {
+		return fmt.Errorf("invalidations recovery: %w", err)
+	} else if recovered > 0 {
+		fmt.Fprintf(stdout, "  invalidations : recovered %d stale InProgress → Completed\n", recovered)
+	}
+
+	// Async invalidation worker. Single goroutine, drains a buffered queue
+	// of (id, paths) jobs handed off by the AWS handler. Cache directory
+	// walk + os.Remove (B-2 from 4b-0 spike).
+	worker := invalidation.NewWorker(
+		updaterAdapter{store: invStore},
+		&invalidation.FileSystemCache{Dir: cacheDir},
+		nil, // slog.Default
+	)
+	go worker.Run(ctx)
+	fmt.Fprintf(stdout, "  invalidations : worker started (cache-dir=%s)\n", cacheDir)
 
 	// Build the auto-reload pipeline: every API mutation triggers a
 	// debounced render of cf-local.conf + policies.json into out-dir.
@@ -144,7 +174,22 @@ func run(ctx context.Context, configDir, outDir, addr, nginxURL, dbPath string, 
 		CachePolicyStore:         cpStore,
 		DistributionStore:        distStore,
 		OriginRequestPolicyStore: orpStore,
+		InvalidationStore:        invStore,
+		InvalidationEnqueue: func(id string, paths []string) {
+			worker.Enqueue(invalidation.Job{ID: id, Paths: paths})
+		},
 	})
+}
+
+// updaterAdapter bridges apiinv.BoltStore.UpdateStatus (returns *Record, error)
+// to the invalidation.StatusUpdater interface (returns error only). The worker
+// doesn't need the Record, so we discard it here rather than complicate the
+// worker-side seam.
+type updaterAdapter struct{ store *apiinv.BoltStore }
+
+func (a updaterAdapter) UpdateStatus(ctx context.Context, id, status string) error {
+	_, err := a.store.UpdateStatus(ctx, id, status)
+	return err
 }
 
 // snapshotLoadResult builds a *config.LoadResult from the live BoltStore

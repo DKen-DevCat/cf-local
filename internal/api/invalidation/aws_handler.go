@@ -28,12 +28,17 @@ const awsMaxBodyBytes = 1 << 20
 type AWSHandler struct {
 	Store Store
 
-	// EnqueueFn receives the newly minted invalidation ID after a successful
-	// Create. The 4b-6 worker registers a function that adds the ID to its
-	// run queue. nil is allowed (used by 4b-5 unit tests that don't care
-	// about worker dispatch); when nil, Create returns immediately with
-	// Status=InProgress and no follow-up happens until 4b-6 wires the worker.
-	EnqueueFn func(invalidationID string)
+	// EnqueueFn receives the newly minted invalidation ID and the path list
+	// from the request batch after a successful Create. The 4b-6 worker
+	// registers a function that adds (id, paths) to its run queue. nil is
+	// allowed (used by 4b-5 unit tests that don't care about worker
+	// dispatch); when nil, Create returns immediately with
+	// Status=InProgress and no follow-up purge happens.
+	//
+	// Paths are passed as a fresh slice, decoupled from the persisted
+	// Record, so the worker doesn't need to round-trip through Store to
+	// fetch the batch.
+	EnqueueFn func(invalidationID string, paths []string)
 }
 
 // Create handles POST /2020-05-31/distribution/{distId}/invalidation.
@@ -93,7 +98,8 @@ func (h *AWSHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.EnqueueFn != nil {
-		h.EnqueueFn(rec.ID)
+		paths := append([]string(nil), sdk.Paths.Items...)
+		h.EnqueueFn(rec.ID, paths)
 	}
 
 	writeInvalidationResponse(w, http.StatusCreated, rec)

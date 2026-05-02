@@ -27,23 +27,35 @@ const sampleCreateXML = `<?xml version="1.0" encoding="UTF-8"?>
 </InvalidationBatch>`
 
 // recordingEnqueue is a test double for AWSHandler.EnqueueFn — it captures
-// every invalidation ID that flows through Create so tests can assert the
-// worker handoff was invoked exactly once.
+// every invalidation ID (and the matching paths) that flows through Create
+// so tests can assert the worker handoff was invoked exactly once.
 type recordingEnqueue struct {
-	mu  sync.Mutex
-	ids []string
+	mu    sync.Mutex
+	ids   []string
+	paths [][]string
 }
 
-func (r *recordingEnqueue) call(id string) {
+func (r *recordingEnqueue) call(id string, paths []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.ids = append(r.ids, id)
+	r.paths = append(r.paths, append([]string(nil), paths...))
 }
 
 func (r *recordingEnqueue) snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.ids...)
+}
+
+func (r *recordingEnqueue) snapshotPaths() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][]string, len(r.paths))
+	for i, p := range r.paths {
+		out[i] = append([]string(nil), p...)
+	}
+	return out
 }
 
 // newAWSTestServer wires AWSHandler against a fresh BoltStore (file in
@@ -120,9 +132,14 @@ func TestAWSHandler_Create_Happy(t *testing.T) {
 		t.Errorf("persisted Status: got %q", rec.Status)
 	}
 
-	// Worker handoff was invoked exactly once with the matching ID.
+	// Worker handoff was invoked exactly once with the matching ID and the
+	// full path list from the request batch.
 	if ids := enq.snapshot(); len(ids) != 1 || ids[0] != got.ID {
 		t.Errorf("EnqueueFn call: got %v want exactly [%s]", ids, got.ID)
+	}
+	if paths := enq.snapshotPaths(); len(paths) != 1 ||
+		!equalStringSlice(paths[0], []string{"/index.html", "/posts/*"}) {
+		t.Errorf("EnqueueFn paths: got %v want [[/index.html /posts/*]]", paths)
 	}
 }
 

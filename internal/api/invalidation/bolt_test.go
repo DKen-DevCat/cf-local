@@ -274,6 +274,70 @@ func TestBoltStore_PersistAcrossReopen(t *testing.T) {
 	}
 }
 
+// TestBoltStore_RecoverInProgress covers the simplified crash-recovery hook:
+// any record left in InProgress at startup is forced to Completed on the
+// next call to RecoverInProgress, and the count of transitioned records is
+// returned. Records already Completed are left alone.
+func TestBoltStore_RecoverInProgress(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cf-local.db")
+	ctx := context.Background()
+
+	// First boot: leave 2 InProgress and 1 Completed on disk.
+	db1, err := bbolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	s1, err := NewBoltStore(db1)
+	if err != nil {
+		t.Fatalf("NewBoltStore: %v", err)
+	}
+	r1, _ := s1.Create(ctx, "EDIST", newBatch("a", "/a"))
+	r2, _ := s1.Create(ctx, "EDIST", newBatch("b", "/b"))
+	r3, _ := s1.Create(ctx, "EDIST", newBatch("c", "/c"))
+	if _, err := s1.UpdateStatus(ctx, r1.ID, StatusCompleted); err != nil {
+		t.Fatalf("UpdateStatus r1: %v", err)
+	}
+	_ = db1.Close()
+
+	// Second boot: simulate recovery.
+	db2, err := bbolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db2.Close()
+	s2, err := NewBoltStore(db2)
+	if err != nil {
+		t.Fatalf("NewBoltStore #2: %v", err)
+	}
+	n, err := s2.RecoverInProgress(ctx)
+	if err != nil {
+		t.Fatalf("RecoverInProgress: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("transitioned count: got %d want 2", n)
+	}
+
+	for _, id := range []string{r2.ID, r3.ID} {
+		got, err := s2.Get(ctx, "EDIST", id)
+		if err != nil {
+			t.Fatalf("Get %s: %v", id, err)
+		}
+		if got.Status != StatusCompleted {
+			t.Errorf("after recovery %s: got %q want %q", id, got.Status, StatusCompleted)
+		}
+	}
+
+	// Re-running recovery is a no-op now that everything is Completed.
+	n2, err := s2.RecoverInProgress(ctx)
+	if err != nil {
+		t.Fatalf("second RecoverInProgress: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second-run count: got %d want 0", n2)
+	}
+}
+
 func TestNewInvalidationID_FormatAndUniqueness(t *testing.T) {
 	seen := make(map[string]struct{}, 100)
 	for i := 0; i < 100; i++ {
