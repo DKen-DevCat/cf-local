@@ -138,8 +138,7 @@ func buildMux(cfg Config) http.Handler {
 		}
 		mux.HandleFunc("POST /2020-05-31/distribution/{distId}/invalidation", ah.Create)
 		mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation/{id}", ah.Get)
-		// 4b-8 will register ListInvalidations against the same {distId}
-		// pattern (GET without trailing /{id}).
+		mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation", ah.List)
 	}
 	// Tagging endpoints are stub handlers (cf-local does not track tags;
 	// the Provider's ListTagsForResource / TagResource calls must succeed

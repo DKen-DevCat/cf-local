@@ -1,13 +1,17 @@
 package invalidation
 
 import (
+	"context"
 	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
 )
@@ -74,6 +78,7 @@ func newAWSTestServer(t *testing.T) (*httptest.Server, *BoltStore, *recordingEnq
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /2020-05-31/distribution/{distId}/invalidation", h.Create)
 	mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation/{id}", h.Get)
+	mux.HandleFunc("GET /2020-05-31/distribution/{distId}/invalidation", h.List)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, store, enq
@@ -356,6 +361,320 @@ func TestAWSHandler_Get_WrongDistribution(t *testing.T) {
 		t.Fatalf("status: got %d want 404", resp.StatusCode)
 	}
 	assertErrorBodyContains(t, resp, "NoSuchInvalidation")
+}
+
+// --- List ------------------------------------------------------------------
+
+// seedListRecords inserts n records into store under distID, all with the
+// supplied clock, and returns the IDs in creation order (so the list response
+// — newest first — should reverse this slice). Each record uses a 1-second
+// gap so CreateTime alone determines the sort order.
+func seedListRecords(t *testing.T, store *BoltStore, distID string, n int, t0 time.Time) []string {
+	t.Helper()
+	tick := 0
+	store.nowFn = func() time.Time {
+		tick++
+		return t0.Add(time.Duration(tick) * time.Second)
+	}
+	ids := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		rec, err := store.Create(context.Background(), distID, newBatch("ref-"+strconv.Itoa(i), "/p"+strconv.Itoa(i)))
+		if err != nil {
+			t.Fatalf("Create %d: %v", i, err)
+		}
+		ids = append(ids, rec.ID)
+	}
+	return ids
+}
+
+func reverse(in []string) []string {
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[len(in)-1-i] = v
+	}
+	return out
+}
+
+func decodeList(t *testing.T, body io.Reader) awsxml.InvalidationList {
+	t.Helper()
+	var out awsxml.InvalidationList
+	if err := xml.NewDecoder(body).Decode(&out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	return out
+}
+
+func summaryIDs(items []awsxml.InvalidationSummary) []string {
+	out := make([]string, len(items))
+	for i, s := range items {
+		out[i] = s.ID
+	}
+	return out
+}
+
+// TestAWSHandler_List_Empty verifies that a distribution with no records
+// returns 200 with an empty Items list and IsTruncated=false.
+func TestAWSHandler_List_Empty(t *testing.T) {
+	srv, _, _ := newAWSTestServer(t)
+
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST_EMPTY/invalidation")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: got %d want 200\nbody: %s", resp.StatusCode, body)
+	}
+
+	got := decodeList(t, resp.Body)
+	if got.IsTruncated {
+		t.Errorf("IsTruncated: got true want false")
+	}
+	if got.Quantity != 0 {
+		t.Errorf("Quantity: got %d want 0", got.Quantity)
+	}
+	if len(got.Items.InvalidationSummary) != 0 {
+		t.Errorf("Items: got %d want 0", len(got.Items.InvalidationSummary))
+	}
+	if got.MaxItems != 100 {
+		t.Errorf("MaxItems default: got %d want 100", got.MaxItems)
+	}
+	if got.NextMarker != "" {
+		t.Errorf("NextMarker on empty: got %q want empty", got.NextMarker)
+	}
+}
+
+// TestAWSHandler_List_SinglePage covers the small-N case: every record fits
+// on one page, IsTruncated stays false, and order is newest-first.
+func TestAWSHandler_List_SinglePage(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	ids := seedListRecords(t, store, "EDIST", 3, t0)
+	wantOrder := reverse(ids) // newest first
+
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got := decodeList(t, resp.Body)
+
+	if got.IsTruncated {
+		t.Errorf("IsTruncated: got true want false")
+	}
+	if got.Quantity != 3 {
+		t.Errorf("Quantity: got %d want 3", got.Quantity)
+	}
+	if !equalStringSlice(summaryIDs(got.Items.InvalidationSummary), wantOrder) {
+		t.Errorf("order: got %v want %v",
+			summaryIDs(got.Items.InvalidationSummary), wantOrder)
+	}
+	if got.NextMarker != "" {
+		t.Errorf("NextMarker on non-truncated page: got %q", got.NextMarker)
+	}
+}
+
+// TestAWSHandler_List_PaginatedTruncated drives the first page of a longer
+// list with MaxItems<count → IsTruncated must be true and NextMarker must
+// equal the last ID of the page.
+func TestAWSHandler_List_PaginatedTruncated(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	ids := seedListRecords(t, store, "EDIST", 5, t0)
+	newest := reverse(ids) // [4,3,2,1,0]
+
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation?MaxItems=2")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got := decodeList(t, resp.Body)
+
+	if !got.IsTruncated {
+		t.Errorf("IsTruncated: got false want true")
+	}
+	if got.Quantity != 2 {
+		t.Errorf("Quantity: got %d want 2", got.Quantity)
+	}
+	wantPage := newest[:2]
+	if !equalStringSlice(summaryIDs(got.Items.InvalidationSummary), wantPage) {
+		t.Errorf("page: got %v want %v",
+			summaryIDs(got.Items.InvalidationSummary), wantPage)
+	}
+	if got.NextMarker != wantPage[1] {
+		t.Errorf("NextMarker: got %q want %q", got.NextMarker, wantPage[1])
+	}
+	if got.MaxItems != 2 {
+		t.Errorf("MaxItems echo: got %d want 2", got.MaxItems)
+	}
+}
+
+// TestAWSHandler_List_FollowMarker advances to the next page using the
+// NextMarker emitted in the previous test.
+func TestAWSHandler_List_FollowMarker(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	ids := seedListRecords(t, store, "EDIST", 5, t0)
+	newest := reverse(ids) // [4,3,2,1,0]
+
+	marker := newest[1] // pretend we just got back page=[4,3], NextMarker=3
+	q := url.Values{"MaxItems": {"2"}, "Marker": {marker}}.Encode()
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation?" + q)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got := decodeList(t, resp.Body)
+
+	wantPage := newest[2:4] // [2,1]
+	if !equalStringSlice(summaryIDs(got.Items.InvalidationSummary), wantPage) {
+		t.Errorf("page after marker: got %v want %v",
+			summaryIDs(got.Items.InvalidationSummary), wantPage)
+	}
+	if !got.IsTruncated {
+		t.Errorf("IsTruncated: got false want true (one record still ahead)")
+	}
+	if got.NextMarker != wantPage[1] {
+		t.Errorf("NextMarker: got %q want %q", got.NextMarker, wantPage[1])
+	}
+	if got.Marker != marker {
+		t.Errorf("Marker echo: got %q want %q", got.Marker, marker)
+	}
+}
+
+// TestAWSHandler_List_LastPage walks far enough that the final page exactly
+// drains the list — IsTruncated must drop back to false and NextMarker must
+// be empty.
+func TestAWSHandler_List_LastPage(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	ids := seedListRecords(t, store, "EDIST", 5, t0)
+	newest := reverse(ids)
+
+	// After Marker=newest[2], 2 records remain. MaxItems=2 → exactly drains.
+	q := url.Values{"MaxItems": {"2"}, "Marker": {newest[2]}}.Encode()
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation?" + q)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got := decodeList(t, resp.Body)
+
+	wantPage := newest[3:5]
+	if !equalStringSlice(summaryIDs(got.Items.InvalidationSummary), wantPage) {
+		t.Errorf("last page: got %v want %v",
+			summaryIDs(got.Items.InvalidationSummary), wantPage)
+	}
+	if got.IsTruncated {
+		t.Errorf("IsTruncated on last page: got true want false")
+	}
+	if got.NextMarker != "" {
+		t.Errorf("NextMarker on last page: got %q want empty", got.NextMarker)
+	}
+}
+
+// TestAWSHandler_List_FilterByDistribution confirms that records under one
+// distribution don't leak into another's listing.
+func TestAWSHandler_List_FilterByDistribution(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	tick := 0
+	store.nowFn = func() time.Time {
+		tick++
+		return t0.Add(time.Duration(tick) * time.Second)
+	}
+	ctx := context.Background()
+	a1, _ := store.Create(ctx, "EDIST_A", newBatch("ra-1", "/a1"))
+	_, _ = store.Create(ctx, "EDIST_B", newBatch("rb-1", "/b1"))
+	a2, _ := store.Create(ctx, "EDIST_A", newBatch("ra-2", "/a2"))
+
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST_A/invalidation")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got := decodeList(t, resp.Body)
+	want := []string{a2.ID, a1.ID}
+	if !equalStringSlice(summaryIDs(got.Items.InvalidationSummary), want) {
+		t.Errorf("EDIST_A list: got %v want %v",
+			summaryIDs(got.Items.InvalidationSummary), want)
+	}
+}
+
+// TestAWSHandler_List_RejectsInvalidMaxItems covers MaxItems values that
+// cannot map to a positive int.
+func TestAWSHandler_List_RejectsInvalidMaxItems(t *testing.T) {
+	srv, _, _ := newAWSTestServer(t)
+	cases := []string{"abc", "0", "-3"}
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			q := url.Values{"MaxItems": {raw}}.Encode()
+			resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation?" + q)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status: got %d want 400", resp.StatusCode)
+			}
+			assertErrorBodyContains(t, resp, "MaxItems")
+		})
+	}
+}
+
+// TestAWSHandler_List_ClampsMaxItems covers the lenient upper-bound clamp:
+// MaxItems=200 → server clamps to 100 and echoes 100 back. With a small
+// record count the clamp is silent (IsTruncated=false), but MaxItems must
+// be reported as the clamped value.
+func TestAWSHandler_List_ClampsMaxItems(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	seedListRecords(t, store, "EDIST", 3, t0)
+
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation?MaxItems=200")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got := decodeList(t, resp.Body)
+	if got.MaxItems != 100 {
+		t.Errorf("MaxItems clamp: got %d want 100", got.MaxItems)
+	}
+	if got.Quantity != 3 {
+		t.Errorf("Quantity: got %d want 3", got.Quantity)
+	}
+	if got.IsTruncated {
+		t.Errorf("IsTruncated: got true want false")
+	}
+}
+
+// TestAWSHandler_List_UnknownMarker exercises the "marker doesn't match any
+// record" branch — AWS-permissive, returns an empty page rather than 400.
+func TestAWSHandler_List_UnknownMarker(t *testing.T) {
+	srv, store, _ := newAWSTestServer(t)
+	t0 := time.Date(2026, 5, 2, 7, 0, 0, 0, time.UTC)
+	seedListRecords(t, store, "EDIST", 3, t0)
+
+	q := url.Values{"Marker": {"INOTREAL"}}.Encode()
+	resp, err := http.Get(srv.URL + "/2020-05-31/distribution/EDIST/invalidation?" + q)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want 200 (unknown marker is permissive)", resp.StatusCode)
+	}
+	got := decodeList(t, resp.Body)
+	if got.Quantity != 0 {
+		t.Errorf("Quantity: got %d want 0", got.Quantity)
+	}
+	if got.IsTruncated {
+		t.Errorf("IsTruncated: got true want false")
+	}
+	if got.Marker != "INOTREAL" {
+		t.Errorf("Marker echo: got %q want INOTREAL", got.Marker)
+	}
 }
 
 // --- helpers ---------------------------------------------------------------
