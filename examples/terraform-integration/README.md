@@ -92,6 +92,58 @@ terraform destroy
 - **DomainName=`<lower-id>.cloudfront.local`**: state file に文字列として保存されるだけで、Provider は再度問い合わせない (drift なし)
 - **`continuous_deployment_policy_id` の nil**: Provider は明示的に `aws.ToString(nil) = ""` を許容
 
+## 4b-10 実機検証手順 (Phase 4-B Invalidation API)
+
+`terraform apply` で Distribution が cf-local 上に作られた状態で、AWS CLI から invalidation を叩いて wire 互換性を確認する。本リポでは docker-compose で nginx + cf-local を立ち上げる構成も用意している (`examples/nextjs-basic/` 参照)。本 example の cf-local 単独起動 (`:14566`) では nginx 側の cache walk が無いので、CRUD wire 検証のみが目的。
+
+```sh
+# distribution id を terraform state から取り出す
+DIST_ID=$(terraform output -raw distribution_id)
+echo "distribution: $DIST_ID"
+
+# CreateInvalidation
+aws --endpoint-url http://localhost:14566 \
+    cloudfront create-invalidation \
+    --distribution-id "$DIST_ID" \
+    --paths "/index.html" "/posts/*"
+# → { "Invalidation": { "Id": "I...", "Status": "InProgress", ... } }
+
+# 直近 ID を捕まえる (本番と同じ jq クエリ)
+INV_ID=$(aws --endpoint-url http://localhost:14566 \
+    cloudfront list-invalidations \
+    --distribution-id "$DIST_ID" \
+    --query 'InvalidationList.Items[0].Id' \
+    --output text)
+
+# GetInvalidation で Status 遷移を確認 (cache-dir が空なので即 Completed)
+aws --endpoint-url http://localhost:14566 \
+    cloudfront get-invalidation \
+    --distribution-id "$DIST_ID" \
+    --id "$INV_ID"
+# → { "Invalidation": { "Status": "Completed", ... } }
+
+# ListInvalidations
+aws --endpoint-url http://localhost:14566 \
+    cloudfront list-invalidations \
+    --distribution-id "$DIST_ID" \
+    --max-items 5
+```
+
+### 想定外の API 呼び出しが出ていないか確認
+
+cf-local の log を見て、想定外の path がリクエストされていないか確認 (4-A の調査と同じ手順):
+
+```sh
+# cf-local 起動時に log を tee しておく
+/tmp/cf-local-rev ... 2>&1 | tee /tmp/cf-local-tf.log
+
+# AWS CLI を叩いた後、`/2020-05-31/distribution/<id>/invalidation` 系以外の
+# path が来ていないかを grep で確認
+grep -oE '"(GET|POST|PUT|DELETE) [^ ]+' /tmp/cf-local-tf.log | sort -u
+```
+
+cache walk + os.Remove のフルパスは `examples/nextjs-basic/` で docker-compose 上で確認可能 (本 example は CRUD wire のみ)。
+
 ## 使い方
 
 (以下、原文 — 上記の修正版で `terraform apply` / `terraform destroy` が完全に通る)
