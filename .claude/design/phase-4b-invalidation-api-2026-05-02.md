@@ -39,37 +39,54 @@ status: draft
 
 実装場所: `internal/invalidation/matcher.go` (新規) + テーブル駆動テスト先行 (CLAUDE.md TDD ルール)。`~` 文字 reject、URL-encode required な non-ASCII / unsafe char (RFC 1738) の validation も同時に。
 
-### Q2. cache_keys_zone 走査方法
+### Q2. cache_keys_zone 走査方法 — **B 案 確定** (4b-0 spike 結果反映)
 
-**A 案: ngx_cache_purge native wildcard purge (第一案) + cache key 構造変更**
+#### spike 結果サマリ (2026-05-02 実施、`nginx/spike/wildcard-purge/README.md`)
 
-`nginx-modules/ngx_cache_purge` v2.5.5 (phase-3 で組込み済) は `PURGE /foo*` で prefix-match purge をネイティブにサポートする。ただし READ ME verbatim:
+3 つの cache key 戦略を実機検証:
 
-> Ensure `$uri` appears at the **end** of `proxy_cache_key` when using this feature, otherwise the prefix match will not align with the stored key.
+| Strategy | proxy_cache_key | PURGE 結果 | 結論 |
+|---|---|---|---|
+| **A**: `$uri` at END | `$cookie_session:$uri` | 200 OK だが **PURGE 時の cookie variant のみ** purge | ❌ multi-variant 一括不可 |
+| **B**: `$uri` at FRONT | `$uri:$cookie_session` | **412 Precondition Failed** (構文 reject) | ❌ 構文不可 |
+| **C**: `$uri` only | `$uri` | 正常動作 | ✓ 単一 variant のみ |
 
-現状 cf-local の `proxy_cache_key` は njs 計算の SHA256 単独 (`$cf_cache_key`) で末尾が `$uri` になっていない → wildcard purge が効かない。
+ngx_cache_purge native wildcard purge は **PURGE request 自身の context で `proxy_cache_key` を評価**して prefix を構築する。AWS Invalidation API は外部から POST で発火されるため、元 GET の cookie / header / AE を再現できず、multi-variant 全 slot を捉えるのは原理的に不可能。README の「`$uri` at end」推奨が想定するのは「同セッション内での自分の per-user invalidation」であって、cf-local の「グローバル multi-variant invalidation」用途とは異なる。
 
-→ **cache key 構造変更が必要**:
+→ **A 案は cf-local 用途では不可** が確定。
+
+#### B 案 (Go 側 cache directory walk + exact-key purge) 採用
+
+実装方針:
 
 ```
-proxy_cache_key = <sha256(policy_id + headers + cookies + AE + query)>:<$uri>
-                                                                       ^^^^
-                                                                  末尾が $uri
+cache key 構造: proxy_cache_key "<sha256_variant>:<$uri>"
+  - <sha256_variant>: njs cache_key.js で headers/cookies/AE/queries/policy_id/format_version を sha256
+  - <$uri>: nginx 解釈の URI (末尾配置 — Go walk 時に抽出するため)
 ```
 
-これで:
-- multi-variant (cookie/header/AE 違い) は SHA256 部分が変わって異なる slot に格納 (現状維持)
-- `PURGE /foo*` → urlpath で prefix match → 全 variant が一括 purge (AWS 仕様準拠 — `invalidation-specifying-objects.html` の **Forwarding cookies / headers** 節)
+invalidation worker (Go) の処理:
 
-これは breaking change (既存 cache 全 invalidate)。0.x 開発期間なので OK。
+1. AWS Invalidation API → `POST /2020-05-31/distribution/{Id}/invalidation` 受信
+2. matcher.Expand(paths) で wildcard pattern を末尾 `*` の prefix へ正規化
+3. Status=InProgress で BoltDB 永続化、worker goroutine へ enqueue
+4. worker:
+   1. `proxy_cache_path` の cache directory (`/var/cache/nginx/cf_cache/`) を walk
+   2. 各 cache file の先頭 ~512 bytes を読み、`KEY: <stored_key>\n` を parse
+   3. 抽出した stored_key の `:` 後ろの URI portion が wildcard pattern にマッチするか check
+   4. マッチした全 stored_key について、内部 endpoint `/_cf_purge_exact_key/<urlencoded_key>` 経由で `proxy_cache_purge cf_cache $cf_exact_key` を発火 (または `os.Remove` 直接削除を測って判断)
+5. 完了後 Status=Completed に更新
 
-非同期実行は `cache_purge_background_queue on;` で 202 Accepted 即返し → AWS の `Invalidation.Status` `InProgress` / `Completed` 遷移と整合。
+ngx_cache_purge native wildcard purge は **使わない**。phase-3 で組込みは継続維持 (exact-key purge 経路 / `/_cf_purge<path>` で利用)。
 
-**B 案: Go 側 BoltDB index (フォールバック)**
+cache key 末尾を `$uri` にする変更は維持 (理由が「ngx_cache_purge wildcard 用」から「Go walk 時の uri 抽出用」に変わる)。実装としては同じ。
 
-A 案 spike (4b-0) で期待動作しない場合のフォールバック。Go 側で「distribution × url-path → cache key set」のインデックスを BoltDB に持ち、wildcard 一致する URL を見つけて exact-key purge を ngx_cache_purge に投げる。実装重・性能懸念あり。
+#### 案 B の選択肢 (本実装で測って確定)
 
-判断順序: **4b-0 spike で A 案実機検証 → PASS なら A 案、FAIL なら B 案へ rollback**。判断時点で再度本ドキュメントを更新する。
+- **B-1: ngx_cache_purge 経由**: 抽出した stored_key を `/_cf_purge_exact_key/<key>` に渡して `proxy_cache_purge` に発火させる。in-memory keys_zone も整合
+- **B-2: 直接 file 削除**: `os.Remove` で cache file 直接削除。in-memory keys_zone は次回 access 時に lazy 同期 (cache MISS で再 populate)
+
+4b-6 worker 実装時に両方測って決定。現状 B-1 を第一案、B-2 をシンプル代替。
 
 ### Q3. Invalidation 履歴の保持範囲
 
@@ -90,13 +107,13 @@ AWS 本物は履歴 indefinitely (削除不可)、console 最近 100 件 / API �
 
 | # | 項目 | 主対象ファイル | 備考 |
 |---|---|---|---|
-| **4b-0** | spike: cache key 構造変更 + ngx_cache_purge wildcard purge 実機検証 | `nginx/spike/invalidation-wildcard/` | A 案前提検証。FAIL 時は B 案へ rollback |
+| **4b-0** | spike: ngx_cache_purge wildcard purge の挙動検証 → **B 案 確定** | `nginx/spike/wildcard-purge/` | 完了 (2026-05-02)、A 案不可と判明 |
 | **4b-1** | wildcard matcher 実装 (TDD) | `internal/invalidation/matcher.go` + `_test.go` | AWS 厳格 prefix match。table-driven、`~` reject、unsafe char URL-encode validation |
-| **4b-2** | cache key 末尾 `$uri` 化 (njs + nginx.conf) | `nginx/njs/cache_key.js` + `nginx/conf.d/cf-local.conf.tmpl` + テスト | breaking change、既存 cache 全 invalidate 想定。renderer の cache_key 出力にも反映 |
+| **4b-2** | cache key 末尾 `$uri` 化 (njs + nginx.conf) | `nginx/njs/cache_key.js` + `internal/nginx/conf.go` (renderer) + テスト | breaking change、既存 cache 全 invalidate 想定。**Go walk 時の uri 抽出のため**末尾を `$uri` に配置 |
 | **4b-3** | Invalidation XML wrapper struct + SDK 型相互変換 | `internal/api/xml/invalidation.go` + `_test.go` | phase-4a の CachePolicy / Distribution wrapper を雛形 |
 | **4b-4** | BoltDB `invalidations` bucket + Store 実装 | `internal/store/invalidation.go` + `_test.go` | phase-4a の 3 bucket 設計に追加 |
 | **4b-5** | CreateInvalidation handler (POST) + ID 採番 (`I…`) | `internal/api/invalidation/handler.go` + `_test.go` | XML in/out、Status=InProgress 即返し、worker enqueue |
-| **4b-6** | 非同期 worker (goroutine) | `internal/invalidation/worker.go` + `_test.go` | path expansion (matcher) → ngx_cache_purge へ PURGE 発火 → Status=Completed |
+| **4b-6** | 非同期 worker: cache directory walk + exact-key purge | `internal/invalidation/worker.go` + `_test.go` + `/_cf_purge_exact_key/` 経路 | proxy_cache_path walk → cache file の `KEY:` line parse → uri portion match → ngx_cache_purge 経由 (B-1) / 直接削除 (B-2) を実装中に測って確定 |
 | **4b-7** | GetInvalidation handler (GET) | `internal/api/invalidation/handler.go` 拡張 | path: `/2020-05-31/distribution/{DistId}/invalidation/{InvId}` |
 | **4b-8** | ListInvalidations handler (GET) + Marker pagination | `internal/api/invalidation/handler.go` 拡張 | CreatedTime DESC、MaxItems / Marker / NextMarker |
 | **4b-9** | phase-3 の独自 `POST /_invalidate` を AWS 互換ハンドラ経由に書き換え or 削除判断 | `internal/api/server.go` | breaking change の影響範囲。examples / docs も連動 |
@@ -112,16 +129,23 @@ AWS 本物は履歴 indefinitely (削除不可)、console 最近 100 件 / API �
 - AWS XML 互換: `internal/api/xml` の既存 wrapper 設計 (decode-permissive) を踏襲
 - BoltDB bucket: phase-4a の 3 bucket に `invalidations` を 1 つ追加、4 bucket 構成
 
-### 非同期 worker の最小設計
+### 非同期 worker の最小設計 (B 案 / 4b-0 spike 結果反映)
 
-- CreateInvalidation 受信 → Store.Put (Status=InProgress) → goroutine 1 個に enqueue (channel buffered) → matcher.Expand(paths) → ngx_cache_purge へ HTTP PURGE 発火 → Store.UpdateStatus(Completed) → 終わり
-- ngx_cache_purge は `cache_purge_background_queue on;` で 202 Accepted 即返し → cf-local 側 Status は purge enqueue 完了時点で `Completed` とする (= ngx_cache_purge の background queue が処理完了するまで本物の AWS 同等は待たない、ローカル開発では十分)
-- worker 1 個のシリアル処理。並列度上げは phase-4c 以降で検討
-- crash recovery: 起動時に `InProgress` を `Completed` に強制遷移 (ローカル DB なので問題ない、Phase 5 で再検討)
+- CreateInvalidation 受信 → Store.Put (Status=InProgress) → goroutine 1 個に enqueue (channel buffered)
+- worker:
+  1. matcher.Expand(paths) で AWS 厳格 prefix match パターンを正規化
+  2. proxy_cache_path 配下の cache directory を walk
+  3. 各 cache file の `KEY: ` line から stored_key 抽出、`:` 後ろの URI portion を pattern match
+  4. マッチした stored_key 全件について exact-key purge 発火 (B-1: `/_cf_purge_exact_key/` 経由 / B-2: `os.Remove` 直接)
+  5. 全完了で Store.UpdateStatus(Completed)
+- worker 1 個のシリアル処理。並列度上げは phase-4c 以降で検討 (積みタスク BL-IV1)
+- crash recovery: 起動時に `InProgress` を `Completed` に強制遷移 (積みタスク BL-IV2)
 
 ### multi-variant 一括 invalidate
 
-cache key 末尾 `$uri` 化 (Q2 A 案) で AWS 仕様と完全一致する。cookies / headers / AE 違いの全 cache slot は urlpath で prefix match されて一括 purge される。worker からは AWS の path リストをそのまま `PURGE /<path>*` (末尾 wildcard) として ngx に投げるだけ。
+Q2 で A 案 (ngx_cache_purge native wildcard) が cf-local 用途では不可と確定したため、**B 案 (Go 側 walk + exact-key purge) で multi-variant 一括 invalidate を実現**。
+
+cache key `<sha256_variant>:<$uri>` の末尾 `$uri` を Go が抽出するので、cookies / headers / AE 違いの全 sha256_variant が同じ uri を持っていれば全件マッチし一括 purge される。AWS の **Forwarding cookies / headers** 仕様 ("CloudFront invalidates every cached version of the file regardless of its associated cookies") と整合する。
 
 ## テスト方針
 
@@ -139,13 +163,13 @@ cache key 末尾 `$uri` 化 (Q2 A 案) で AWS 仕様と完全一致する。coo
 
 ## 完了条件
 
-- [ ] **4b-0** spike PASS (cache key 末尾 `$uri` + ngx_cache_purge wildcard purge)
+- [x] **4b-0** spike 完了 (A 案不可、B 案へ pivot 確定 / 2026-05-02)
 - [ ] **4b-1** wildcard matcher (AWS 厳格)
 - [ ] **4b-2** cache key 末尾 `$uri` 化 (regression test PASS)
 - [ ] **4b-3** Invalidation XML wrapper
 - [ ] **4b-4** BoltDB `invalidations` bucket
 - [ ] **4b-5** CreateInvalidation handler
-- [ ] **4b-6** 非同期 worker
+- [ ] **4b-6** 非同期 worker (cache directory walk + exact-key purge)
 - [ ] **4b-7** GetInvalidation handler
 - [ ] **4b-8** ListInvalidations handler (pagination)
 - [ ] **4b-9** 独自 `POST /_invalidate` の処遇判断 (互換層 or 削除)
@@ -179,8 +203,10 @@ phase-4b スコープ外として明示的に保留する項目。phase-4c 以�
 
 ## リスク・未決事項
 
-- **4b-0 spike NG リスク**: cache key 末尾 `$uri` 化しても ngx_cache_purge native wildcard が期待通り動かない場合、B 案 (Go 側 index) へ pivot。spike を最優先 (kickoff 直後)
 - **cache key 構造変更の regression**: phase-1/2/3 のキャッシュ動作 (cache hit / TTL / vary) を維持できるか。4b-2 で α regression テスト全て通すまでは breaking change とみなす
+- **B 案 worker の性能**: cache directory が大きくなった場合の walk 性能。AWS 仕様では Invalidation は非同期 (Status=Completed まで時間がかかる) なのでローカル開発用途では許容範囲。phase-4c 以降で要件出たら並列化 (積みタスク BL-IV1)
+- **nginx cache file format dependency**: cache file の `KEY: ` line parse は nginx 内部 format 依存。`nginx:1.27-alpine` で Dockerfile pin 済なので動作は固定するが、本実装で format 解析コードに「nginx 1.27 cache file format dependency」comment を残す。Dockerfile 上 nginx version を bump するときは format 互換性を確認
+- **B-1 (`/_cf_purge_exact_key/` 経由) vs B-2 (`os.Remove` 直接) の選択**: 4b-6 で両方測って確定。B-2 のほうがシンプルだが in-memory keys_zone と disk の一時的不整合の影響が読めない (cache stats / 次回 access 時の MISS 動作で問題出るか)
 - **`POST /_invalidate` (phase-3 独自) の処遇 (4b-9)**: examples / CMS webhook 連携 doc が依存している。AWS 互換 handler を経由した薄いラッパーとして残すか、削除して examples を AWS CLI 互換に書き換えるかは 4b-9 着手時に判断
-- **非同期 worker の status 遷移タイミング**: ngx_cache_purge `cache_purge_background_queue` が 202 Accepted で即返すため、cf-local の Status=Completed は「purge enqueue 完了」を意味し、AWS の本物 Status=Completed (実際に edge から消えた) とは厳密には異なる。ローカル開発用途では許容範囲、phase-5 で再検討 (BL-IV2 と関連)
+- **非同期 worker の status 遷移タイミング**: cf-local の Status=Completed は「Go の walk + exact-key purge 完了」を意味し、AWS の本物 Status=Completed (edge cache から消えた瞬間) とは厳密には異なる。ローカル開発用途では許容範囲
 - **AWS Invalidation の `CallerReference` の重複検出**: 同じ CallerReference で複数 CreateInvalidation を投げると本物 AWS は冪等性のため 2 回目を無視する。cf-local で同等の挙動を作るか、シンプルに毎回新規 ID 採番するかは 4b-5 で決定

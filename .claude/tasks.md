@@ -15,19 +15,19 @@
 ### 着手前決定事項 (kickoff 2026-05-02 で確定)
 
 - **Q1**: wildcard は AWS 厳格 prefix match (末尾 `*` のみ)。middle / suffix / glob / regex は不採用 (積みタスク BL-W1 / BL-W2)
-- **Q2**: cache_keys_zone 走査は **A 案 ngx_cache_purge native wildcard purge** + cache key 末尾を `$uri` に変更。4b-0 spike で実機検証 → FAIL なら B 案 (Go 側 BoltDB index + exact-key purge) へ pivot
+- **Q2**: 4b-0 spike (2026-05-02) で A 案 (ngx_cache_purge native wildcard) は cf-local 用途で **不可**と判明 (PURGE 時 cookie variant のみ purge / multi-variant 一括不可)。**B 案 (Go 側 cache directory walk + exact-key purge) で確定**。cache key 末尾 `$uri` 化は維持 (理由: Go walk 時に uri 抽出するため)。詳細: `nginx/spike/wildcard-purge/README.md`
 - **Q3**: 履歴は BoltDB 全件保存、TTL なし削除なし、`ListInvalidations` は CreatedTime DESC + Marker pagination
 - **4a-14 PathPattern 拡張は phase-4b スコープ外**: CloudFront `PathPattern` (cache behavior router) と Invalidation の path wildcard は別概念。phase-4c 以降で対応 (積みタスク BL-PP1)
 
 ### タスク
 
-- [ ] **4b-0**: spike — cache key 末尾 `$uri` 化 + `PURGE /foo*` wildcard purge を実機検証。FAIL なら B 案へ pivot (`nginx/spike/invalidation-wildcard/`)
+- [x] **4b-0**: spike (2026-05-02) — A 案 (ngx_cache_purge native wildcard) を `nginx/spike/wildcard-purge/` で実機検証、3 strategy (uri at END / uri at FRONT / uri only) を比較、**A 案 不可**と確定。B 案 (Go 側 cache directory walk + exact-key purge) へ pivot。詳細: `nginx/spike/wildcard-purge/README.md`
 - [ ] **4b-1**: wildcard matcher 実装 (TDD) — `internal/invalidation/matcher.go` + `_test.go`、AWS 厳格 prefix match、`~` reject、unsafe char URL-encode validation、table-driven 20 件以上
-- [ ] **4b-2**: cache key 末尾 `$uri` 化 — `nginx/njs/cache_key.js` + `nginx/conf.d/cf-local.conf.tmpl` + renderer + 既存 phase-1/2/3 regression テスト全 PASS 維持
+- [ ] **4b-2**: cache key 末尾 `$uri` 化 — `nginx/njs/cache_key.js` + `internal/nginx/conf.go` (renderer) + 既存 phase-1/2/3 regression テスト全 PASS 維持。**理由は B 案で Go walk 時に uri 抽出するため** (4b-0 で A 案不可と判明後の改めて維持判断)
 - [ ] **4b-3**: Invalidation XML wrapper struct + SDK 型相互変換 — `internal/api/xml/invalidation.go` + `_test.go`、phase-4a の wrapper を雛形
 - [ ] **4b-4**: BoltDB `invalidations` bucket + Store 実装 — `internal/store/invalidation.go` + `_test.go`、phase-4a 3 bucket + 1 = 4 bucket 構成
 - [ ] **4b-5**: CreateInvalidation handler — `internal/api/invalidation/handler.go` + `_test.go`、ID 採番 (`I…`) + ETag、Status=InProgress 即返し、worker enqueue
-- [ ] **4b-6**: 非同期 worker (goroutine) — `internal/invalidation/worker.go` + `_test.go`、matcher.Expand → ngx_cache_purge HTTP PURGE → Status=Completed
+- [ ] **4b-6**: 非同期 worker — `internal/invalidation/worker.go` + `_test.go` + 内部 endpoint `/_cf_purge_exact_key/`。proxy_cache_path 配下を walk → 各 cache file の `KEY: ` line から stored_key 抽出 → uri portion を pattern match → exact-key purge 発火 (B-1: `/_cf_purge_exact_key/` 経由 / B-2: `os.Remove` 直接、実装中に測って選択)
 - [ ] **4b-7**: GetInvalidation handler — `/2020-05-31/distribution/{DistId}/invalidation/{InvId}`
 - [ ] **4b-8**: ListInvalidations handler + Marker pagination — CreatedTime DESC、MaxItems / Marker / NextMarker
 - [ ] **4b-9**: phase-3 独自 `POST /_invalidate` の処遇判断 — 互換層として残す or 削除して examples を AWS CLI 互換に書き換え
@@ -53,8 +53,8 @@
 
 ### 着手順序
 
-1. **4b-0 spike** を最優先 (Q2 A 案の前提検証、FAIL 時の pivot コストを早期判定)
-2. spike PASS 後、4b-1 (matcher TDD) と 4b-2 (cache key 末尾 `$uri` 化) を並列着手可能
-3. 4b-3 〜 4b-8 は phase-4a の CachePolicy / Distribution パターンを踏襲できるので機械的
+1. ~~**4b-0 spike**~~ (完了 2026-05-02、B 案 pivot 確定)
+2. 4b-1 (matcher TDD) と 4b-2 (cache key 末尾 `$uri` 化) を並列着手可能。matcher は完全独立、4b-2 は既存 phase-1/2/3 の regression テスト維持に注意
+3. 4b-3 〜 4b-8 は phase-4a の CachePolicy / Distribution パターンを踏襲できるので機械的。ただし 4b-6 worker は spike で確定した B 案 (Go walk + exact-key purge) のため、cache file format 解析と exact-key purge 経路 (`/_cf_purge_exact_key/`) の追加が必要
 4. 4b-9 / 4b-10 / 4b-11 は仕上げ
 
