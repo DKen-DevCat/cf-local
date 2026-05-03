@@ -1,0 +1,35 @@
+# Phase 4-D 4d-8: cf-local edge-proxy サイドカーのコンテナイメージ。
+#
+# 役割 (DESIGN.md §3.5 / 3.6):
+#   - njs (`ngx.fetch`) からの POST /invoke を受け、CloudFront Lambda@Edge
+#     の event 形式を構築 (Go 側で normalisation する判断は DESIGN.md 通り)
+#   - cf-local 制御 plane の internal lookup endpoint を 30s TTL でキャッシュ
+#   - AWS Lambda RIE に対して同期 invoke を実行
+#
+# このイメージは docker-compose.lambda.yml が起動する。Lambda@Edge 連携を
+# 使わない通常の cf-local stack (`docker-compose.yml` 単独) ではビルド・起動
+# されない。
+
+ARG GO_VERSION=1.26.1
+
+FROM golang:${GO_VERSION}-alpine AS builder
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/      ./cmd/
+COPY internal/ ./internal/
+
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -trimpath -ldflags "-s -w" -o /out/edge-proxy ./cmd/edge-proxy
+
+FROM alpine:3.20
+RUN apk add --no-cache tini
+COPY --from=builder /out/edge-proxy /usr/local/bin/edge-proxy
+
+EXPOSE 4569
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/edge-proxy"]
