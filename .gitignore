@@ -44,3 +44,6 @@ internal/**/testdata/**/*.got
 
 # Docker
 docker-compose.override.yml
+
+# Claude Code skill ランタイム生成物 (clone 毎に再生成される)
+.claude/scheduled_tasks.lock

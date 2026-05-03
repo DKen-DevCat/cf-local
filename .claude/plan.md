@@ -250,12 +250,12 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 - **U-4**: CloudFront Functions → 本フェーズ対象外、BL-CFF1
 - **U-5**: edge-proxy プロセス境界 → 別バイナリ別プロセス
 
-**ship 後別途実施 (実機検証 walkthrough)**:
+**実機検証 walkthrough 実施済 (2026-05-03)**:
 
-- **検証 W-1**: `examples/lambda-edge-basic/` で docker compose -f docker-compose.lambda.yml up + 4 ケース curl 確認 (bypass / 401 short-circuit / X-Authed-By header 付与 / URL rewrite)
-- **検証 W-2**: `aws_cloudfront_distribution.lambda_function_association` を含む Terraform を `--endpoint-url=http://localhost:4566` で apply して `LambdaFunctionAssociations` が BoltDB に入る + edge-proxy が見える挙動の E2E 確認
+- **検証 W-1**: `examples/lambda-edge-basic/` で docker compose -f docker-compose.lambda.yml up + 4 ケース curl 確認 (bypass / 401 short-circuit / X-Authed-By header 付与 / URL rewrite) → ✅ PASS
+- **検証 W-2**: `aws_cloudfront_distribution.lambda_function_association` を含む Terraform を `--endpoint-url=http://localhost:4566` で apply して `LambdaFunctionAssociations` が BoltDB に入る + edge-proxy が見える挙動の E2E 確認 → ✅ PASS
 
-→ REV-11 (resolver directive) と REV-12 (forward `$uri$is_args$args`) は本フェーズの docker compose 実機起動の過程で発見・対応済 (commit `c964faf` / `297b29e`) のため構成自体の動作は確証あり。残るは `check-phase-4d.md` 形式での完全 walkthrough。
+→ 詳細手順 + 結果 + 既知の運用注意は `.claude/design/lambda-edge-walkthrough-2026-05-03.md` に記録。M4 (Lambda@Edge含めた完全構成) の viewer-request MVP 部分が実機で完全動作することを確認。残り 3 フックは BL-LE1 で次フェーズ候補。
 
 **Phase 4-E 以降への繰越し** (新規 BL):
 
