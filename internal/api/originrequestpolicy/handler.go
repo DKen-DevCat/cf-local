@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 
+	"github.com/DKen-DevCat/cf-local/internal/api/validate"
 	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
 )
 
@@ -147,8 +148,8 @@ func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.OriginRequestP
 		return nil, false
 	}
 	cfg := wrapper.ToSDK()
-	if cfg == nil || cfg.Name == nil || *cfg.Name == "" {
-		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "Name is required")
+	if err := validate.OriginRequestPolicyConfig(cfg); err != nil {
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, err.Error())
 		return nil, false
 	}
 	return cfg, true
