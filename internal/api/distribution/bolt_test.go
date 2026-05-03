@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"go.etcd.io/bbolt"
 )
 
@@ -127,6 +128,79 @@ func TestBoltStore_UpdateAndDeletePersist(t *testing.T) {
 	}
 	if _, err := s3.Get(ctx, rec.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get deleted record after reopen: got %v want ErrNotFound", err)
+	}
+}
+
+// TestBoltStore_PersistLambdaFunctionAssociations is the Phase 4-D 4d-6
+// regression: LambdaFunctionAssociations attached to a Distribution must
+// survive a Create → reopen → Get cycle so the edge-proxy lookup
+// (`internal/api/edgefunc`) sees the same shape Terraform put in.
+func TestBoltStore_PersistLambdaFunctionAssociations(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cf-local.db")
+	db, err := bbolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ctx := context.Background()
+
+	cfg := newDistConfig("lambda-edge-1")
+	cfg.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Quantity: aws.Int32(2),
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeViewerRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1"),
+				IncludeBody:       aws.Bool(false),
+			},
+			{
+				EventType:         types.EventTypeOriginRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:rewrite:2"),
+				IncludeBody:       aws.Bool(true),
+			},
+		},
+	}
+
+	s, err := NewBoltStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	db2, err := bbolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+	s2, err := NewBoltStore(db2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s2.Get(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("Get after reopen: %v", err)
+	}
+	lfa := got.Config.DefaultCacheBehavior.LambdaFunctionAssociations
+	if lfa == nil {
+		t.Fatal("LambdaFunctionAssociations lost on reload")
+	}
+	if len(lfa.Items) != 2 {
+		t.Fatalf("expected 2 associations, got %d", len(lfa.Items))
+	}
+	if lfa.Items[0].EventType != types.EventTypeViewerRequest {
+		t.Errorf("first event type=%s", lfa.Items[0].EventType)
+	}
+	if aws.ToString(lfa.Items[0].LambdaFunctionARN) != "arn:aws:lambda:us-east-1:0:function:auth:1" {
+		t.Errorf("first ARN lost: %s", aws.ToString(lfa.Items[0].LambdaFunctionARN))
+	}
+	if !aws.ToBool(lfa.Items[1].IncludeBody) {
+		t.Errorf("second IncludeBody lost")
 	}
 }
 
