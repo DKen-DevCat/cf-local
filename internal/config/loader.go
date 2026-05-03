@@ -57,6 +57,27 @@ type LoadResult struct {
 	// DistributionFile は Distribution の読み込み元ファイル絶対パス。
 	// Distribution が nil なら "" 。エラーメッセージ用。
 	DistributionFile string
+
+	// DistributionID は AWS-side で振られた Distribution Id。Phase 4-D 4d-7 で
+	// nginx render 時に `set $cf_distribution_id "..."` として埋め込み、edge.js
+	// が edge-proxy へ POST する際の identifier に使う。file-based loader
+	// (config.Load) は ID を持たないので "" のまま。snapshot 経由の API 起動時は
+	// `cmd/cf-local/main.go` が distStore.List() の先頭レコードの ID を入れる。
+	DistributionID string
+
+	// EdgeProxyURL は Phase 4-D 4d-7。Lambda@Edge bridge を有効にする
+	// behavior の outer location に `set $cf_edge_proxy "..."` で埋める値。
+	// "" のときは renderer 側のデフォルト (DefaultEdgeProxyURL =
+	// http://edge-proxy:4569) が使われる。CF_LOCAL_EDGE_PROXY 環境変数で
+	// 上書きする運用 (`cmd/cf-local/main.go` 経由)。
+	EdgeProxyURL string
+
+	// Resolver は Phase 4-D REV-11。Lambda@Edge bridge が有効な conf に
+	// 出す `resolver <addr> valid=30s ipv6=off;` の <addr>。njs `ngx.fetch`
+	// が host name (例: `edge-proxy`) を解決するために必要。
+	// "" のときは renderer 側のデフォルト (DefaultResolver = `127.0.0.11`、
+	// Docker 組み込み DNS) が使われる。CF_LOCAL_RESOLVER で上書き可。
+	Resolver string
 }
 
 // Load は configDir 配下の cache-policies/ と distributions/ を読み込む。

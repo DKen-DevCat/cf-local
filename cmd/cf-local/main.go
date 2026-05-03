@@ -42,6 +42,7 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api"
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
+	apiedgefunc "github.com/DKen-DevCat/cf-local/internal/api/edgefunc"
 	apiinv "github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/responseheaderspolicy"
@@ -185,6 +186,16 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 		slog.String("out_dir", outDir),
 	)
 
+	// Phase 4-D 4d-5: parse the Lambda function name → RIE endpoint map
+	// (DESIGN.md §3.6). Empty / unset env yields an empty map; the
+	// `/_internal/edge-functions/{id}` endpoint still returns the
+	// distribution's LambdaFunctionAssociations but each binding's
+	// RIEEndpoint is "" (edge-proxy logs a warning and falls through).
+	lambdaFunctions := apiedgefunc.ParseFunctionEndpoints(os.Getenv("CF_LOCAL_LAMBDA_FUNCTIONS"))
+	if len(lambdaFunctions) > 0 {
+		fmt.Fprintf(stdout, "  edge functions: %d Lambda RIE endpoint(s) configured\n", len(lambdaFunctions))
+	}
+
 	return api.Run(ctx, api.Config{
 		Addr:                       addr,
 		Stdout:                     stdout,
@@ -197,6 +208,7 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 		InvalidationEnqueue: func(id string, paths []string) {
 			worker.Enqueue(invalidation.Job{ID: id, Paths: paths})
 		},
+		LambdaFunctionEndpoints: lambdaFunctions,
 	})
 }
 
@@ -253,7 +265,15 @@ func snapshotLoadResult(ctx context.Context, cpStore *cachepolicy.BoltStore, dis
 		// order) wins — multi-Distribution rendering is a future-phase
 		// concern (phase-3 contract).
 		res.Distribution = dists[0].Config
+		res.DistributionID = dists[0].ID
 	}
+	// Phase 4-D 4d-7: edge-proxy URL は CF_LOCAL_EDGE_PROXY env で上書き可能。
+	// 未設定時は cfnginx.DefaultEdgeProxyURL が使われる。
+	res.EdgeProxyURL = os.Getenv("CF_LOCAL_EDGE_PROXY")
+	// Phase 4-D REV-11: nginx resolver directive の addr。Lambda@Edge bridge が
+	// 有効な conf でのみ出される。未設定時は cfnginx.DefaultResolver
+	// (127.0.0.11 = Docker 組み込み DNS)。
+	res.Resolver = os.Getenv("CF_LOCAL_RESOLVER")
 	return res
 }
 

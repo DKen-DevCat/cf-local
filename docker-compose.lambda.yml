@@ -1,0 +1,68 @@
+# Phase 4-D 4d-8: Lambda@Edge 連携用 compose override。
+#
+# 使い方:
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.lambda.yml \
+#     up -d
+#
+# 既存の cf-local + nginx スタックに以下 2 種類のサービスを追加する:
+#
+#   - lambda-<name>: AWS 公式 Lambda Runtime Interface Emulator (RIE)
+#     コンテナ。`./examples/lambda-edge-basic/lambdas/<name>` にハンドラ
+#     コードを置き volume mount する想定。
+#
+#   - edge-proxy: cf-local edge-proxy サイドカー (Go)。njs (`ngx.fetch`)
+#     から POST /invoke を受けて RIE 経由で Lambda を実行する。
+#
+# 動作には以下が必要:
+#
+#   1. cf-local 側に LambdaFunctionAssociations を含む distribution が登録
+#      されていること (Terraform / aws CLI 経由)
+#   2. CF_LOCAL_LAMBDA_FUNCTIONS env で Lambda 関数 ARN の name セグメントと
+#      RIE コンテナの host:port をマッピングしていること
+#
+# 詳細: docs/lambda-edge.md
+
+services:
+  cf-local:
+    environment:
+      # docker-compose.yml のサービスはデフォルト同 network 内なので、
+      # `edge-proxy:4569` で名前解決できる。本ファイルでは override 不要。
+      # ただし njs に直接 URL を埋めるための値として cf-local が把持する。
+      CF_LOCAL_EDGE_PROXY: http://edge-proxy:4569
+      # `name=host:port` のリスト。複数行可 (本サンプルは Node.js auth の 1 件のみ)。
+      CF_LOCAL_LAMBDA_FUNCTIONS: |
+        auth=lambda-auth:8080
+
+  edge-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge-proxy
+    container_name: cf-local-edge-proxy
+    # nginx の `ngx.fetch` から見える location で待ち受ける。port を host に
+    # 公開する必要は無い (nginx 経由のみアクセスされる) が、デバッグ用途で
+    # expose しておく (4569 は AWS のいかなる well-known port とも被らない)。
+    ports:
+      - "4569:4569"
+    command:
+      - --addr
+      - ":4569"
+      - --control-plane-url
+      - http://cf-local:4566
+    depends_on:
+      cf-local:
+        condition: service_started
+    restart: unless-stopped
+
+  lambda-auth:
+    # AWS 公式 Lambda RIE 同梱の Node.js 20 image。`/var/task/index.handler` を
+    # invoke する。RIE は :8080 で listen するので、cf-local 側の
+    # CF_LOCAL_LAMBDA_FUNCTIONS は `auth=lambda-auth:8080` と書く。
+    image: public.ecr.aws/lambda/nodejs:20
+    container_name: cf-local-lambda-auth
+    command: ["index.handler"]
+    volumes:
+      - ./examples/lambda-edge-basic/lambdas/auth:/var/task:ro
+    restart: unless-stopped

@@ -1,0 +1,44 @@
+{
+  "Records": [
+    {
+      "cf": {
+        "config": {
+          "distributionDomainName": "edfdvbd6example.cloudfront.local",
+          "distributionId": "EDFDVBD6EXAMPLE",
+          "eventType": "viewer-request",
+          "requestId": "deadbeefdeadbeefdeadbeefdeadbeef"
+        },
+        "request": {
+          "clientIp": "203.0.113.178",
+          "headers": {
+            "host": [
+              {
+                "key": "Host",
+                "value": "d111111abcdef8.cloudfront.local"
+              }
+            ],
+            "user-agent": [
+              {
+                "key": "User-Agent",
+                "value": "curl/8.0"
+              }
+            ],
+            "x-cf-test": [
+              {
+                "key": "X-Cf-Test",
+                "value": "alpha"
+              },
+              {
+                "key": "X-Cf-Test",
+                "value": "beta"
+              }
+            ]
+          },
+          "method": "GET",
+          "querystring": "size=large&color=red",
+          "uri": "/picture.jpg"
+        }
+      }
+    }
+  ]
+}

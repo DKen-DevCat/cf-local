@@ -19,6 +19,7 @@ import (
 
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
+	apiedgefunc "github.com/DKen-DevCat/cf-local/internal/api/edgefunc"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 	"github.com/DKen-DevCat/cf-local/internal/api/middleware"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
@@ -63,6 +64,12 @@ type Config struct {
 	// nil falls back to slog.Default() which `cmd/cf-local/main.go`
 	// configures.
 	Logger *slog.Logger
+	// LambdaFunctionEndpoints is the parsed CF_LOCAL_LAMBDA_FUNCTIONS env
+	// var (Phase 4-D 4d-5). nil disables the internal edge-functions
+	// lookup endpoint (the lookup will still be registered, but every
+	// LambdaFunctionAssociation comes back with RIEEndpoint="" — useful
+	// for cf-local stacks that have no edge-proxy sidecar).
+	LambdaFunctionEndpoints map[string]string
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
@@ -157,5 +164,15 @@ func buildMux(cfg Config) http.Handler {
 	th := &tagging.Handler{}
 	mux.HandleFunc("GET /2020-05-31/tagging", th.Get)
 	mux.HandleFunc("POST /2020-05-31/tagging", th.Post)
+
+	// Internal edge-proxy lookup (Phase 4-D 4d-5). Not part of the
+	// AWS-shaped API surface — used only by the edge-proxy sidecar.
+	if cfg.DistributionStore != nil {
+		eh := &apiedgefunc.Handler{
+			Store:             cfg.DistributionStore,
+			FunctionEndpoints: cfg.LambdaFunctionEndpoints,
+		}
+		mux.HandleFunc("GET /_internal/edge-functions/{id}", eh.Get)
+	}
 	return mux
 }
