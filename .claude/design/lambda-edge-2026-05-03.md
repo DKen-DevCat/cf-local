@@ -171,12 +171,12 @@ AWS Lambda@Edge viewer-request の return 仕様に従い、以下の 3 ケー�
 
 - **BL-LE3**: 4d-2 着手時の docker-compose RIE 実機起動で CloudFront event 受理に問題なし確認 → 解消
 
-#### 実機検証 walkthrough (ship 後別途)
+#### 実機検証 walkthrough (実施済 2026-05-03)
 
-- **検証 W-1**: `examples/lambda-edge-basic/` で docker compose 起動 + 4 ケース curl (bypass / 401 short-circuit / X-Authed-By header 付与 / URL rewrite)
-- **検証 W-2**: `aws_cloudfront_distribution.lambda_function_association` を含む Terraform apply E2E
+- **検証 W-1**: `examples/lambda-edge-basic/` で docker compose 起動 + 4 ケース curl (bypass / 401 short-circuit / X-Authed-By header 付与 / URL rewrite) → ✅ PASS
+- **検証 W-2**: `aws_cloudfront_distribution.lambda_function_association` を含む Terraform apply E2E → ✅ PASS
 
-→ REV-11/12 が docker compose 実機起動の過程で発見されている時点で構成自体の動作は確証あり。完全な walkthrough は `check-phase-4d.md` 形式で次セッションで実施
+→ 詳細手順 + 実機結果 + 既知の運用注意は `.claude/design/lambda-edge-walkthrough-2026-05-03.md` に記録。BL-LE5 (header 改変が origin に届かない) は walkthrough Case 3 で再現確認済 (既に `docs/limitations.md` 登録済のため追加対応不要)
 
 ### DESIGN.md 更新が必要な点
 
