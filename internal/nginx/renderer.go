@@ -30,6 +30,11 @@ type Output struct {
 // CF_LOCAL_EDGE_PROXY 環境変数で上書き可能 (cmd/cf-local/main.go 経由)。
 const DefaultEdgeProxyURL = "http://edge-proxy:4569"
 
+// DefaultResolver は Phase 4-D REV-11 で Lambda@Edge bridge を経由する
+// nginx に出す `resolver` directive の既定値。Docker 組み込み DNS の
+// 固定アドレス。CF_LOCAL_RESOLVER で上書き可能 (cmd/cf-local/main.go 経由)。
+const DefaultResolver = "127.0.0.11"
+
 // Render は LoadResult を nginx.conf + policies.json のバイト列に変換する。
 //
 // 入力契約:
@@ -74,7 +79,11 @@ func Render(res *config.LoadResult) (*Output, error) {
 		if edgeProxyURL == "" {
 			edgeProxyURL = DefaultEdgeProxyURL
 		}
-		conf, err = renderConf(res.Distribution, res.CachePolicies, res.ResponseHeadersPolicies, res.DistributionID, edgeProxyURL)
+		resolver := res.Resolver
+		if resolver == "" {
+			resolver = DefaultResolver
+		}
+		conf, err = renderConf(res.Distribution, res.CachePolicies, res.ResponseHeadersPolicies, res.DistributionID, edgeProxyURL, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("nginx.Render: cf-local.conf: %w", err)
 		}

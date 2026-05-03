@@ -71,6 +71,13 @@ type LoadResult struct {
 	// http://edge-proxy:4569) が使われる。CF_LOCAL_EDGE_PROXY 環境変数で
 	// 上書きする運用 (`cmd/cf-local/main.go` 経由)。
 	EdgeProxyURL string
+
+	// Resolver は Phase 4-D REV-11。Lambda@Edge bridge が有効な conf に
+	// 出す `resolver <addr> valid=30s ipv6=off;` の <addr>。njs `ngx.fetch`
+	// が host name (例: `edge-proxy`) を解決するために必要。
+	// "" のときは renderer 側のデフォルト (DefaultResolver = `127.0.0.11`、
+	// Docker 組み込み DNS) が使われる。CF_LOCAL_RESOLVER で上書き可。
+	Resolver string
 }
 
 // Load は configDir 配下の cache-policies/ と distributions/ を読み込む。

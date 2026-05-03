@@ -270,6 +270,10 @@ func snapshotLoadResult(ctx context.Context, cpStore *cachepolicy.BoltStore, dis
 	// Phase 4-D 4d-7: edge-proxy URL は CF_LOCAL_EDGE_PROXY env で上書き可能。
 	// 未設定時は cfnginx.DefaultEdgeProxyURL が使われる。
 	res.EdgeProxyURL = os.Getenv("CF_LOCAL_EDGE_PROXY")
+	// Phase 4-D REV-11: nginx resolver directive の addr。Lambda@Edge bridge が
+	// 有効な conf でのみ出される。未設定時は cfnginx.DefaultResolver
+	// (127.0.0.11 = Docker 組み込み DNS)。
+	res.Resolver = os.Getenv("CF_LOCAL_RESOLVER")
 	return res
 }
 

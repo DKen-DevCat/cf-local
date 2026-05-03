@@ -83,6 +83,11 @@ func TestRender_LambdaEdge_DefaultCacheBehavior(t *testing.T) {
 	if strings.Count(conf, "js_import edge from edge.js;") != 1 {
 		t.Errorf("expected exactly one edge import, got %d", strings.Count(conf, "js_import edge from edge.js;"))
 	}
+	// REV-11: resolver directive must be present (default 127.0.0.11)
+	// for ngx.fetch DNS resolution.
+	if !strings.Contains(conf, "resolver 127.0.0.11 valid=30s ipv6=off;") {
+		t.Errorf("expected default resolver directive:\n%s", conf)
+	}
 
 	// Outer location must be the bridge stub, not the cache logic.
 	if !strings.Contains(conf, `set $cf_distribution_id "EDFDVBD6EXAMPLE";`) {
@@ -191,6 +196,30 @@ func TestRender_LambdaEdge_NoBindings_NoEdgeImport(t *testing.T) {
 	}
 	if strings.Contains(conf, "@cf_le_") {
 		t.Errorf("no @cf_le_ named location expected:\n%s", conf)
+	}
+	// REV-11: resolver directive should be omitted when LE bridge inactive.
+	if strings.Contains(conf, "resolver ") {
+		t.Errorf("resolver directive must not appear when LE bridge inactive:\n%s", conf)
+	}
+}
+
+// TestRender_LambdaEdge_CustomResolver (REV-11) — CF_LOCAL_RESOLVER 等で
+// LoadResult.Resolver を上書きすると、emit される resolver アドレスがその
+// 値に変わることを確認するリグレッション。
+func TestRender_LambdaEdge_CustomResolver(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Resolver = "10.0.0.53"
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{EventType: types.EventTypeViewerRequest, LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1")},
+		},
+	}
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(string(out.Conf), "resolver 10.0.0.53 valid=30s ipv6=off;") {
+		t.Errorf("expected custom resolver:\n%s", out.Conf)
 	}
 }
 
