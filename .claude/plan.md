@@ -32,6 +32,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
+| `chore-2` | 未着手 | check.md D-2 セクションの手順誤記修正 (docs-only) |
 
 ---
 
@@ -345,6 +346,66 @@ Phase 3 完了直後に cf-local の `.claude/` 配下に `/check` + `/review-di
 - chore-1-3 の rules 分割は **未決**。今分割するか、Phase 4a 着手で必要性が顕在化してから分割するかは chore-1-1/2 完了後にもう一度判断
 - chore-1-4 のドッグフード対象を Phase 4a の最初の PR にするか、本 chore の PR にするかは未決
 - nestify の `code-reviewer.md` を直輸入できない（TypeScript / Bun 前提のため）。Go 用に書き直す必要があり、初版の精度は試走で調整
+
+---
+
+## chore-2: check.md D-2 セクションの手順誤記修正
+
+> ステータス: planned
+> ブランチ案: `chore/check-md-d2-fix`
+> 作成日: 2026-05-03
+
+### 目的 / 背景
+
+Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β endpoint smoke test」セクションの curl 手順から `X-Test-Policy: default` header が抜けており、手順通りに辿ると `400 Bad Request` (`X-Test-Policy header required`) が返る誤記を発見した。期待値の body 表記も `body は空 or "ok" 等` と書かれているが、実態は `policy=default ...` を返す。手順を辿った人が「test endpoint が壊れている」と誤判断するリスクがあるため修正する。
+
+実機検証では α テストの `requireUp` ヘルパー (`tests/integration/cache_key_test.go:152`) は内部で `X-Test-Policy: default` を付けているため α テスト自体は健全に動いていた。手動 smoke test の手順だけが齟齬を起こしていた。
+
+### スコープ
+
+- in:
+  - `check.md` D-2 の curl コマンド (L166-172) に `-H 'X-Test-Policy: default'` を追加
+  - 期待値の body 表記を実機の `policy=default ...` に合わせて修正
+  - トラブルシューティング表に「X-Test-Policy 抜けで 400」の 1 行追加（任意 / 着手時判断）
+  - 他ドキュメント (`docs/`, `README.md`, `examples/*/README.md`) に同様の手順転記がないか grep で点検
+- out:
+  - njs / Go / docker-compose / nginx config の変更
+  - β endpoint 自体の挙動変更（`X-Test-Policy` 必須化を緩めない）
+  - check.md 全体の構成見直し
+
+### 影響範囲
+
+| レイヤー | 内容 |
+|---|---|
+| FE | N/A |
+| BE | N/A |
+| DB | N/A |
+| Infra | N/A |
+| Docs | `check.md` のみ（同様誤記が他にあれば対象拡張） |
+
+### タスク（実装ステップ）
+
+- [ ] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`policy=default ...`) に合わせて修正
+- [ ] **chore-2-2** (任意): トラブルシューティング表に「`X-Test-Policy` header 抜けで `400 Bad Request: X-Test-Policy header required`」の 1 行追記
+- [ ] **chore-2-3**: PR 作成前に修正後手順を実機で再走（`curl -H 'X-Test-Policy: default' ...` が 200 OK） + 他 docs (`docs/`, `README.md`, `examples/`) に同様誤記がないか grep で点検
+
+### テスト方針
+
+| レイヤー | 何をテストするか |
+|---|---|
+| Docs | 自動テスト不可。修正後手順を実機で 1 回辿って 200 OK と body 表記の整合を主観確認 |
+
+### 完了条件
+
+- [ ] 修正後の curl コマンドが実機で 200 OK を返す
+- [ ] 期待 body 表記が実機出力と一致
+- [ ] 他ドキュメントに同様誤記が無いことを grep で確認済み
+- [ ] PR が develop に merge される
+
+### リスク・未決事項
+
+- chore-2-2 のトラブル表追記は実施判断を着手時に行う（実施しない場合は task を deleted に倒して理由を残す）
+- 他 docs の同様誤記の有無は着手前 grep 点検で判明する。複数ある場合はスコープ拡張を検討
 
 ---
 
