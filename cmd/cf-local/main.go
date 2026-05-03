@@ -31,8 +31,10 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
@@ -70,6 +72,7 @@ func main() {
 	flag.Parse()
 
 	log.SetFlags(0)
+	configureSlog(os.Getenv("CF_LOCAL_LOG_FORMAT"))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -183,6 +186,7 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 	return api.Run(ctx, api.Config{
 		Addr:                       addr,
 		Stdout:                     stdout,
+		Logger:                     slog.Default(),
 		CachePolicyStore:           cpStore,
 		DistributionStore:          distStore,
 		OriginRequestPolicyStore:   orpStore,
@@ -275,4 +279,25 @@ func distributionSummary(res *config.LoadResult) string {
 		caller = *res.Distribution.CallerReference
 	}
 	return fmt.Sprintf("%s (Enabled=%t, file=%s)", caller, enabled, res.DistributionFile)
+}
+
+// configureSlog wires up slog.Default() per CF_LOCAL_LOG_FORMAT (Phase 4-C
+// 4c-5 / kickoff §A-2):
+//
+//   - "" / "text"  → human-readable key=value text (slog.NewTextHandler)
+//   - "json"       → JSON Lines (slog.NewJSONHandler)
+//
+// Output is os.Stderr so structured logs don't muddle the human-friendly
+// startup banner that main() writes to os.Stdout. Level is INFO; future
+// work (BL-LOG2) may add a CF_LOCAL_LOG_LEVEL env var.
+func configureSlog(format string) {
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	var h slog.Handler
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json":
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	default:
+		h = slog.NewTextHandler(os.Stderr, opts)
+	}
+	slog.SetDefault(slog.New(h))
 }

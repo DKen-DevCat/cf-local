@@ -13,12 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/DKen-DevCat/cf-local/internal/api/cachepolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
+	"github.com/DKen-DevCat/cf-local/internal/api/middleware"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/responseheaderspolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/tagging"
@@ -57,15 +59,20 @@ type Config struct {
 	// allowed — Create still returns 201 with Status=InProgress, but no
 	// purge work happens.
 	InvalidationEnqueue func(invalidationID string, paths []string)
+	// Logger backs the request-log middleware (Phase 4-C 4c-5 / BL-OB1).
+	// nil falls back to slog.Default() which `cmd/cf-local/main.go`
+	// configures.
+	Logger *slog.Logger
 }
 
 // Run starts the cf-local control-plane HTTP server and blocks until ctx is
 // cancelled or the server stops on its own. On ctx cancellation the server is
 // shut down gracefully with a 5-second grace period.
 func Run(ctx context.Context, cfg Config) error {
+	handler := middleware.RequestLog(middleware.LogConfig{Logger: cfg.Logger}, buildMux(cfg))
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           buildMux(cfg),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
