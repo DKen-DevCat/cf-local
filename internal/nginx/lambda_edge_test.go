@@ -128,8 +128,11 @@ func TestRender_LambdaEdge_DefaultCacheBehavior(t *testing.T) {
 	if !strings.Contains(forwardBlock, "proxy_cache cf_cache;") {
 		t.Errorf("forward location must contain proxy_cache:\n%s", forwardBlock)
 	}
-	if !strings.Contains(forwardBlock, "proxy_pass http://self/_cf_inner_E_CP1$request_uri;") {
-		t.Errorf("forward location must proxy_pass to inner:\n%s", forwardBlock)
+	// REV-12: forward block must use $uri$is_args$args so Lambda's URI
+	// rewrite reaches origin. $request_uri is frozen on internal redirect
+	// and would otherwise leak the original (pre-rewrite) URI to origin.
+	if !strings.Contains(forwardBlock, "proxy_pass http://self/_cf_inner_E_CP1$uri$is_args$args;") {
+		t.Errorf("forward location must use $uri$is_args$args (REV-12):\n%s", forwardBlock)
 	}
 }
 

@@ -412,7 +412,7 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
 	// `# %s\n` で出力する直前にも改行を空白へ置換する。
 	fmt.Fprintf(b, "    # %s\n", sanitizeCommentText(beh.Comment))
 	fmt.Fprintf(b, "    location %s {\n", beh.Location)
-	writeOuterLocationBody(b, beh)
+	writeOuterLocationBody(b, beh, false)
 	b.WriteString("    }\n")
 }
 
@@ -462,10 +462,17 @@ func sanitizeNginxSetValue(s string) string {
 // writeForwardLocation は Lambda@Edge viewer-request の継続パス
 // (`@cf_le_<san>_forward`)。outer location の通常実装と同じ cache + proxy_pass
 // を内部 location として出す。
+//
+// REV-12 (Phase 4-D 実機検証): Lambda が URI を書き換えた場合 edge.js は
+// `r.internalRedirect(new_uri)` で nginx を再評価させる。`$request_uri` は
+// 元クライアント値で固定で更新されないため、forward の proxy_pass を
+// `$uri$is_args$args` に切り替えて post-rewrite URI を origin に伝える。
+// 通常 forward (writeOuterLocation 経由) は `$request_uri` のまま (URL encode
+// を保ちたいケースを尊重)。
 func writeForwardLocation(b *bytes.Buffer, beh behaviorView) {
 	fmt.Fprintf(b, "    location %s {\n", forwardLocationName(beh.SanitizedPolicyID))
 	b.WriteString("        internal;\n")
-	writeOuterLocationBody(b, beh)
+	writeOuterLocationBody(b, beh, true)
 	b.WriteString("    }\n")
 }
 
@@ -476,7 +483,10 @@ func forwardLocationName(sanitizedPolicyID string) string {
 // writeOuterLocationBody は cache + proxy_pass の中身を出す。
 // writeOuterLocation と writeForwardLocation の両方から呼ばれる。
 // 出力はインデント `        ` (8 space) で揃え、closing brace は呼び出し側が打つ。
-func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView) {
+//
+// useUpdatedURI=true のとき proxy_pass は `$uri$is_args$args` で書く (REV-12)。
+// false なら `$request_uri` (元クライアント値、URL encode 保持)。
+func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView, useUpdatedURI bool) {
 	fmt.Fprintf(b, "        set $cf_policy_id %q;\n\n", beh.PolicyID)
 	b.WriteString(`        proxy_cache cf_cache;
         proxy_cache_key $cf_cache_key;
@@ -496,7 +506,11 @@ func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView) {
 	if len(beh.HeaderDirectives) > 0 {
 		b.WriteByte('\n')
 	}
-	fmt.Fprintf(b, "        proxy_pass http://self%s$request_uri;\n", beh.InnerPrefix)
+	uriExpr := "$request_uri"
+	if useUpdatedURI {
+		uriExpr = "$uri$is_args$args"
+	}
+	fmt.Fprintf(b, "        proxy_pass http://self%s%s;\n", beh.InnerPrefix, uriExpr)
 	b.WriteString(`        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
