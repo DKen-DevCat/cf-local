@@ -29,15 +29,21 @@ import (
 // A.4.3 では DefaultCacheBehavior のみ対応 (CacheBehaviors[] は A.4.4 で追加、
 // disabled 分岐は A.4.6 で追加)。
 
-// renderConf は AWS SDK の DistributionConfig + CachePolicyConfig マップから
-// cf-local.conf のバイト列を組み立てる。Distribution が nil または
-// Enabled=false の場合の分岐は本関数の呼び出し側 (Render) が担当する。
-func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConfig) ([]byte, error) {
+// renderConf は AWS SDK の DistributionConfig + CachePolicyConfig マップ +
+// ResponseHeadersPolicyConfig マップ (Phase 4-C 4c-2) から cf-local.conf の
+// バイト列を組み立てる。Distribution が nil または Enabled=false の場合の
+// 分岐は本関数の呼び出し側 (Render) が担当する。
+//
+// rhp が nil または cache behavior の ResponseHeadersPolicyId が map に
+// 存在しない場合は、その behavior に対する add_header 注入を skip する
+// (RHP は optional で、未登録の RHP を参照していても render を fail させ
+// ない設計判断 — CachePolicy は required なので扱いが異なる)。
+func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConfig, rhp map[string]*types.ResponseHeadersPolicyConfig) ([]byte, error) {
 	origins, err := buildOriginViews(d.Origins)
 	if err != nil {
 		return nil, err
 	}
-	behaviors, inners, err := buildBehaviorViews(d)
+	behaviors, inners, err := buildBehaviorViews(d, rhp)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +67,11 @@ type behaviorView struct {
 	Location    string // "/" や "/api/"
 	PolicyID    string // raw (set $cf_policy_id "<raw>")
 	InnerPrefix string // "/_cf_inner_<sanitized-policy-id>"
+	// HeaderDirectives は ResponseHeadersPolicy (4c-2) から導出した nginx
+	// directive 行 (`add_header ... always;` / `proxy_hide_header ...;`)。
+	// 各要素は "        " インデント込みの完全な行 (末尾の改行は含まない)。
+	// nil または空 slice の場合は何も挿入しない (今までと同じ出力)。
+	HeaderDirectives []string
 }
 
 type innerView struct {
@@ -109,7 +120,7 @@ func buildOriginViews(origins *types.Origins) ([]originView, error) {
 // (sanitized id ベースで dedup)。dedup された場合の TargetOriginId は
 // 「最初に登録した behavior のもの」を採用する (Phase 3 の挙動として確定。
 // 同 policy で別 origin に振り分けたい場合は別 policy を作る運用)。
-func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerView, error) {
+func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.ResponseHeadersPolicyConfig) ([]behaviorView, []innerView, error) {
 	if d == nil {
 		return nil, nil, fmt.Errorf("DistributionConfig is nil")
 	}
@@ -152,6 +163,7 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 			pattern := derefString(b.PathPattern)
 			policyID := derefString(b.CachePolicyId)
 			originID := derefString(b.TargetOriginId)
+			rhpID := derefString(b.ResponseHeadersPolicyId)
 
 			loc, err := pathPatternToLocation(pattern)
 			if err != nil {
@@ -162,11 +174,17 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 				return nil, nil, fmt.Errorf("CacheBehaviors[%d].CachePolicyId %q sanitizes to empty string", i, policyID)
 			}
 
+			comment := fmt.Sprintf("CacheBehaviors[%d]: %s (CachePolicyId=%s", i, pattern, policyID)
+			if rhpID != "" {
+				comment += fmt.Sprintf(", ResponseHeadersPolicyId=%s", rhpID)
+			}
+			comment += ")."
 			behaviors = append(behaviors, behaviorView{
-				Comment:     fmt.Sprintf("CacheBehaviors[%d]: %s (CachePolicyId=%s).", i, pattern, policyID),
-				Location:    loc,
-				PolicyID:    policyID,
-				InnerPrefix: "/_cf_inner_" + san,
+				Comment:          comment,
+				Location:         loc,
+				PolicyID:         policyID,
+				InnerPrefix:      "/_cf_inner_" + san,
+				HeaderDirectives: lookupResponseHeaders(rhp, rhpID),
 			})
 			if err := addInner(policyID, originID, san); err != nil {
 				return nil, nil, fmt.Errorf("CacheBehaviors[%d]: %w", i, err)
@@ -177,15 +195,22 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 	// 2. DefaultCacheBehavior
 	defaultOriginID := derefString(d.DefaultCacheBehavior.TargetOriginId)
 	defaultPolicyID := derefString(d.DefaultCacheBehavior.CachePolicyId)
+	defaultRHPID := derefString(d.DefaultCacheBehavior.ResponseHeadersPolicyId)
 	defaultSan := sanitizeID(defaultPolicyID)
 	if defaultSan == "" {
 		return nil, nil, fmt.Errorf("DefaultCacheBehavior.CachePolicyId %q sanitizes to empty string", defaultPolicyID)
 	}
+	defaultComment := fmt.Sprintf("DefaultCacheBehavior (CachePolicyId=%s", defaultPolicyID)
+	if defaultRHPID != "" {
+		defaultComment += fmt.Sprintf(", ResponseHeadersPolicyId=%s", defaultRHPID)
+	}
+	defaultComment += ")."
 	behaviors = append(behaviors, behaviorView{
-		Comment:     fmt.Sprintf("DefaultCacheBehavior (CachePolicyId=%s).", defaultPolicyID),
-		Location:    "/",
-		PolicyID:    defaultPolicyID,
-		InnerPrefix: "/_cf_inner_" + defaultSan,
+		Comment:          defaultComment,
+		Location:         "/",
+		PolicyID:         defaultPolicyID,
+		InnerPrefix:      "/_cf_inner_" + defaultSan,
+		HeaderDirectives: lookupResponseHeaders(rhp, defaultRHPID),
 	})
 	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan); err != nil {
 		return nil, nil, err
@@ -302,6 +327,13 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
         add_header X-Cache-Key    $cf_cache_key          always;
 
 `)
+	for _, line := range beh.HeaderDirectives {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if len(beh.HeaderDirectives) > 0 {
+		b.WriteByte('\n')
+	}
 	fmt.Fprintf(b, "        proxy_pass http://self%s$request_uri;\n", beh.InnerPrefix)
 	b.WriteString(`        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

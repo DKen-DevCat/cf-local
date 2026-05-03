@@ -165,10 +165,12 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 
 	// Build the auto-reload pipeline: every API mutation triggers a
 	// debounced render of cf-local.conf + policies.json into out-dir.
-	// The fetch closure snapshots all 3 stores into a *config.LoadResult
-	// shape so the existing nginx.Render code path can be reused.
+	// The fetch closure snapshots all 4 mutation-driving stores into a
+	// *config.LoadResult shape so the existing nginx.Render code path can
+	// be reused (CachePolicy / Distribution / ResponseHeadersPolicy +
+	// OriginRequestPolicy as a trigger only).
 	fetch := func() *config.LoadResult {
-		return snapshotLoadResult(ctx, cpStore, distStore)
+		return snapshotLoadResult(ctx, cpStore, distStore, rhpStore)
 	}
 	reloader := cfnginx.NewReloader(outDir, fetch, stdout)
 	cpStore.SetOnChange(reloader.Trigger)
@@ -204,26 +206,38 @@ func (a updaterAdapter) UpdateStatus(ctx context.Context, id, status string) err
 }
 
 // snapshotLoadResult builds a *config.LoadResult from the live BoltStore
-// state. Map keys are CachePolicy IDs (not Names) because Distribution's
-// CachePolicyId field carries the ID in phase-4a — the renderer's
-// `policies.json` lookup must match what `Distribution` references.
+// state. Map keys are CachePolicy IDs / ResponseHeadersPolicy IDs (not
+// Names) because Distribution's CachePolicyId / ResponseHeadersPolicyId
+// fields carry the ID in phase-4a/4c — the renderer's policy lookup must
+// match what `Distribution` references.
 //
-// Phase-3 file-based config used Names as keys; this is a deliberate
-// schema break for phase-4a (4a-10). See examples/terraform-integration/
-// for the documented behaviour.
+// Phase-3 file-based config used Names as keys for CachePolicies; this
+// is a deliberate schema break for phase-4a (4a-10). See
+// examples/terraform-integration/ for the documented behaviour.
+//
+// Phase-4c 4c-2 wires ResponseHeadersPolicy into the renderer (CustomHeaders
+// + Cors only — see internal/nginx/response_headers.go for the scope).
 //
 // OriginRequestPolicy is not part of LoadResult — phase-3 renderer does
 // not consume it. ORP records persist to BoltDB but currently do not
 // affect cf-local.conf output. Future phases (4-D Lambda@Edge or later)
 // can wire ORP into the renderer.
-func snapshotLoadResult(ctx context.Context, cpStore *cachepolicy.BoltStore, distStore *distribution.BoltStore) *config.LoadResult {
+func snapshotLoadResult(ctx context.Context, cpStore *cachepolicy.BoltStore, distStore *distribution.BoltStore, rhpStore *responseheaderspolicy.BoltStore) *config.LoadResult {
 	res := &config.LoadResult{
-		CachePolicies: make(map[string]*types.CachePolicyConfig),
+		CachePolicies:           make(map[string]*types.CachePolicyConfig),
+		ResponseHeadersPolicies: make(map[string]*types.ResponseHeadersPolicyConfig),
 	}
 	if cps, err := cpStore.List(ctx); err == nil {
 		for _, rec := range cps {
 			if rec.Config != nil {
 				res.CachePolicies[rec.ID] = rec.Config
+			}
+		}
+	}
+	if rhps, err := rhpStore.List(ctx); err == nil {
+		for _, rec := range rhps {
+			if rec.Config != nil {
+				res.ResponseHeadersPolicies[rec.ID] = rec.Config
 			}
 		}
 	}

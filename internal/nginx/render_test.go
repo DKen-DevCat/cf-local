@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
+
 	"github.com/DKen-DevCat/cf-local/internal/config"
 )
 
@@ -139,5 +142,154 @@ func TestRender_SamePolicyDifferentOrigins(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "different TargetOriginId") {
 		t.Errorf("err = %q, want substring 'different TargetOriginId'", err.Error())
+	}
+}
+
+// TestRender_ResponseHeaders_DefaultCacheBehavior verifies 4c-2 wiring:
+// when DefaultCacheBehavior.ResponseHeadersPolicyId resolves to a policy
+// in LoadResult.ResponseHeadersPolicies, the resulting cf-local.conf
+// contains the expected `add_header` directives inside the
+// `location /` block (before the proxy_pass) and the comment notes the
+// RHP id.
+func TestRender_ResponseHeaders_DefaultCacheBehavior(t *testing.T) {
+	res := &config.LoadResult{
+		CachePolicies: map[string]*types.CachePolicyConfig{
+			"E_CP1": {
+				Name:   aws.String("default"),
+				MinTTL: aws.Int64(0),
+				ParametersInCacheKeyAndForwardedToOrigin: &types.ParametersInCacheKeyAndForwardedToOrigin{
+					EnableAcceptEncodingGzip:   aws.Bool(true),
+					EnableAcceptEncodingBrotli: aws.Bool(true),
+					HeadersConfig:              &types.CachePolicyHeadersConfig{HeaderBehavior: types.CachePolicyHeaderBehaviorNone},
+					CookiesConfig:              &types.CachePolicyCookiesConfig{CookieBehavior: types.CachePolicyCookieBehaviorNone},
+					QueryStringsConfig:         &types.CachePolicyQueryStringsConfig{QueryStringBehavior: types.CachePolicyQueryStringBehaviorNone},
+				},
+			},
+		},
+		ResponseHeadersPolicies: map[string]*types.ResponseHeadersPolicyConfig{
+			"E_RH1": {
+				Name: aws.String("rh1"),
+				CustomHeadersConfig: &types.ResponseHeadersPolicyCustomHeadersConfig{
+					Items: []types.ResponseHeadersPolicyCustomHeader{
+						{Header: aws.String("X-Custom"), Value: aws.String("v1"), Override: aws.Bool(true)},
+					},
+				},
+				CorsConfig: &types.ResponseHeadersPolicyCorsConfig{
+					OriginOverride: aws.Bool(false),
+					AccessControlAllowOrigins: &types.ResponseHeadersPolicyAccessControlAllowOrigins{
+						Items: []string{"https://example.com"},
+					},
+				},
+			},
+		},
+		Distribution: &types.DistributionConfig{
+			CallerReference: aws.String("x"),
+			Comment:         aws.String("x"),
+			Enabled:         aws.Bool(true),
+			Origins: &types.Origins{
+				Items: []types.Origin{
+					{
+						Id:                 aws.String("next-app"),
+						DomainName:         aws.String("host.docker.internal"),
+						CustomOriginConfig: &types.CustomOriginConfig{HTTPPort: aws.Int32(3000)},
+					},
+				},
+			},
+			DefaultCacheBehavior: &types.DefaultCacheBehavior{
+				TargetOriginId:          aws.String("next-app"),
+				ViewerProtocolPolicy:    types.ViewerProtocolPolicyAllowAll,
+				CachePolicyId:           aws.String("E_CP1"),
+				ResponseHeadersPolicyId: aws.String("E_RH1"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	wantSubs := []string{
+		`# DefaultCacheBehavior (CachePolicyId=E_CP1, ResponseHeadersPolicyId=E_RH1).`,
+		// Override=true on X-Custom must hide upstream value first.
+		`        proxy_hide_header X-Custom;`,
+		`        add_header X-Custom "v1" always;`,
+		`        add_header Access-Control-Allow-Origin "https://example.com" always;`,
+	}
+	for _, want := range wantSubs {
+		if !strings.Contains(conf, want) {
+			t.Errorf("rendered conf missing %q\n--- conf ---\n%s", want, conf)
+		}
+	}
+
+	// Sanity: directives must appear inside `location /` (i.e. before the
+	// `proxy_pass http://self/_cf_inner_E_CP1$request_uri;` line of the
+	// outer block).
+	cur := strings.Index(conf, "location / {")
+	end := strings.Index(conf[cur:], "proxy_pass http://self/_cf_inner_E_CP1")
+	if cur < 0 || end < 0 {
+		t.Fatalf("could not locate outer location boundaries in conf:\n%s", conf)
+	}
+	outerBlock := conf[cur : cur+end]
+	for _, want := range wantSubs[1:] { // skip the comment which is just before location
+		if !strings.Contains(outerBlock, want) {
+			t.Errorf("directive %q not in outer location block:\n--- outer block ---\n%s", want, outerBlock)
+		}
+	}
+}
+
+// TestRender_ResponseHeaders_UnknownIDIsIgnored confirms that referencing
+// an RHP id that is not present in the map is not a render error — the
+// outer location is rendered as if no RHP was attached. This mirrors the
+// optional nature of the field (CachePolicyId is required, RHP is not).
+func TestRender_ResponseHeaders_UnknownIDIsIgnored(t *testing.T) {
+	res := &config.LoadResult{
+		CachePolicies: map[string]*types.CachePolicyConfig{
+			"E_CP1": {
+				Name:   aws.String("default"),
+				MinTTL: aws.Int64(0),
+				ParametersInCacheKeyAndForwardedToOrigin: &types.ParametersInCacheKeyAndForwardedToOrigin{
+					EnableAcceptEncodingGzip:   aws.Bool(true),
+					EnableAcceptEncodingBrotli: aws.Bool(true),
+					HeadersConfig:              &types.CachePolicyHeadersConfig{HeaderBehavior: types.CachePolicyHeaderBehaviorNone},
+					CookiesConfig:              &types.CachePolicyCookiesConfig{CookieBehavior: types.CachePolicyCookieBehaviorNone},
+					QueryStringsConfig:         &types.CachePolicyQueryStringsConfig{QueryStringBehavior: types.CachePolicyQueryStringBehaviorNone},
+				},
+			},
+		},
+		// ResponseHeadersPolicies left nil to confirm nil-safe.
+		Distribution: &types.DistributionConfig{
+			CallerReference: aws.String("x"),
+			Enabled:         aws.Bool(true),
+			Origins: &types.Origins{
+				Items: []types.Origin{
+					{
+						Id:                 aws.String("next-app"),
+						DomainName:         aws.String("host.docker.internal"),
+						CustomOriginConfig: &types.CustomOriginConfig{HTTPPort: aws.Int32(3000)},
+					},
+				},
+			},
+			DefaultCacheBehavior: &types.DefaultCacheBehavior{
+				TargetOriginId:          aws.String("next-app"),
+				ViewerProtocolPolicy:    types.ViewerProtocolPolicyAllowAll,
+				CachePolicyId:           aws.String("E_CP1"),
+				ResponseHeadersPolicyId: aws.String("E_UNKNOWN"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render with unknown RHP id should not error: %v", err)
+	}
+	if strings.Contains(string(out.Conf), `add_header Access-Control`) {
+		t.Errorf("unknown RHP id should not produce CORS directives:\n%s", out.Conf)
+	}
+	// The comment still notes the requested id so operators can correlate
+	// "I set RHP X but no headers came out" with this rendered .conf.
+	if !strings.Contains(string(out.Conf), "ResponseHeadersPolicyId=E_UNKNOWN") {
+		t.Errorf("comment should still record the requested RHP id:\n%s", out.Conf)
 	}
 }
