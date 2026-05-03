@@ -226,14 +226,26 @@ func TestResponseHeadersPolicyConfig_Valid(t *testing.T) {
 }
 
 func TestResponseHeadersPolicyConfig_HeaderNameValidation(t *testing.T) {
+	// REV-2 (phase-4c review): allow-list is `[A-Za-z0-9-]` to match the
+	// renderer (`internal/nginx/response_headers.go:isValidHeaderName`).
+	// Anything outside that set must be rejected at the API boundary so
+	// the operator gets an explicit InvalidArgument instead of a silent
+	// drop downstream. RFC 7230 token chars (e.g. `_` `~` `%` `#`) are
+	// intentionally rejected: `#` would start an nginx comment and break
+	// the unquoted `add_header` directive line.
 	tests := []struct {
 		name      string
 		header    string
 		wantError bool
 	}{
 		{"plain", "X-Custom", false},
-		{"with-tilde", "X-Tilde~Custom", false},
-		{"with-percent", "X-Percent%Header", false},
+		{"all-numeric-segment", "X-Rate-Limit-2", false},
+		{"with-tilde-rejected", "X-Tilde~Custom", true},
+		{"with-percent-rejected", "X-Percent%Header", true},
+		{"with-hash-rejected", "X#Bad", true},
+		{"with-underscore-rejected", "X_Custom", true},
+		{"with-dot-rejected", "X.Custom", true},
+		{"with-pipe-rejected", "X|Bad", true},
 		{"empty", "", true},
 		{"with-space", "X Bad", true},
 		{"with-colon", "X:Bad", true},

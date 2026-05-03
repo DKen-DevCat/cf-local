@@ -331,11 +331,16 @@ func isSafeItemName(s string) bool {
 	return true
 }
 
-// isHTTPTokenName accepts the strict HTTP token character set per
-// RFC 7230. Used for ResponseHeadersPolicy where users may legitimately
-// want richer header names (e.g. `X-RateLimit-Reset`). Disallowed:
-// whitespace, CRLF, NUL, and nginx-config-meta characters
-// (`{` `}` `;` `#` `\` `"`).
+// isHTTPTokenName accepts the same allow-list that
+// `internal/nginx/response_headers.go:isValidHeaderName` uses
+// (`[A-Za-z0-9-]`). RFC 7230 token chars are a strict superset, but
+// renderer rejects anything outside `[A-Za-z0-9-]` to keep the unquoted
+// `add_header NAME ...` directive safe (e.g. `#` would start a nginx
+// comment and break the directive line, `'` could confuse mixed-quote
+// parsing). API-side relaxation past this set would silently drop
+// entries at render time, defeating the 4c-9 design intent of
+// "explicit error at the API boundary"; REV-2 (phase-4c review) tightens
+// validate to match renderer.
 func isHTTPTokenName(s string) bool {
 	if s == "" {
 		return false
@@ -345,9 +350,7 @@ func isHTTPTokenName(s string) bool {
 		case r >= 'A' && r <= 'Z':
 		case r >= 'a' && r <= 'z':
 		case r >= '0' && r <= '9':
-		case r == '!' || r == '#' || r == '$' || r == '%' || r == '&':
-		case r == '\'' || r == '*' || r == '+' || r == '-' || r == '.':
-		case r == '^' || r == '_' || r == '`' || r == '|' || r == '~':
+		case r == '-':
 		default:
 			return false
 		}
