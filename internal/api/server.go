@@ -20,6 +20,7 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
 	"github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
+	"github.com/DKen-DevCat/cf-local/internal/api/responseheaderspolicy"
 	"github.com/DKen-DevCat/cf-local/internal/api/tagging"
 )
 
@@ -44,6 +45,9 @@ type Config struct {
 	// OriginRequestPolicyStore backs the AWS REST OriginRequestPolicy
 	// handlers. nil disables those routes entirely.
 	OriginRequestPolicyStore originrequestpolicy.Store
+	// ResponseHeadersPolicyStore backs the AWS REST ResponseHeadersPolicy
+	// handlers. nil disables those routes entirely.
+	ResponseHeadersPolicyStore responseheaderspolicy.Store
 	// InvalidationStore backs the AWS REST Invalidation handlers
 	// (CreateInvalidation / GetInvalidation / ListInvalidations). nil
 	// disables the AWS XML invalidation routes.
@@ -122,6 +126,14 @@ func buildMux(cfg Config) http.Handler {
 		mux.HandleFunc("PUT /2020-05-31/origin-request-policy/{id}", oh.Update)
 		mux.HandleFunc("DELETE /2020-05-31/origin-request-policy/{id}", oh.Delete)
 		mux.HandleFunc("GET /2020-05-31/origin-request-policy", oh.List)
+	}
+	if cfg.ResponseHeadersPolicyStore != nil {
+		rh := &responseheaderspolicy.Handler{Store: cfg.ResponseHeadersPolicyStore}
+		mux.HandleFunc("POST /2020-05-31/response-headers-policy", rh.Create)
+		mux.HandleFunc("GET /2020-05-31/response-headers-policy/{id}", rh.Get)
+		mux.HandleFunc("PUT /2020-05-31/response-headers-policy/{id}", rh.Update)
+		mux.HandleFunc("DELETE /2020-05-31/response-headers-policy/{id}", rh.Delete)
+		mux.HandleFunc("GET /2020-05-31/response-headers-policy", rh.List)
 	}
 	if cfg.InvalidationStore != nil {
 		ah := &invalidation.AWSHandler{

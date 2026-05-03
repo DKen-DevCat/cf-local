@@ -21,7 +21,7 @@ kickoff 前相談で確定した方針:
 
 ### 実装タスク
 
-- [ ] **4c-1**: ResponseHeadersPolicy CRUD (`aws_cloudfront_response_headers_policy`) — `internal/api/response_headers_policy.go` 新規 + store。`CustomHeadersConfig` + `CorsConfig` のみ実装、残り 3 系統は accept + 警告
+- [x] **4c-1**: ResponseHeadersPolicy CRUD (`aws_cloudfront_response_headers_policy`) — `internal/api/responseheaderspolicy/` 新規 (store + bolt + handler + id) + `internal/api/xml/response_headers_policy{,_convert}.go`。全 5 sub-config を accept + 永続化、`SecurityHeadersConfig` / `ServerTimingHeadersConfig` / `RemoveHeadersConfig` は `log.Printf` で警告。Bolt bucket `response_headers_policies` 追加、reloader.Trigger 配線、route `POST/GET/PUT/DELETE /2020-05-31/response-headers-policy{/id}`
 - [ ] **4c-2**: distribution との関連付け (cache behavior 経由で `add_header` directive を nginx.conf に注入) — `internal/api/distribution.go` / `internal/nginx/renderer.go`
 - [ ] **4c-3**: AWS 互換エラー形式 `<ErrorResponse><Error><Code>...</Code><Message>...</Message></Error></ErrorResponse>` の共通ヘルパー + 既存ハンドラ移行 — `internal/api/errors.go` 新規。Code: `NoSuchDistribution` / `NoSuchInvalidation` / `NoSuchCachePolicy` / `NoSuchResponseHeadersPolicy` / `InvalidArgument` / `EntityAlreadyExists` / `IllegalUpdate` / `InvalidIfMatchVersion`
 - [ ] **4c-4** (BL-IM1): managed CachePolicy `IllegalUpdate` AWS 正規コード確認 — 4c-3 のついで。実 AWS or AWS SDK Go v2 (`cloudfrontTypes`) のエラー定義を grep

@@ -7,6 +7,10 @@
 // `POST /2020-05-31/distribution/{Id}/invalidation` (CreateInvalidation) に
 // 一本化した — 非同期 worker は cache directory を直接 walk するため、旧
 // `/_cf_purge<path>` 経由の HTTP 呼び出し (= --nginx-url flag) も不要になった。
+// Phase 4-C 4c-1 で ResponseHeadersPolicy CRUD を追加 (CustomHeadersConfig
+// + CorsConfig は 4c-2 で nginx renderer に配線、SecurityHeadersConfig /
+// ServerTimingHeadersConfig / RemoveHeadersConfig は accept + 永続化のみで
+// 警告ログを出す)。
 //
 // HTTP lifecycle 自体は internal/api の Run() に切り出されており、main は
 // flag parse + render + Run 呼び出しの薄い shell に留める。port は :4566
@@ -39,6 +43,7 @@ import (
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
 	apiinv "github.com/DKen-DevCat/cf-local/internal/api/invalidation"
 	"github.com/DKen-DevCat/cf-local/internal/api/originrequestpolicy"
+	"github.com/DKen-DevCat/cf-local/internal/api/responseheaderspolicy"
 	"github.com/DKen-DevCat/cf-local/internal/config"
 	"github.com/DKen-DevCat/cf-local/internal/invalidation"
 	cfnginx "github.com/DKen-DevCat/cf-local/internal/nginx"
@@ -53,14 +58,14 @@ const (
 	// the invalidation worker walks this directory to find cache slots that
 	// match invalidation patterns (4b-6 / B-2 direct file removal).
 	defaultCacheDir = "/var/cache/nginx"
-	version         = "0.0.0-phase4b-4b.9"
+	version         = "0.0.0-phase4c-4c.1"
 )
 
 func main() {
 	configDir := flag.String("config-dir", defaultConfigDir, "directory containing cache-policies/ and distributions/ JSON files")
 	outDir := flag.String("out-dir", defaultOutDir, "directory to write cf-local.conf and policies.json (named volume mount in docker compose)")
 	addr := flag.String("addr", defaultAddr, "HTTP listener address for the control-plane API")
-	dbPath := flag.String("db-path", defaultDBPath, "BoltDB file path for AWS API state (cache_policies / distributions / origin_request_policies / invalidations)")
+	dbPath := flag.String("db-path", defaultDBPath, "BoltDB file path for AWS API state (cache_policies / distributions / origin_request_policies / response_headers_policies / invalidations)")
 	cacheDir := flag.String("cache-dir", defaultCacheDir, "nginx proxy_cache_path directory (walked by the invalidation worker)")
 	flag.Parse()
 
@@ -130,6 +135,10 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 	if err != nil {
 		return fmt.Errorf("origin_request_policies store: %w", err)
 	}
+	rhpStore, err := responseheaderspolicy.NewBoltStore(db)
+	if err != nil {
+		return fmt.Errorf("response_headers_policies store: %w", err)
+	}
 	invStore, err := apiinv.NewBoltStore(db)
 	if err != nil {
 		return fmt.Errorf("invalidations store: %w", err)
@@ -165,16 +174,18 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 	cpStore.SetOnChange(reloader.Trigger)
 	distStore.SetOnChange(reloader.Trigger)
 	orpStore.SetOnChange(reloader.Trigger)
+	rhpStore.SetOnChange(reloader.Trigger)
 	go reloader.Run(ctx)
 	fmt.Fprintf(stdout, "  reloader      : debounce=%s, out-dir=%s\n", cfnginx.DefaultReloadDebounce, outDir)
 
 	return api.Run(ctx, api.Config{
-		Addr:                     addr,
-		Stdout:                   stdout,
-		CachePolicyStore:         cpStore,
-		DistributionStore:        distStore,
-		OriginRequestPolicyStore: orpStore,
-		InvalidationStore:        invStore,
+		Addr:                       addr,
+		Stdout:                     stdout,
+		CachePolicyStore:           cpStore,
+		DistributionStore:          distStore,
+		OriginRequestPolicyStore:   orpStore,
+		ResponseHeadersPolicyStore: rhpStore,
+		InvalidationStore:          invStore,
 		InvalidationEnqueue: func(id string, paths []string) {
 			worker.Enqueue(invalidation.Job{ID: id, Paths: paths})
 		},
