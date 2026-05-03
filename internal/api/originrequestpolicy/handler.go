@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 
+	"github.com/DKen-DevCat/cf-local/internal/api/validate"
 	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
 )
 
@@ -35,10 +36,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrAlreadyExists):
-			awsxml.WriteXMLError(w, http.StatusConflict, "OriginRequestPolicyAlreadyExists",
+			awsxml.WriteError(w, awsxml.CodeOriginRequestPolicyAlreadyExists,
 				fmt.Sprintf("an origin request policy already exists with the same name: %s", *cfg.Name))
 		default:
-			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			awsxml.WriteInternalError(w, err)
 		}
 		return
 	}
@@ -51,11 +52,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.Store.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchOriginRequestPolicy",
+			awsxml.WriteError(w, awsxml.CodeNoSuchOriginRequestPolicy,
 				fmt.Sprintf("the origin request policy does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	writeOriginRequestPolicyResponse(w, http.StatusOK, rec)
@@ -73,13 +74,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchOriginRequestPolicy",
+			awsxml.WriteError(w, awsxml.CodeNoSuchOriginRequestPolicy,
 				fmt.Sprintf("the origin request policy does not exist: %s", id))
 		case errors.Is(err, ErrAlreadyExists):
-			awsxml.WriteXMLError(w, http.StatusConflict, "OriginRequestPolicyAlreadyExists",
+			awsxml.WriteError(w, awsxml.CodeOriginRequestPolicyAlreadyExists,
 				fmt.Sprintf("an origin request policy already exists with the same name: %s", *cfg.Name))
 		default:
-			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			awsxml.WriteInternalError(w, err)
 		}
 		return
 	}
@@ -92,11 +93,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	ifMatch := r.Header.Get("If-Match")
 	if err := h.Store.Delete(r.Context(), id, ifMatch); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchOriginRequestPolicy",
+			awsxml.WriteError(w, awsxml.CodeNoSuchOriginRequestPolicy,
 				fmt.Sprintf("the origin request policy does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -109,7 +110,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	records, err := h.Store.List(r.Context())
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 
@@ -138,17 +139,17 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.OriginRequestPolicyConfig, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "read body: "+err.Error())
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "read body: "+err.Error())
 		return nil, false
 	}
 	var wrapper awsxml.OriginRequestPolicyConfig
 	if err := xml.Unmarshal(body, &wrapper); err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+		awsxml.WriteError(w, awsxml.CodeMalformedXML, err.Error())
 		return nil, false
 	}
 	cfg := wrapper.ToSDK()
-	if cfg == nil || cfg.Name == nil || *cfg.Name == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "Name is required")
+	if err := validate.OriginRequestPolicyConfig(cfg); err != nil {
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, err.Error())
 		return nil, false
 	}
 	return cfg, true

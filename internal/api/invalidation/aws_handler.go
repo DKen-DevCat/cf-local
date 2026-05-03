@@ -51,33 +51,29 @@ type AWSHandler struct {
 func (h *AWSHandler) Create(w http.ResponseWriter, r *http.Request) {
 	distID := r.PathValue("distId")
 	if distID == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
-			"distribution id required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "distribution id required")
 		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, awsMaxBodyBytes))
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
-			"read body: "+err.Error())
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "read body: "+err.Error())
 		return
 	}
 
 	var wrapper awsxml.InvalidationBatch
 	if err := xml.Unmarshal(body, &wrapper); err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+		awsxml.WriteError(w, awsxml.CodeMalformedXML, err.Error())
 		return
 	}
 
 	sdk := wrapper.ToSDK()
 	if sdk == nil || sdk.CallerReference == nil || *sdk.CallerReference == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
-			"CallerReference is required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "CallerReference is required")
 		return
 	}
 	if sdk.Paths == nil || len(sdk.Paths.Items) == 0 {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
-			"Paths must contain at least one path")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "Paths must contain at least one path")
 		return
 	}
 
@@ -86,7 +82,7 @@ func (h *AWSHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// for a developer to fix the offending path without scrolling logs.
 	for i, p := range sdk.Paths.Items {
 		if _, err := matcher.ParsePattern(p); err != nil {
-			awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+			awsxml.WriteError(w, awsxml.CodeInvalidArgument,
 				fmt.Sprintf("Paths[%d] %q: %s", i, p, err.Error()))
 			return
 		}
@@ -94,8 +90,7 @@ func (h *AWSHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	rec, err := h.Store.Create(r.Context(), distID, sdk)
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError",
-			err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 
@@ -118,18 +113,18 @@ func (h *AWSHandler) Get(w http.ResponseWriter, r *http.Request) {
 	distID := r.PathValue("distId")
 	invID := r.PathValue("id")
 	if distID == "" || invID == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument,
 			"distribution id and invalidation id are required")
 		return
 	}
 	rec, err := h.Store.Get(r.Context(), distID, invID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchInvalidation",
+			awsxml.WriteError(w, awsxml.CodeNoSuchInvalidation,
 				fmt.Sprintf("the invalidation does not exist: %s", invID))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	writeInvalidationResponse(w, http.StatusOK, rec)
@@ -164,8 +159,7 @@ const listMaxItemsCap = 100
 func (h *AWSHandler) List(w http.ResponseWriter, r *http.Request) {
 	distID := r.PathValue("distId")
 	if distID == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
-			"distribution id required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "distribution id required")
 		return
 	}
 
@@ -178,7 +172,7 @@ func (h *AWSHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	records, err := h.Store.List(r.Context(), distID)
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 
@@ -226,12 +220,12 @@ func parseListMaxItems(w http.ResponseWriter, raw string) (int, bool) {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument,
 			fmt.Sprintf("MaxItems must be a positive integer, got %q", raw))
 		return 0, false
 	}
 	if n <= 0 {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument,
 			fmt.Sprintf("MaxItems must be a positive integer, got %d", n))
 		return 0, false
 	}

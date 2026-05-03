@@ -3,7 +3,7 @@ package nginx
 import (
 	"context"
 	"fmt"
-	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -22,17 +22,19 @@ const DefaultReloadDebounce = 1 * time.Second
 // cf-local.conf without restarting cf-local.
 //
 // fetch is a snapshot closure: each call must return a *fresh*
-// *config.LoadResult reflecting the current state of all 3 stores
-// (CachePolicy / Distribution / OriginRequestPolicy). The Reloader does
-// not retain the previous snapshot — every render rebuilds from scratch.
+// *config.LoadResult reflecting the current state of all 4 stores
+// (CachePolicy / Distribution / OriginRequestPolicy / ResponseHeadersPolicy).
+// The Reloader does not retain the previous snapshot — every render rebuilds
+// from scratch.
 //
-// stdout receives one-line status messages on every render attempt
-// (success and failure). main.go passes os.Stdout in production.
+// Phase 4-C 4c-6: per-render status messages were migrated from
+// io.Writer (fmt.Fprintf) to slog.Logger so they share the
+// CF_LOCAL_LOG_FORMAT routing configured in cmd/cf-local/main.go.
 type Reloader struct {
 	outDir   string
 	fetch    func() *config.LoadResult
 	debounce time.Duration
-	stdout   io.Writer
+	logger   *slog.Logger
 
 	trigger chan struct{}
 
@@ -44,16 +46,18 @@ type Reloader struct {
 
 // NewReloader wires a Reloader against outDir. fetch should be a closure
 // that snapshots the current store state into a *config.LoadResult.
-// stdout is where startup / render messages go (nil silences them).
-func NewReloader(outDir string, fetch func() *config.LoadResult, stdout io.Writer) *Reloader {
-	if stdout == nil {
-		stdout = io.Discard
+// logger receives one structured record per render attempt
+// (info on success, error on failure). nil falls back to slog.Default()
+// which `cmd/cf-local/main.go` configures.
+func NewReloader(outDir string, fetch func() *config.LoadResult, logger *slog.Logger) *Reloader {
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &Reloader{
 		outDir:   outDir,
 		fetch:    fetch,
 		debounce: DefaultReloadDebounce,
-		stdout:   stdout,
+		logger:   logger,
 		trigger:  make(chan struct{}, 1),
 	}
 }
@@ -95,30 +99,41 @@ func (r *Reloader) Run(ctx context.Context) {
 func (r *Reloader) render() {
 	res := r.fetch()
 	if res == nil {
-		r.recordErr(fmt.Errorf("reloader: fetch returned nil LoadResult"))
+		err := fmt.Errorf("reloader: fetch returned nil LoadResult")
+		r.recordErr(err)
+		r.logger.Error("reloader_fetch_nil", slog.String("error", err.Error()))
 		return
 	}
 	out, err := Render(res)
 	if err != nil {
 		r.recordErr(fmt.Errorf("reloader: Render: %w", err))
-		fmt.Fprintf(r.stdout, "  reloader: render failed: %v\n", err)
+		r.logger.Error("reloader_render_failed", slog.String("error", err.Error()))
 		return
 	}
 	if err := WriteAtomic(r.outDir, "policies.json", out.Policies); err != nil {
 		r.recordErr(fmt.Errorf("reloader: write policies.json: %w", err))
-		fmt.Fprintf(r.stdout, "  reloader: write policies.json failed: %v\n", err)
+		r.logger.Error("reloader_write_failed",
+			slog.String("file", "policies.json"),
+			slog.String("error", err.Error()),
+		)
 		return
 	}
 	if out.Conf != nil {
 		if err := WriteAtomic(r.outDir, "cf-local.conf", out.Conf); err != nil {
 			r.recordErr(fmt.Errorf("reloader: write cf-local.conf: %w", err))
-			fmt.Fprintf(r.stdout, "  reloader: write cf-local.conf failed: %v\n", err)
+			r.logger.Error("reloader_write_failed",
+				slog.String("file", "cf-local.conf"),
+				slog.String("error", err.Error()),
+			)
 			return
 		}
 	}
 	r.recordErr(nil)
-	fmt.Fprintf(r.stdout, "  reloader: rendered %d cache policies, distribution=%t (out-dir=%s)\n",
-		len(res.CachePolicies), res.Distribution != nil, r.outDir)
+	r.logger.Info("reloader_rendered",
+		slog.Int("cache_policies", len(res.CachePolicies)),
+		slog.Bool("distribution", res.Distribution != nil),
+		slog.String("out_dir", r.outDir),
+	)
 }
 
 func (r *Reloader) recordErr(err error) {

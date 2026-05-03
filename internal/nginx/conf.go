@@ -11,33 +11,44 @@ import (
 
 // conf.go: cf-local.conf 生成ロジック。
 //
-// 出力構造 (Phase 0〜2 の 2-hop パターンを policy 数だけ展開):
+// 出力構造 (Phase 4-C 4c-7 で 2 server block 構成に変更):
 //
 //   1. ヘッダ (load_module は base nginx.conf 側、ここでは js_* / proxy_cache_path)
 //   2. upstream blocks (Origins[].Id 1 つにつき 1 block + self)
-//   3. server { listen 8080; }
-//      a. invalidation purge endpoint
-//      b. CacheBehaviors[] の outer location (PathPattern 順)
-//      c. DefaultCacheBehavior の outer location (`location /`)
-//      d. inner locations (sanitized policy id alphabetical, dedup)
+//      - `upstream self { server unix:/run/cf-local-inner.sock; }` で内部 hop は
+//        unix socket 経由になった (BL-NX1)
+//   3. 公開 server { listen 8080; }
+//      a. CacheBehaviors[] の outer location (PathPattern 順)
+//      b. DefaultCacheBehavior の outer location (`location /`)
+//   4. 内部 server { listen unix:/run/cf-local-inner.sock; }
+//      a. inner locations (sanitized policy id alphabetical, dedup)
+//
+// 4c-7 以前は inner location も 8080 server に同居しており `allow 127.0.0.1;
+// deny all;` で外部アクセスを弾いていたが、コンテナ内 / 同 host から
+// `:8080/_cf_inner_*` で迂回可能だった。現在は unix socket でしか到達でき
+// ないため、外部から `/_cf_inner_*` を叩くと 8080 server に該当 location が
+// 無いので 404 を返す (バイパス穴を物理的に塞ぐ)。
 //
 // サニタイズ規則:
 //
 //   - upstream / inner location 名: `[^a-zA-Z0-9_]` を `_` に置換
 //   - PathPattern → location prefix: 末尾 `/*` を strip
-//
-// A.4.3 では DefaultCacheBehavior のみ対応 (CacheBehaviors[] は A.4.4 で追加、
-// disabled 分岐は A.4.6 で追加)。
 
-// renderConf は AWS SDK の DistributionConfig + CachePolicyConfig マップから
-// cf-local.conf のバイト列を組み立てる。Distribution が nil または
-// Enabled=false の場合の分岐は本関数の呼び出し側 (Render) が担当する。
-func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConfig) ([]byte, error) {
+// renderConf は AWS SDK の DistributionConfig + CachePolicyConfig マップ +
+// ResponseHeadersPolicyConfig マップ (Phase 4-C 4c-2) から cf-local.conf の
+// バイト列を組み立てる。Distribution が nil または Enabled=false の場合の
+// 分岐は本関数の呼び出し側 (Render) が担当する。
+//
+// rhp が nil または cache behavior の ResponseHeadersPolicyId が map に
+// 存在しない場合は、その behavior に対する add_header 注入を skip する
+// (RHP は optional で、未登録の RHP を参照していても render を fail させ
+// ない設計判断 — CachePolicy は required なので扱いが異なる)。
+func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConfig, rhp map[string]*types.ResponseHeadersPolicyConfig) ([]byte, error) {
 	origins, err := buildOriginViews(d.Origins)
 	if err != nil {
 		return nil, err
 	}
-	behaviors, inners, err := buildBehaviorViews(d)
+	behaviors, inners, err := buildBehaviorViews(d, rhp)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +72,11 @@ type behaviorView struct {
 	Location    string // "/" や "/api/"
 	PolicyID    string // raw (set $cf_policy_id "<raw>")
 	InnerPrefix string // "/_cf_inner_<sanitized-policy-id>"
+	// HeaderDirectives は ResponseHeadersPolicy (4c-2) から導出した nginx
+	// directive 行 (`add_header ... always;` / `proxy_hide_header ...;`)。
+	// 各要素は "        " インデント込みの完全な行 (末尾の改行は含まない)。
+	// nil または空 slice の場合は何も挿入しない (今までと同じ出力)。
+	HeaderDirectives []string
 }
 
 type innerView struct {
@@ -109,7 +125,7 @@ func buildOriginViews(origins *types.Origins) ([]originView, error) {
 // (sanitized id ベースで dedup)。dedup された場合の TargetOriginId は
 // 「最初に登録した behavior のもの」を採用する (Phase 3 の挙動として確定。
 // 同 policy で別 origin に振り分けたい場合は別 policy を作る運用)。
-func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerView, error) {
+func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.ResponseHeadersPolicyConfig) ([]behaviorView, []innerView, error) {
 	if d == nil {
 		return nil, nil, fmt.Errorf("DistributionConfig is nil")
 	}
@@ -152,6 +168,7 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 			pattern := derefString(b.PathPattern)
 			policyID := derefString(b.CachePolicyId)
 			originID := derefString(b.TargetOriginId)
+			rhpID := derefString(b.ResponseHeadersPolicyId)
 
 			loc, err := pathPatternToLocation(pattern)
 			if err != nil {
@@ -162,11 +179,17 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 				return nil, nil, fmt.Errorf("CacheBehaviors[%d].CachePolicyId %q sanitizes to empty string", i, policyID)
 			}
 
+			comment := fmt.Sprintf("CacheBehaviors[%d]: %s (CachePolicyId=%s", i, pattern, policyID)
+			if rhpID != "" {
+				comment += fmt.Sprintf(", ResponseHeadersPolicyId=%s", rhpID)
+			}
+			comment += ")."
 			behaviors = append(behaviors, behaviorView{
-				Comment:     fmt.Sprintf("CacheBehaviors[%d]: %s (CachePolicyId=%s).", i, pattern, policyID),
-				Location:    loc,
-				PolicyID:    policyID,
-				InnerPrefix: "/_cf_inner_" + san,
+				Comment:          comment,
+				Location:         loc,
+				PolicyID:         policyID,
+				InnerPrefix:      "/_cf_inner_" + san,
+				HeaderDirectives: lookupResponseHeaders(rhp, rhpID),
 			})
 			if err := addInner(policyID, originID, san); err != nil {
 				return nil, nil, fmt.Errorf("CacheBehaviors[%d]: %w", i, err)
@@ -177,15 +200,22 @@ func buildBehaviorViews(d *types.DistributionConfig) ([]behaviorView, []innerVie
 	// 2. DefaultCacheBehavior
 	defaultOriginID := derefString(d.DefaultCacheBehavior.TargetOriginId)
 	defaultPolicyID := derefString(d.DefaultCacheBehavior.CachePolicyId)
+	defaultRHPID := derefString(d.DefaultCacheBehavior.ResponseHeadersPolicyId)
 	defaultSan := sanitizeID(defaultPolicyID)
 	if defaultSan == "" {
 		return nil, nil, fmt.Errorf("DefaultCacheBehavior.CachePolicyId %q sanitizes to empty string", defaultPolicyID)
 	}
+	defaultComment := fmt.Sprintf("DefaultCacheBehavior (CachePolicyId=%s", defaultPolicyID)
+	if defaultRHPID != "" {
+		defaultComment += fmt.Sprintf(", ResponseHeadersPolicyId=%s", defaultRHPID)
+	}
+	defaultComment += ")."
 	behaviors = append(behaviors, behaviorView{
-		Comment:     fmt.Sprintf("DefaultCacheBehavior (CachePolicyId=%s).", defaultPolicyID),
-		Location:    "/",
-		PolicyID:    defaultPolicyID,
-		InnerPrefix: "/_cf_inner_" + defaultSan,
+		Comment:          defaultComment,
+		Location:         "/",
+		PolicyID:         defaultPolicyID,
+		InnerPrefix:      "/_cf_inner_" + defaultSan,
+		HeaderDirectives: lookupResponseHeaders(rhp, defaultRHPID),
 	})
 	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan); err != nil {
 		return nil, nil, err
@@ -257,24 +287,42 @@ proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=cf_cache:100m max_size=1g
 `)
 }
 
+// innerSocketPath は inner-server が listen / outer→inner の upstream が
+// connect する unix domain socket のパス。コンテナ内 tmpfs 上に置く。
+// reload-entrypoint.sh が `umask 000` してから nginx を exec するため、
+// nginx (master=root) が作成する socket file は mode 0666 となり、
+// `nginx` user の workers が connect できる。
+const innerSocketPath = "/run/cf-local-inner.sock"
+
 func writeUpstreams(b *bytes.Buffer, origins []originView) {
 	for _, o := range origins {
 		fmt.Fprintf(b, "upstream %s {\n    server %s;\n}\n", o.UpstreamName, o.Server)
 	}
-	b.WriteString("upstream self {\n    server 127.0.0.1:8080;\n}\n\n")
+	fmt.Fprintf(b, "upstream self {\n    server unix:%s;\n}\n\n", innerSocketPath)
 }
 
+// writeServerBlock は 2 つの server block を出す (Phase 4-C 4c-7):
+//
+//   - 公開 server (`listen 8080;`): outer locations のみ。`/_cf_inner_*` は
+//     存在しないので外部からのバイパスは構造的に不可能。
+//   - 内部 server (`listen unix:/run/cf-local-inner.sock;`): inner locations
+//     のみ。`upstream self` 経由で同一 nginx workers からだけ到達できる。
 func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerView) {
-	b.WriteString("server {\n    listen 8080;\n\n")
 	// Phase 3 の独自 invalidation 経路 (`/_cf_purge<path>` location +
 	// ngx_cache_purge proxy_cache_purge) は phase-4b 4b-9 で撤去。
 	// AWS REST CreateInvalidation handler から enqueue される非同期 worker
 	// (internal/invalidation/cache.go) が proxy_cache_path 配下を直接 walk
 	// して os.Remove で消すため、nginx 側に purge endpoint は要らない。
-	for _, beh := range behaviors {
+	b.WriteString("server {\n    listen 8080;\n\n")
+	for i, beh := range behaviors {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
 		writeOuterLocation(b, beh)
-		b.WriteByte('\n')
 	}
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "server {\n    listen unix:%s;\n\n", innerSocketPath)
 	for i, inner := range inners {
 		if i > 0 {
 			b.WriteByte('\n')
@@ -302,6 +350,13 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
         add_header X-Cache-Key    $cf_cache_key          always;
 
 `)
+	for _, line := range beh.HeaderDirectives {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if len(beh.HeaderDirectives) > 0 {
+		b.WriteByte('\n')
+	}
 	fmt.Fprintf(b, "        proxy_pass http://self%s$request_uri;\n", beh.InnerPrefix)
 	b.WriteString(`        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -312,11 +367,11 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
 }
 
 func writeInnerLocation(b *bytes.Buffer, inner innerView) {
+	// Phase 4-C 4c-7 (BL-NX1) 以降は inner-server 自体が unix socket でしか
+	// listen していないため、`allow 127.0.0.1; deny all;` の defense-in-depth
+	// は不要になった (旧版は同 8080 server に同居していたためバイパス対策
+	// として必要だった)。
 	fmt.Fprintf(b, "    location %s {\n", inner.Location)
-	b.WriteString(`        allow 127.0.0.1;
-        deny all;
-
-`)
 	fmt.Fprintf(b, "        set $cf_policy_id %q;\n", inner.PolicyID)
 	b.WriteString("        js_header_filter ttl.computeAndInject;\n\n")
 	fmt.Fprintf(b, "        proxy_pass http://%s/;\n", inner.UpstreamName)

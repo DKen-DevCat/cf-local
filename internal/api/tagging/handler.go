@@ -27,7 +27,7 @@ type Handler struct{}
 // <Tags><Items /></Tags> envelope regardless of the resource queried.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("Resource") == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "Resource query parameter is required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "Resource query parameter is required")
 		return
 	}
 	resp := tagsResponse{Items: &tagsItems{}}
@@ -49,7 +49,7 @@ func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 	case "Tag", "Untag":
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument",
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument,
 			"Operation query parameter must be Tag or Untag")
 	}
 }

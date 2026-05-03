@@ -122,8 +122,8 @@ inner 出力の `X-Accel-Expires` が outer から見ると "upstream の最終�
 
 副次的なコスト:
 - 各 cacheable location に outer / inner のペアが必要
-- TCP self-loop (`upstream self { server 127.0.0.1:8080; }`) で sub-millisecond のオーバーヘッド
-- inner location は `allow 127.0.0.1; deny all;` で外部から直接叩けないようにしてある
+- self-loop (`upstream self { server unix:/run/cf-local-inner.sock; }`) で sub-millisecond のオーバーヘッド (Phase 4-C 4c-7 で TCP loopback から unix socket に切替)
+- inner location は専用の `server { listen unix:/run/cf-local-inner.sock; }` ブロックに分離してあり、`:8080` の公開 server には `_cf_inner_*` location が存在しないため外部から直接叩く経路が構造的に存在しない (4c-7 以前は同 8080 server 内で `allow 127.0.0.1; deny all;` で防御していた)
 
 ## デバッグ
 

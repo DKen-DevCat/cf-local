@@ -28,11 +28,11 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-3` | 完了 (2026-04-30) | Invalidation API + 設定ファイル方式 |
 | `phase-4a` | 完了 (2026-05-02) | Terraform対応・最小 |
 | `phase-4b` | 完了 (2026-05-03) | Invalidation API互換 |
-| `phase-4c` | 未着手 | 仕上げ |
+| `phase-4c` | 完了 (2026-05-03) | 仕上げ (RHP + unix socket + slog + error codes) |
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
-| `chore-2` | 未着手 | check.md D-2 セクションの手順誤記修正 (docs-only) |
+| `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
 
 ---
 
@@ -198,29 +198,31 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-4c: 仕上げ
+## phase-4c: 仕上げ (完了 2026-05-03)
 
-**到達状態**: API互換性を本番に近づけ、運用品質を上げる。
-
-**ゴールイメージ**:
-
-- ResponseHeadersPolicy対応
-- AWS API互換のエラーレスポンス形式（`<ErrorResponse>`タグ等）
-- ログ整備（リクエストトレース、cache hit/miss可視化）
-- `docs/limitations.md` 完成
+**到達状態 (実機検証は ship 前に手動運用)**: M3 達成 (= OSS β 候補) のための 3 軸 (API 互換性 / 観測性 / 基盤堅牢化) 仕上げを完了。ResponseHeadersPolicy CRUD + nginx renderer 注入、AWS 互換 `<ErrorResponse>` の typed Code 集約、`log/slog` ベースの request log middleware + 全体の log.Printf → slog 統一、inner location の unix socket 化 (バイパス穴を構造的に削除)、policy validation を file/API 両 path で統一、vegeta stress harness、`docs/limitations.md` 完成 + 13 BL タスクの index 表。PR #12 で develop に merge 予定。タスク履歴: tasks-archive 移行は ship 後。設計および完了時メモ: `.claude/design/polish-2026-05-03.md`。
 
 **完了条件**:
 
-- [ ] ResponseHeadersPolicy
-- [ ] AWS API互換エラー形式
-- [ ] ログ整備
-- [ ] limitations.md 完成
+- [x] ResponseHeadersPolicy (CRUD + renderer 注入で CustomHeaders + Cors を反映、残り 3 系統は accept + slog warn / 4c-1 + 4c-2)
+- [x] AWS API互換エラー形式 (typed Code 14 種 + statusForCode + WriteError ヘルパーで 6 ハンドラ統一 / 4c-3, 4c-4)
+- [x] ログ整備 (slog HTTP request middleware + CF_LOCAL_LOG_FORMAT=text|json + 全 log.Printf → slog / 4c-5, 4c-6)
+- [x] limitations.md 完成 (PathPattern / RHP / Invalidation wildcard / ETag / 積みタスク 13 件 index 表 / 4c-10, 4c-11)
 
-**着手前にユーザーと相談する点**:
+**追加で消化した積みタスク**:
 
-- どのレベルまでエラー互換を取るか（最低限/中程度/完全互換）
-- ログのフォーマット（JSON or 人間可読）
-- 開発者向けのデバッグUIを作るか（ブラウザでcache状況確認）
+- BL-NX1 (unix socket 化、4c-7)
+- BL-NX2 (vegeta stress harness、4c-8 — 実機 baseline は ship 前に手動)
+- BL-LD1 (Go loader sanitize for API path、4c-9)
+- BL-IM1 (managed policy IllegalUpdate コード SDK 解釈互換確認、4c-4)
+- BL-OB1 (HTTP request log middleware、4c-5)
+
+**Phase 4-C kickoff 前相談で確定した方針**:
+
+- A-1 エラー互換: 中程度 (CloudFront `<ErrorResponse>` 形式 + 主要 Code)
+- A-2 ログ: log/slog 人間可読 default + `CF_LOCAL_LOG_FORMAT=json` 切替
+- A-3 デバッグ UI: 作らない (v0.2 候補)
+- D ResponseHeadersPolicy: CustomHeadersConfig + CorsConfig のみ実装、残り 3 系統は accept + 警告
 
 ---
 
@@ -349,11 +351,12 @@ Phase 3 完了直後に cf-local の `.claude/` 配下に `/check` + `/review-di
 
 ---
 
-## chore-2: check.md D-2 セクションの手順誤記修正
+## chore-2: check.md D-2 セクションの手順誤記修正 (完了 2026-05-03)
 
-> ステータス: planned
-> ブランチ案: `chore/check-md-d2-fix`
+> ステータス: 完了 (2026-05-03) - PR #11 で develop に merge 済
+> ブランチ: `chore/check-md-d2-fix`
 > 作成日: 2026-05-03
+> タスク履歴: `.claude/tasks-archive/chore-2-2026-05-03.md`
 
 ### 目的 / 背景
 
@@ -385,9 +388,9 @@ Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β end
 
 ### タスク（実装ステップ）
 
-- [ ] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`policy=default ...`) に合わせて修正
-- [ ] **chore-2-2** (任意): トラブルシューティング表に「`X-Test-Policy` header 抜けで `400 Bad Request: X-Test-Policy header required`」の 1 行追記
-- [ ] **chore-2-3**: PR 作成前に修正後手順を実機で再走（`curl -H 'X-Test-Policy: default' ...` が 200 OK） + 他 docs (`docs/`, `README.md`, `examples/`) に同様誤記がないか grep で点検
+- [x] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`<sha256-hex>:<uri>` 形式 = 90 chars) に合わせて修正
+- [x] **chore-2-2** (任意): トラブルシューティング表に「`X-Test-Policy` header 抜けで `400 Bad Request: X-Test-Policy header required`」の 1 行追記
+- [x] **chore-2-3**: PR 作成前に修正後手順を実機で再走（`curl -H 'X-Test-Policy: default' ...` が 200 OK） + 他 docs (`docs/`, `README.md`, `examples/`) に同様誤記がないか grep で点検
 
 ### テスト方針
 
@@ -397,10 +400,10 @@ Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β end
 
 ### 完了条件
 
-- [ ] 修正後の curl コマンドが実機で 200 OK を返す
-- [ ] 期待 body 表記が実機出力と一致
-- [ ] 他ドキュメントに同様誤記が無いことを grep で確認済み
-- [ ] PR が develop に merge される
+- [x] 修正後の curl コマンドが実機で 200 OK を返す
+- [x] 期待 body 表記が実機出力と一致
+- [x] 他ドキュメントに同様誤記が無いことを grep で確認済み
+- [x] PR が develop に merge される
 
 ### リスク・未決事項
 

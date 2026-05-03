@@ -37,10 +37,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrAlreadyExists):
-			awsxml.WriteXMLError(w, http.StatusConflict, "DistributionAlreadyExists",
+			awsxml.WriteError(w, awsxml.CodeDistributionAlreadyExists,
 				fmt.Sprintf("a distribution already exists with the same caller reference: %s", *cfg.CallerReference))
 		default:
-			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			awsxml.WriteInternalError(w, err)
 		}
 		return
 	}
@@ -53,11 +53,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.Store.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchDistribution",
+			awsxml.WriteError(w, awsxml.CodeNoSuchDistribution,
 				fmt.Sprintf("the distribution does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	writeDistributionResponse(w, http.StatusOK, rec)
@@ -74,11 +74,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.Store.Update(r.Context(), id, cfg, ifMatch)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchDistribution",
+			awsxml.WriteError(w, awsxml.CodeNoSuchDistribution,
 				fmt.Sprintf("the distribution does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	writeDistributionResponse(w, http.StatusOK, rec)
@@ -92,11 +92,11 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.Store.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchDistribution",
+			awsxml.WriteError(w, awsxml.CodeNoSuchDistribution,
 				fmt.Sprintf("the distribution does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	w.Header().Set("ETag", rec.ETag)
@@ -117,11 +117,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	ifMatch := r.Header.Get("If-Match")
 	if err := h.Store.Delete(r.Context(), id, ifMatch); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchDistribution",
+			awsxml.WriteError(w, awsxml.CodeNoSuchDistribution,
 				fmt.Sprintf("the distribution does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -133,7 +133,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	records, err := h.Store.List(r.Context())
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 
@@ -166,13 +166,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.DistributionConfig, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "read body: "+err.Error())
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "read body: "+err.Error())
 		return nil, false
 	}
 
 	rootName, err := peekRootElement(body)
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+		awsxml.WriteError(w, awsxml.CodeMalformedXML, err.Error())
 		return nil, false
 	}
 
@@ -181,7 +181,7 @@ func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.DistributionCo
 	case "DistributionConfigWithTags":
 		var withTags awsxml.DistributionConfigWithTags
 		if err := xml.Unmarshal(body, &withTags); err != nil {
-			awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+			awsxml.WriteError(w, awsxml.CodeMalformedXML, err.Error())
 			return nil, false
 		}
 		// Tags are intentionally dropped: cf-local does not track tags
@@ -190,27 +190,27 @@ func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.DistributionCo
 	case "DistributionConfig":
 		var direct awsxml.DistributionConfig
 		if err := xml.Unmarshal(body, &direct); err != nil {
-			awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+			awsxml.WriteError(w, awsxml.CodeMalformedXML, err.Error())
 			return nil, false
 		}
 		wrapper = &direct
 	default:
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML",
+		awsxml.WriteError(w, awsxml.CodeMalformedXML,
 			fmt.Sprintf("expected element type <DistributionConfig> or <DistributionConfigWithTags> but have <%s>", rootName))
 		return nil, false
 	}
 
 	cfg := wrapper.ToSDK()
 	if cfg == nil || cfg.CallerReference == nil || *cfg.CallerReference == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "CallerReference is required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "CallerReference is required")
 		return nil, false
 	}
 	if cfg.Origins == nil || len(cfg.Origins.Items) == 0 {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "Origins is required and must contain at least one origin")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "Origins is required and must contain at least one origin")
 		return nil, false
 	}
 	if cfg.DefaultCacheBehavior == nil || cfg.DefaultCacheBehavior.TargetOriginId == nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "DefaultCacheBehavior is required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "DefaultCacheBehavior is required")
 		return nil, false
 	}
 	return cfg, true

@@ -40,6 +40,16 @@ type LoadResult struct {
 	// CachePolicies は CachePolicySchema.Name をキーとした AWS SDK 型のマップ。
 	CachePolicies map[string]*types.CachePolicyConfig
 
+	// ResponseHeadersPolicies は AWS REST API ハンドラ経由で登録された
+	// ResponseHeadersPolicy のマップ。Phase 4-C 4c-2 で renderer が cache
+	// behavior の `ResponseHeadersPolicyId` から参照し `add_header` /
+	// `proxy_hide_header` directive を outer location に注入するために用いる。
+	// キーは AWS SDK Go v2 の Id (ETag を含まない) — main.go の snapshot
+	// が `responseheaderspolicy.BoltStore` から List して詰める。
+	// config.Load (file-based) は本マップを populate しない (Phase 3 の
+	// distribution.json から参照されても renderer 側で nil-safe に skip)。
+	ResponseHeadersPolicies map[string]*types.ResponseHeadersPolicyConfig
+
 	// Distribution は distributions/ から読み込んだ唯一の DistributionConfig。
 	// ファイルが 0 件なら nil。
 	Distribution *types.DistributionConfig
@@ -58,7 +68,8 @@ type LoadResult struct {
 // 各ディレクトリが存在しない場合は 0 件として扱う (errors.Is(err, fs.ErrNotExist) で判別)。
 func Load(configDir string) (*LoadResult, error) {
 	res := &LoadResult{
-		CachePolicies: map[string]*types.CachePolicyConfig{},
+		CachePolicies:           map[string]*types.CachePolicyConfig{},
+		ResponseHeadersPolicies: map[string]*types.ResponseHeadersPolicyConfig{},
 	}
 
 	if err := loadCachePolicies(filepath.Join(configDir, "cache-policies"), res); err != nil {
