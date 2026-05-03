@@ -1,0 +1,3 @@
+# Per-run vegeta outputs are large + per-host noisy. Only baseline.md is
+# tracked in git for the cumulative record.
+results/
