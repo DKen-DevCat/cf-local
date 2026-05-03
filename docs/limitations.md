@@ -103,9 +103,13 @@ cf-local 側の制約 (Phase 4-D MVP):
 - **`include_body: true` 未対応** — request body は Lambda に渡らない (AWS 仕様で本来渡るはず)。積みタスク `BL-LE2`
 - **request header の改変は反映されない** — Lambda が変更後 headers を返しても、cf-local は origin に流す前にそれを proxy_set_header 経由で適用しない (URI / querystring の改変は反映される)。積みタスク `BL-LE5`
 - **request method の改変は反映されない** — viewer-request での method 改変は CloudFront 仕様上稀。積みタスク `BL-LE6`
+- **per-PathPattern Lambda routing 未対応** — 同一 distribution に複数の viewer-request 関数を attach した場合、`DefaultCacheBehavior` 側の関数が常に優先される (find-first-match)。`CacheBehavior[].PathPattern` で関数を切り替えたい場合は本フェーズでは未対応。積みタスク `BL-LE4`
+- **request `querystring=""` で意図的にクリアできない** — Lambda が `{"querystring": ""}` を返してクエリを除去する仕様は cf-local では「unchanged」と解釈し original を引き継ぐ。AWS Lambda contract「unchanged はフィールド省略」と整合する妥協。積みタスク `BL-LE7`
 - **CloudFront Functions (`FunctionAssociations`) 完全未対応** — JS-only / sub-ms 実行モデルで Lambda@Edge と別ランタイム。積みタスク `BL-CFF1`、phase-4e or phase-5 候補
 - **distribution ID は API 経由登録された Distribution にのみ有効** — file-based loader (`./cf-local/distributions/*.json`) で Lambda@Edge を使うには別途 API 経由で登録する必要がある (renderer は `LoadResult.DistributionID` が "" なら edge.js を import せず素通り)
 - **リクエスト ID** は cf-local 側で生成した hex 32 文字 (実 CloudFront の base64 形式と異なる)。Lambda 側のコードがこの値を解釈に使っていなければ問題なし
+- **multi-value header 取りこぼし注意** — njs `r.rawHeadersIn` 不在環境 (njs < 0.7.6) では `r.headersIn[name]` は同名複数ヘッダをカンマ結合した 1 文字列を返すため、`Set-Cookie` 等の multi-value 構造が失われる。`docker-compose.lambda.yml` 同梱の `nginx:1.27-alpine` に入る njs は 0.8.x で `rawHeadersIn` が使えるため通常は問題ないが、image を差し替える場合は注意
+- **base64 body デコードは njs バージョン依存** — `bodyEncoding: "base64"` の short-circuit response を返す Lambda コードは `Buffer.from(body, 'base64')` を njs で実行する。njs >= 0.8.x で動作確認済。古い njs を使う環境では `try/catch` で 502 にフォールバックする (配信は止めない)。積みタスク `BL-LE2` の include_body 対応と同時に再評価予定
 - **タイムアウト 5s 固定** — viewer-request 上限の AWS 規定値。RIE 側の per-function 設定 (timeout) は edge-proxy では制御せず、edge-proxy の context deadline で打ち切り
 - **IAM ロールに基づく権限制御はない** — DESIGN.md「やらない: セキュリティ機能」
 
@@ -154,8 +158,10 @@ phase ごとの繰越しタスクの index。詳細は `.claude/plan.md` およ�
 | `BL-LE1` | Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) | 未着手 (phase-4e 候補) |
 | `BL-LE2` | Lambda@Edge `include_body: true` 対応 (request body の Lambda 転送) | 未着手 (phase-4e 候補) |
 | `BL-LE3` | RIE が CloudFront event 受理に問題ある場合の Spike (4d-2 着手前は条件付きだったが実装で問題なしを確認 → 不要) | **解消 (phase-4d 4d-2)** |
+| `BL-LE4` | per-PathPattern Lambda function routing (CacheBehavior[] ごとに viewer-request 関数を切り替え) | 未着手 (phase-4e or 利用要望次第) |
 | `BL-LE5` | Lambda@Edge viewer-request の request **header** 改変反映 (proxy_set_header 経由 or 別の機構) | 未着手 (phase-4e 候補) |
 | `BL-LE6` | Lambda@Edge viewer-request の request **method** 改変反映 | 未着手 (phase-4e 候補、利用例が稀なので優先度低) |
+| `BL-LE7` | viewer-request の querystring 空文字 (Lambda が `{"querystring": ""}` で意図クリア) を区別できない (json field の有無検出が必要) | 未着手 (phase-4e or 利用要望次第) |
 | `BL-CFF1` | CloudFront Functions (`FunctionAssociations`) 対応 | 未着手 (phase-4e or phase-5 候補) |
 | `BL-RV1` / `BL-RV2` | Review infra 評価 (rules 領域別分割の要否 / 軸 4 公式ドキュ準拠精度) | 未着手 (phase-5 OSS 公開準備で再評価) |
 

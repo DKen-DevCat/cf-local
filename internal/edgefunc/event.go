@@ -226,17 +226,23 @@ func TranslateViewerRequestResponse(rieBody []byte, original InvokeRequest) (*In
 		return nil, fmt.Errorf("decode lambda return: %w", err)
 	}
 
-	// Short-circuit: a CloudFrontResponse with at least a status field.
-	if statusRaw, ok := raw["status"]; ok && len(statusRaw) > 0 {
-		var resp CloudFrontResponse
-		if err := json.Unmarshal(rieBody, &resp); err != nil {
-			return nil, fmt.Errorf("decode response: %w", err)
+	// Short-circuit: a CloudFrontResponse with a non-empty status string.
+	// REV-3 (Phase 4-D): `len(statusRaw) > 0` だけでは `{"status": ""}` も
+	// 通ってしまい、後続 strconv.Atoi("") で誤って transport error 扱いに
+	// なる。`status` の実値が非空文字列のときだけ short-circuit と判定する。
+	if statusRaw, ok := raw["status"]; ok {
+		var statusStr string
+		if err := json.Unmarshal(statusRaw, &statusStr); err == nil && statusStr != "" {
+			var resp CloudFrontResponse
+			if err := json.Unmarshal(rieBody, &resp); err != nil {
+				return nil, fmt.Errorf("decode response: %w", err)
+			}
+			flat, err := flattenResponse(resp)
+			if err != nil {
+				return nil, err
+			}
+			return &InvokeResponse{Action: ActionShortCircuit, Response: flat}, nil
 		}
-		flat, err := flattenResponse(resp)
-		if err != nil {
-			return nil, err
-		}
-		return &InvokeResponse{Action: ActionShortCircuit, Response: flat}, nil
 	}
 
 	// Continue: a (potentially modified) CloudFrontRequest. Lambda may

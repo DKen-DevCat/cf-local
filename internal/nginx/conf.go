@@ -309,7 +309,9 @@ func hasViewerRequestAssociation(lfa *types.LambdaFunctionAssociations) bool {
 		return false
 	}
 	for _, item := range lfa.Items {
-		if string(item.EventType) == "viewer-request" {
+		// REV-9 (Phase 4-D): SDK 定数で比較する。`string(item.EventType) == "..."`
+		// より型安全 + grep 性が高い。
+		if item.EventType == types.EventTypeViewerRequest {
 			return true
 		}
 	}
@@ -411,14 +413,42 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
 //
 // `r.variables.cf_distribution_id` と `cf_le_forward` を `set` で渡し、
 // `cf_edge_proxy` も同じく set で渡す。njs 側はこの 3 変数を読んで動く。
+//
+// REV-8 (Phase 4-D): nginx の `set $var "value";` ディレクティブはダブル
+// クォート文字列内でも `$` を変数展開する。distributionID は
+// `newDistributionID()` で英数字のみ生成、edgeProxyURL は env から来るので
+// 通常は安全だが、SEC-1 (sanitizeCommentText) と同方針の defense-in-depth で
+// `$` / `\` / 改行を含む値が来たら `_` に置換してから書き出す。
 func writeLambdaEdgeOuter(b *bytes.Buffer, beh behaviorView, distributionID, edgeProxyURL string) {
 	fmt.Fprintf(b, "    # %s — Lambda@Edge viewer-request\n", sanitizeCommentText(beh.Comment))
 	fmt.Fprintf(b, "    location %s {\n", beh.Location)
-	fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", distributionID)
-	fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", edgeProxyURL)
+	fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", sanitizeNginxSetValue(distributionID))
+	fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", sanitizeNginxSetValue(edgeProxyURL))
 	fmt.Fprintf(b, "        set $cf_le_forward %q;\n", forwardLocationName(beh.SanitizedPolicyID))
 	b.WriteString("        js_content edge.viewerRequest;\n")
 	b.WriteString("    }\n")
+}
+
+// sanitizeNginxSetValue は nginx `set $var "value";` の値文字列を defense-in-depth
+// で正規化する。`$` (変数展開) / `\` (エスケープ開始) / 改行 / CR / NUL は
+// `_` に置換する。通常運用では distributionID は英数字のみ・edgeProxyURL は
+// env からの URL なのでヒットしないが、loader / env のリグレッションで
+// メタ文字が混入したときに nginx config injection を起こさないための保険。
+func sanitizeNginxSetValue(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '$', '\\', '\n', '\r', 0:
+			b.WriteRune('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // writeForwardLocation は Lambda@Edge viewer-request の継続パス

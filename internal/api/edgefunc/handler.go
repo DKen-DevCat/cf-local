@@ -36,7 +36,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
-	awsxml "github.com/DKen-DevCat/cf-local/internal/api/xml"
 	"github.com/DKen-DevCat/cf-local/internal/edgefunc"
 )
 
@@ -95,6 +94,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // distribution typically attaches the same viewer-request handler. When a
 // distribution attaches different handlers per path the renderer will
 // surface that as a follow-up (BL-LE4).
+//
+// REV-2 (Phase 4-D): EventType の重複時は **walking 順で先勝ち** になる。
+// DefaultCacheBehavior を先に append しているので、Default に
+// viewer-request が attach されていれば CacheBehaviors[] 側の同 EventType は
+// `findByEvent` で到達しない。同一 distribution に複数 viewer-request
+// 関数を attach する設定 (per-PathPattern routing) は **BL-LE4 で対応** —
+// それまでは Phase 4-D MVP として「Default の viewer-request が優先」を
+// 受け入れる。
 func (h *Handler) collectFunctions(d *types.DistributionConfig) []edgefunc.EdgeFunction {
 	if d == nil {
 		return []edgefunc.EdgeFunction{}
@@ -216,9 +223,3 @@ func ParseFunctionEndpoints(raw string) map[string]string {
 	}
 	return out
 }
-
-// awsRequestIDFromContext is reserved for parity with the AWS REST handlers
-// (which echo the cf-local request id into <RequestId>). The internal
-// edgefunc handler doesn't need it today; keeping the import line warm
-// avoids a churn diff when BL-OB1 follow-ups land.
-var _ = awsxml.NewRequestID

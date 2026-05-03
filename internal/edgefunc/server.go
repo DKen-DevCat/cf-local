@@ -195,14 +195,24 @@ func (s *Server) invoke(ctx context.Context, req InvokeRequest) *InvokeResponse 
 // resolveFunction looks up the EdgeFunction matching eventType for the
 // distribution. Returns ok=false when no matching binding is configured
 // (njs should pass through unmodified).
+//
+// REV-1 (Phase 4-D): キャッシュエントリの functions スライスはロック保持中に
+// ローカル変数へコピーしてからロックを解放する。エントリポインタ自体は
+// 後段で別ゴルーチンに差し替えられても安全だが、`sync.Mutex` で保護された
+// フィールドをロック外で読むのは race detector が形式上検出しうるため、
+// 一貫性のためロック内で snapshot を取る。
 func (s *Server) resolveFunction(ctx context.Context, distributionID, eventType string) (EdgeFunction, bool) {
 	s.cacheMu.Lock()
 	entry, hit := s.cache[distributionID]
 	expired := !hit || s.nowFn().After(entry.expiresAt)
+	var cached []EdgeFunction
+	if hit {
+		cached = entry.functions
+	}
 	s.cacheMu.Unlock()
 
 	if !expired {
-		return findByEvent(entry.functions, eventType)
+		return findByEvent(cached, eventType)
 	}
 
 	functions, err := s.lookup.Resolve(ctx, distributionID)
@@ -214,7 +224,7 @@ func (s *Server) resolveFunction(ctx context.Context, distributionID, eventType 
 		// fail-open: keep stale cache if we have one, otherwise treat as
 		// no-binding so njs continues unmodified.
 		if hit {
-			return findByEvent(entry.functions, eventType)
+			return findByEvent(cached, eventType)
 		}
 		return EdgeFunction{}, false
 	}

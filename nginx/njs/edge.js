@@ -26,13 +26,13 @@
 // DESIGN.md §3.5: イベント形式構築は Go 側 (edge-proxy)。njs は raw な request
 // snapshot を送るだけで CloudFront event 形式は組み立てない。
 
-const DEFAULT_EDGE_PROXY = 'http://edge-proxy:4569';
+const defaultEdgeProxyURL = 'http://edge-proxy:4569';
 
 // hopByHopHeaders は nginx 内で意味を失う / 上書きされるヘッダ。
 // ngx.fetch がそのまま流す前にここで除外する (Lambda 側に届いても害は
 // 無いが、AWS 仕様で「viewer-request では一部ヘッダが Lambda に渡らない」
 // というクセがあり、それに近い動きにする)。
-const HOP_BY_HOP = [
+const hopByHopHeaders = [
     'connection',
     'keep-alive',
     'proxy-authenticate',
@@ -54,14 +54,14 @@ function snapshotRequest(r) {
             const name = raw[i][0];
             const value = raw[i][1];
             const lower = name.toLowerCase();
-            if (HOP_BY_HOP.indexOf(lower) >= 0) continue;
+            if (hopByHopHeaders.indexOf(lower) >= 0) continue;
             if (!headers[name]) headers[name] = [];
             headers[name].push(value);
         }
     } else {
         for (const name in r.headersIn) {
             const lower = name.toLowerCase();
-            if (HOP_BY_HOP.indexOf(lower) >= 0) continue;
+            if (hopByHopHeaders.indexOf(lower) >= 0) continue;
             headers[name] = [r.headersIn[name]];
         }
     }
@@ -79,7 +79,7 @@ function snapshotRequest(r) {
 function edgeProxyURL(r) {
     const v = r.variables.cf_edge_proxy;
     if (v && v.length) return v;
-    return DEFAULT_EDGE_PROXY;
+    return defaultEdgeProxyURL;
 }
 
 // applyResponse は short_circuit 結果を nginx の response に書き出す。
@@ -99,10 +99,17 @@ function applyResponse(r, resp) {
     const status = resp.status || 200;
     const body = resp.body || '';
     if (resp.body_encoding === 'base64' && body.length) {
-        r.headersOut['Content-Length'] = String(body.length);
-        // base64 decode して送る。
+        // REV-4 (Phase 4-D): Content-Length は base64 デコード後の長さで設定する。
+        // 生 base64 の length をそのまま流すと HTTP/1.1 の boundary 不一致で
+        // ブラウザが切断する。
+        // REV-7 (Phase 4-D): Buffer.from(str, 'base64') の挙動は njs バージョン
+        // 依存。docker-compose.yml が使う `nginx:1.27-alpine` の `nginx-module-njs`
+        // (njs >= 0.8.x) で動作確認済だが、古い njs を使うイメージに差し替えた
+        // ときは制限あり (詳細: docs/limitations.md)。失敗時は 502 にフォール
+        // バックして配信を止めない。
         try {
             const decoded = Buffer.from(body, 'base64').toString('binary');
+            r.headersOut['Content-Length'] = String(decoded.length);
             r.return(status, decoded);
             return;
         } catch (e) {

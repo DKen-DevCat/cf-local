@@ -264,6 +264,30 @@ func TestTranslateViewerRequestResponse_RejectsBadStatus(t *testing.T) {
 	}
 }
 
+// TestTranslateViewerRequestResponse_EmptyStatusFallsToContinue (REV-3) —
+// `{"status": ""}` は短絡応答ではなく continue path として扱う。Lambda が
+// status キーを `""` で返してきても、後続 strconv.Atoi で失敗して transport
+// error 扱いになるのを防ぐためのリグレッション。
+func TestTranslateViewerRequestResponse_EmptyStatusFallsToContinue(t *testing.T) {
+	original := InvokeRequest{
+		Request: InvokeRawRequest{
+			Method: "GET",
+			URI:    "/keep",
+		},
+	}
+	rieBody := []byte(`{"status": "", "uri": "/keep"}`)
+	resp, err := TranslateViewerRequestResponse(rieBody, original)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionContinue {
+		t.Fatalf("expected continue for empty status, got %s", resp.Action)
+	}
+	if resp.Request == nil || resp.Request.URI != "/keep" {
+		t.Errorf("URI lost: %+v", resp.Request)
+	}
+}
+
 func keys(m map[string][]CFHeader) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

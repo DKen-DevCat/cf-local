@@ -220,6 +220,42 @@ func TestRender_LambdaEdge_NonViewerRequest_HookIgnored(t *testing.T) {
 	}
 }
 
+// TestRender_LambdaEdge_SanitizeSetValue (REV-8) — distributionID /
+// edgeProxyURL に nginx メタ文字 (`$` / `\` / 改行) が混入しても
+// `set $cf_*` directive に直接書き出さず `_` に置換することを確認する
+// defense-in-depth リグレッション。通常運用では `newDistributionID()` が
+// 英数字のみ生成するため発火しないが、loader / env のリグレッションへの
+// 保険として明示テストする。
+func TestRender_LambdaEdge_SanitizeSetValue(t *testing.T) {
+	res := newBaseLoadResult()
+	res.DistributionID = "EVIL$ID\nINJECT"
+	res.EdgeProxyURL = `http://edge\\backslash`
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{EventType: types.EventTypeViewerRequest, LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1")},
+		},
+	}
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+	// `$` / `\n` / `\\` は `_` に置き換えられて出るはず。
+	if strings.Contains(conf, `set $cf_distribution_id "EVIL$`) {
+		t.Errorf("`$` not sanitized in distribution_id:\n%s", conf)
+	}
+	if strings.Contains(conf, "\nINJECT") {
+		// raw 改行が出ると set ディレクティブを脱出できる。
+		t.Errorf("newline not sanitized in distribution_id:\n%s", conf)
+	}
+	if !strings.Contains(conf, `set $cf_distribution_id "EVIL_ID_INJECT";`) {
+		t.Errorf("expected sanitized distribution_id:\n%s", conf)
+	}
+	if strings.Contains(conf, `\\backslash`) {
+		t.Errorf("backslash not sanitized in edge_proxy:\n%s", conf)
+	}
+}
+
 func TestRender_LambdaEdge_DefaultEdgeProxyURL(t *testing.T) {
 	// EdgeProxyURL="" should fall back to the package default.
 	res := newBaseLoadResult()
