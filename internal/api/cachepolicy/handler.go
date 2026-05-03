@@ -34,10 +34,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrAlreadyExists):
-			awsxml.WriteXMLError(w, http.StatusConflict, "CachePolicyAlreadyExists",
+			awsxml.WriteError(w, awsxml.CodeCachePolicyAlreadyExists,
 				fmt.Sprintf("a cache policy already exists with the same name: %s", *cfg.Name))
 		default:
-			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			awsxml.WriteInternalError(w, err)
 		}
 		return
 	}
@@ -50,11 +50,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.Store.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchCachePolicy",
+			awsxml.WriteError(w, awsxml.CodeNoSuchCachePolicy,
 				fmt.Sprintf("the cache policy does not exist: %s", id))
 			return
 		}
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 	writeCachePolicyResponse(w, http.StatusOK, rec)
@@ -72,21 +72,24 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchCachePolicy",
+			awsxml.WriteError(w, awsxml.CodeNoSuchCachePolicy,
 				fmt.Sprintf("the cache policy does not exist: %s", id))
 		case errors.Is(err, ErrAlreadyExists):
-			awsxml.WriteXMLError(w, http.StatusConflict, "CachePolicyAlreadyExists",
+			awsxml.WriteError(w, awsxml.CodeCachePolicyAlreadyExists,
 				fmt.Sprintf("a cache policy already exists with the same name: %s", *cfg.Name))
 		case errors.Is(err, ErrManagedImmutable):
-			// AWS の正規 error code は未確認 (managed policy への
-			// UpdateCachePolicy / DeleteCachePolicy は AWS 公式ドキュメント
-			// にエラーレスポンス例が無い)。aws-xml-quirks.md の Code 表に
-			// 載っている IllegalUpdate (400) を採用 — 4a-16 (terraform
-			// apply E2E) で実 AWS 挙動を取り、必要なら差し替える。
-			awsxml.WriteXMLError(w, http.StatusBadRequest, "IllegalUpdate",
+			// 4c-4 (BL-IM1) 確認結果: aws-sdk-go-v2 v1.62.0
+			// `deserializers.go` で UpdateCachePolicy / DeleteCachePolicy
+			// は `IllegalUpdate` を valid response code として登録して
+			// いる (smithy spec 由来)。AWS 実機が managed policy 修正
+			// 時に返す具体コードはドキュメント未記載で不明だが、SDK
+			// が解釈できるコードを返している以上 Provider/CLI 側の
+			// regression は起きない。実 AWS 挙動が `AccessDenied` 等
+			// だった場合は phase-5 で差し替え検討。
+			awsxml.WriteError(w, awsxml.CodeIllegalUpdate,
 				fmt.Sprintf("the managed cache policy cannot be modified: %s", id))
 		default:
-			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			awsxml.WriteInternalError(w, err)
 		}
 		return
 	}
@@ -100,14 +103,14 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.Store.Delete(r.Context(), id, ifMatch); err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
-			awsxml.WriteXMLError(w, http.StatusNotFound, "NoSuchCachePolicy",
+			awsxml.WriteError(w, awsxml.CodeNoSuchCachePolicy,
 				fmt.Sprintf("the cache policy does not exist: %s", id))
 		case errors.Is(err, ErrManagedImmutable):
-			// See Update for the IllegalUpdate code rationale.
-			awsxml.WriteXMLError(w, http.StatusBadRequest, "IllegalUpdate",
+			// See Update for the IllegalUpdate code rationale (4c-4 BL-IM1).
+			awsxml.WriteError(w, awsxml.CodeIllegalUpdate,
 				fmt.Sprintf("the managed cache policy cannot be deleted: %s", id))
 		default:
-			awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			awsxml.WriteInternalError(w, err)
 		}
 		return
 	}
@@ -121,7 +124,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	records, err := h.Store.List(r.Context())
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsxml.WriteInternalError(w, err)
 		return
 	}
 
@@ -154,17 +157,17 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.CachePolicyConfig, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "read body: "+err.Error())
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "read body: "+err.Error())
 		return nil, false
 	}
 	var wrapper awsxml.CachePolicyConfig
 	if err := xml.Unmarshal(body, &wrapper); err != nil {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "MalformedXML", err.Error())
+		awsxml.WriteError(w, awsxml.CodeMalformedXML, err.Error())
 		return nil, false
 	}
 	cfg := wrapper.ToSDK()
 	if cfg == nil || cfg.Name == nil || *cfg.Name == "" {
-		awsxml.WriteXMLError(w, http.StatusBadRequest, "InvalidArgument", "Name is required")
+		awsxml.WriteError(w, awsxml.CodeInvalidArgument, "Name is required")
 		return nil, false
 	}
 	return cfg, true

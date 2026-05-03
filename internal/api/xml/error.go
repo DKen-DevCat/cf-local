@@ -7,12 +7,14 @@ import (
 	"net/http"
 )
 
-// WriteXMLError writes an AWS REST/XML <ErrorResponse> envelope with the given
-// status, error code, and human-readable message. The RequestId is a freshly
-// minted UUIDv4 because cf-local does not persist request identifiers.
+// WriteXMLError writes an AWS REST/XML <ErrorResponse> envelope with the
+// given status, error code, and human-readable message. The RequestId is a
+// freshly minted UUIDv4 because cf-local does not persist request identifiers.
 //
-// This is the single place where 4xx/5xx responses leave the AWS-compatible
-// API path; handlers should not write XML errors directly.
+// Phase 4-C 4c-3 以降は新規ハンドラは `WriteError(w, codes.go の Code 定数,
+// message)` を優先する。`WriteXMLError` は status と code を自由に組み合わ
+// せたい (例: 暫定対応で AWS 規定外の status を使う) ケースのための低レベ
+// ル escape hatch として残す。
 func WriteXMLError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(status)
