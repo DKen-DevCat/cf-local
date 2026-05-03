@@ -265,7 +265,11 @@ func snapshotLoadResult(ctx context.Context, cpStore *cachepolicy.BoltStore, dis
 		// order) wins — multi-Distribution rendering is a future-phase
 		// concern (phase-3 contract).
 		res.Distribution = dists[0].Config
+		res.DistributionID = dists[0].ID
 	}
+	// Phase 4-D 4d-7: edge-proxy URL は CF_LOCAL_EDGE_PROXY env で上書き可能。
+	// 未設定時は cfnginx.DefaultEdgeProxyURL が使われる。
+	res.EdgeProxyURL = os.Getenv("CF_LOCAL_EDGE_PROXY")
 	return res
 }
 
