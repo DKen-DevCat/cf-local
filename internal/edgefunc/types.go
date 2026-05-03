@@ -22,8 +22,8 @@ package edgefunc
 //	  }
 //	}
 type InvokeRequest struct {
-	DistributionID string         `json:"distribution_id"`
-	EventType      string         `json:"event_type"`
+	DistributionID string           `json:"distribution_id"`
+	EventType      string           `json:"event_type"`
 	Request        InvokeRawRequest `json:"request"`
 }
 
@@ -45,11 +45,11 @@ type InvokeRawRequest struct {
 // Action:
 //
 //   - "continue":      pass to the next location with the (possibly
-//                      modified) Request fields applied
+//     modified) Request fields applied
 //   - "short_circuit": serve Response directly without touching the origin
 //   - "error":         a control-plane / RIE failure that should not be
-//                      treated as a legitimate Lambda 5xx — njs falls
-//                      through to the next location (fail-open)
+//     treated as a legitimate Lambda 5xx — njs falls
+//     through to the next location (fail-open)
 type InvokeResponse struct {
 	Action   string             `json:"action"`
 	Request  *InvokeRawRequest  `json:"request,omitempty"`
@@ -86,10 +86,10 @@ const (
 // viewer-request; the other three are reserved here so callers using the
 // constants don't need to be edited when BL-LE1 lands.
 const (
-	EventViewerRequest   = "viewer-request"
-	EventOriginRequest   = "origin-request"
-	EventOriginResponse  = "origin-response"
-	EventViewerResponse  = "viewer-response"
+	EventViewerRequest  = "viewer-request"
+	EventOriginRequest  = "origin-request"
+	EventOriginResponse = "origin-response"
+	EventViewerResponse = "viewer-response"
 )
 
 // EdgeFunction is the resolved binding between a distribution event and a

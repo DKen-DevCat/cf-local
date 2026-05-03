@@ -63,7 +63,7 @@ type CloudFrontRecord struct {
 
 // CloudFrontPayload bundles config and request blocks for a single event.
 type CloudFrontPayload struct {
-	Config  CloudFrontConfig  `json:"config"`
+	Config  CloudFrontConfig   `json:"config"`
 	Request *CloudFrontRequest `json:"request,omitempty"`
 }
 
@@ -79,11 +79,11 @@ type CloudFrontConfig struct {
 // CloudFrontRequest is the viewer-request request block. body is omitted
 // for Phase 4-D MVP (BL-LE2 will add IncludeBody handling).
 type CloudFrontRequest struct {
-	ClientIP    string                 `json:"clientIp"`
-	Headers     map[string][]CFHeader  `json:"headers"`
-	Method      string                 `json:"method"`
-	QueryString string                 `json:"querystring"`
-	URI         string                 `json:"uri"`
+	ClientIP    string                `json:"clientIp"`
+	Headers     map[string][]CFHeader `json:"headers"`
+	Method      string                `json:"method"`
+	QueryString string                `json:"querystring"`
+	URI         string                `json:"uri"`
 	// Body is intentionally omitted (BL-LE2). Origin / origin-only fields
 	// are also omitted (this is viewer-request scope only).
 }

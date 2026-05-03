@@ -7,11 +7,11 @@
 //
 //   - server.go:    HTTP /invoke handler that njs (`ngx.fetch`) calls
 //   - event.go:     CloudFront viewer-request event construction (AWS docs
-//                   schema)
+//     schema)
 //   - rie_client.go HTTP client for POST /2015-03-31/functions/function/
-//                   invocations
+//     invocations
 //   - lookup.go:    distribution → LambdaFunctionAssociations resolution via
-//                   the cf-local control-plane internal API
+//     the cf-local control-plane internal API
 //
 // Companion code on the cf-local side lives at
 // `internal/api/edgefunc/handler.go` (the internal lookup endpoint that

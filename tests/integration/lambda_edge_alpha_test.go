@@ -14,12 +14,12 @@
 //
 // 検証する 3 ケース:
 //
-//   1. **改変** — Lambda が修正後 request を返す → Action=continue + Request
-//      に override が乗る
-//   2. **short-circuit** — Lambda が status=302 redirect を返す → Action=
-//      short_circuit + Response にステータス/headers が乗る
-//   3. **エラー応答** — Lambda が runtime error envelope を返す → Action=error +
-//      njs 側は forward へ fail-open する想定
+//  1. **改変** — Lambda が修正後 request を返す → Action=continue + Request
+//     に override が乗る
+//  2. **short-circuit** — Lambda が status=302 redirect を返す → Action=
+//     short_circuit + Response にステータス/headers が乗る
+//  3. **エラー応答** — Lambda が runtime error envelope を返す → Action=error +
+//     njs 側は forward へ fail-open する想定
 package integration
 
 import (
@@ -35,8 +35,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 
-	apiedgefunc "github.com/DKen-DevCat/cf-local/internal/api/edgefunc"
 	"github.com/DKen-DevCat/cf-local/internal/api/distribution"
+	apiedgefunc "github.com/DKen-DevCat/cf-local/internal/api/edgefunc"
 	"github.com/DKen-DevCat/cf-local/internal/edgefunc"
 )
 

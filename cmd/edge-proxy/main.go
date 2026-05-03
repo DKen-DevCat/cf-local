@@ -12,10 +12,14 @@
 //
 //  1. looks up the LambdaFunctionAssociations for the distribution via the
 //     cf-local control-plane internal API (GET /_internal/edge-functions/{id})
+//
 //  2. picks the association whose EventType matches the request's event_type
+//
 //  3. builds an AWS CloudFront viewer-request event from the inputs
+//
 //  4. POSTs it to the configured RIE endpoint
 //     (POST /2015-03-31/functions/function/invocations)
+//
 //  5. translates the Lambda response back into a directive njs can act on:
 //
 //     {"action":"continue", "request":{...overrides...}}
