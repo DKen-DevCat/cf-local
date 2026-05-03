@@ -30,7 +30,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4b` | 完了 (2026-05-03) | Invalidation API互換 |
 | `phase-4c` | 完了 (2026-05-03) | 仕上げ (RHP + unix socket + slog + error codes) |
 | `phase-4d` | 完了 (2026-05-03) | Lambda@Edge連携 (viewer-request MVP) |
-| `phase-5` | 未着手 | OSS公開準備 |
+| `phase-5` | 計画済 (2026-05-03) | OSS公開準備 + v0.1.0 リリース |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 | `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
 
@@ -273,32 +273,91 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-5: OSS公開準備
+## phase-5: OSS公開準備 + v0.1.0 リリース
 
-**到達状態**: 他者が使える状態にし、v0.1.0としてOSSリリースする。
+> ステータス: 計画済 (2026-05-03、未着手)
+> ブランチ案: `feat/phase-5-oss-release`
+> 作成日: 2026-05-03
 
-**ゴールイメージ**:
+### 目的 / 背景
 
-- GitHub repo整備（issue templates, PR templates, CONTRIBUTING.md）
-- README充実（スクリーンショット、デモGIF等）
-- examples/ 拡充（単体使用、Terraform連携、Lambda@Edge構成）
-- GHCRにDockerイメージpush（CI/CD整備）
-- v0.1.0 リリース
-- 紹介ブログ記事（任意）
+M5 (OSS公開) の達成。Phase 4-D 完了時点で機能セットは β 候補レベル (M3 + Lambda@Edge viewer-request MVP)。残るは「他者が clone して quick start を 5 分で動かせる」+「公開・配布・バージョニングの形を整える」こと。本フェーズは **公開フローの構築 + 現状のドキュメント化** に集中し、利用者フィードバックで BL 残課題 (BL-LE1 等 13+ 件) の優先度を再評価する戦略を取る。
 
-**完了条件**:
+**本フェーズの範囲は PR 作成まで** (動作確認は PR 作成後にユーザーと実施)。v0.1.0 タグ付け / GHCR への実 push / Zenn 告知記事は本フェーズ**外** (PR merge 後の別作業)。
 
-- [ ] GitHub repo整備（issue/PR templates）
-- [ ] README充実
-- [ ] examples/拡充
-- [ ] GHCR push（CI/CD整備）
-- [ ] v0.1.0 リリース
+### スコープ
 
-**着手前にユーザーと相談する点**:
+- in:
+  - LICENSE の Copyright 名解決 (`<YOUR_NAME>` → 実名/GitHub user 名)
+  - README 更新 (ステータス表最新化 / Quick start 強化 / バッジ追加 / GHCR pull コマンド追記)
+  - CHANGELOG.md 新設 (Keep a Changelog 形式、`[Unreleased]` + `[0.1.0]` セクション、Phase 0〜4d 機能を Added 列挙)
+  - CODE_OF_CONDUCT.md 配置 (Contributor Covenant v2.1)
+  - SECURITY.md 配置 (脆弱性報告は GitHub Security Advisories 経由)
+  - `.github/ISSUE_TEMPLATE/` (bug_report.yml / feature_request.yml / question.yml + config.yml で blank issue 無効化)
+  - `.github/PULL_REQUEST_TEMPLATE.md` (Summary / Changes / Test plan / Mermaid 任意の最小構成)
+  - `.github/workflows/ci.yml` (push/PR で Go test + golangci-lint + Docker build + α 統合テスト)
+  - `.github/workflows/release.yml` (tag `v*` push で multi-arch Docker build → GHCR push、`latest` + `vX.Y.Z` タグ付け)
+  - `docs/limitations.md` の「Known limitations」整備 (既存の積みタスク 13+ 件を v0.1.0 公開時の正式制約として整理)
+  - README に「v0.1.0 milestone 達成」セクション追加 (M3 + M4 viewer-request MVP 到達状態を明示)
+- out:
+  - 英語 README / 英語 docs (日本語のみ継続)
+  - ロゴ / バナー / デモ GIF / スクショ
+  - ドキュメントサイト (mkdocs / vercel)
+  - BL 残課題の実装消化 (BL-LE1 等は v0.1.0 後の別フェーズ)
+  - examples/ 追加 (既存 3 個で公開、足りなければ後追加)
+  - 告知作業 (Zenn 記事は v0.1.0 release 後に別途)
+  - v0.1.0 タグ付け / GHCR への実 push (本フェーズは workflow 配置まで、実 push は merge 後)
+  - 動作確認の実走 (clean clone から quick start を辿る検証は PR 作成後にユーザーと実施)
 
-- ブランディング（ロゴ、カラー、トーン）
-- ドキュメントサイトを立てるか（vercel/netlify上にdocsサイト）
-- どのコミュニティに告知するか（Reddit r/aws, Hacker News, Zenn等）
+### 影響範囲
+
+| レイヤー | 内容 |
+|---|---|
+| FE | N/A |
+| BE | N/A (Go コードへの変更なし) |
+| DB | N/A |
+| Infra | N/A (docker-compose 変更なし) |
+| Tooling (.github/) | issue/PR template 新規 + CI workflow 新規 + Release workflow 新規 |
+| Docs | README / CHANGELOG / CODE_OF_CONDUCT / SECURITY / LICENSE 更新 + docs/limitations.md 増補 |
+
+### タスク (実装ステップ)
+
+- [ ] **phase-5-1**: LICENSE の `<YOUR_NAME>` を実名/GitHub user 名で確定 (着手時に最終確認)
+- [ ] **phase-5-2**: README 更新 (ステータス表を Phase 4-D まで反映 / Quick start 強化 / License・GHCR・CI バッジ追加 / GHCR pull コマンド追記)
+- [ ] **phase-5-3**: CHANGELOG.md 新設 (Keep a Changelog v1.1.0 形式、`[Unreleased]` + `[0.1.0]` セクション、Phase 0〜4d で実装した機能を Added に列挙)
+- [ ] **phase-5-4**: CODE_OF_CONDUCT.md 配置 (Contributor Covenant v2.1 そのまま、連絡先 email は着手時に確定)
+- [ ] **phase-5-5**: SECURITY.md 配置 (GitHub Security Advisories 経由、SLA は記載しない)
+- [ ] **phase-5-6**: `.github/ISSUE_TEMPLATE/` に bug_report.yml / feature_request.yml / question.yml + config.yml (blank issue 無効化)
+- [ ] **phase-5-7**: `.github/PULL_REQUEST_TEMPLATE.md` 配置 (Summary / Changes / Test plan / Mermaid 任意)
+- [ ] **phase-5-8**: `.github/workflows/ci.yml` 新設 (push/PR 時に Go test + golangci-lint + Docker build + α 統合テスト)
+- [ ] **phase-5-9**: `.github/workflows/release.yml` 新設 (tag `v*` push で multi-arch Docker build → GHCR push、`latest` + `vX.Y.Z`)
+- [ ] **phase-5-10**: docs/limitations.md「Known limitations」整備 (既存の積みタスク 13+ 件を v0.1.0 公開時の正式制約として整理、各 BL に対応予定の status を付与)
+- [ ] **phase-5-11**: README に「v0.1.0 milestone 達成」セクションを追加 (M3 + M4 viewer-request MVP の到達状態を明示)
+- [ ] **phase-5-12**: `/check` で全テスト + lint pass を確認 (PR 作成前最終確認)
+
+### テスト方針
+
+| レイヤー | 何をテストするか |
+|---|---|
+| Tooling (CI) | GHA workflow を branch push で実走させ、Go test / lint / Docker build / α 統合テスト の 4 ジョブが PR 上で緑になること (ローカル `act` は使わず GHA 上で確認) |
+| Tooling (Release) | v0.1.0 タグ push は本フェーズスコープ外。release.yml は手動 trigger を仕込んで syntax 検証のみ |
+| Docs | 修正後 README の Quick start を clean clone から実機で 1 回辿って `docker compose up -d` → `curl localhost:8080` が通ること (PR 作成後の動作確認に倒す) |
+
+### 完了条件
+
+- [ ] phase-5-1〜phase-5-12 全タスク完了
+- [ ] PR (#15 仮) が develop に向けて作成済
+- [ ] CI workflow が PR 上で全ジョブ緑
+- [ ] PR 本文に Mermaid で構造を記述 (feedback memory 準拠)
+- [ ] 動作確認 (README quick start を clean clone から辿る) は PR 作成後にユーザーと実施
+
+### リスク・未決事項
+
+- **GHCR push の権限**: GHA から GHCR への push は `GITHUB_TOKEN` の `packages: write` 権限で動作するはず。dry-run で確認できないので tag push 後に初めて検証になる。本フェーズでは workflow の syntax のみ確認、実 push 検証は v0.1.0 タグ push で行う (本フェーズ外)
+- **golangci-lint の lint ルール**: cf-local には現状 `.golangci.yml` が無い。本フェーズで導入するか、`golangci-lint run` の default 設定で動かして PR 上で出る指摘の量を見て判断する。phase-5-8 着手時に判断
+- **Contributor Covenant の連絡先**: ユーザー個人の email を晒すか、専用 alias を作るか。phase-5-4 着手時に確定
+- **README バッジ URL**: GHCR / CI バッジの実 URL は GHA を 1 度走らせるまで確定しない。バッジ URL を仮値で入れて、CI 緑後に最終 URL に置換
+- **examples/ の README 棚卸**: 各 example の README は Phase 4 までで更新済だが、ステータス表記等で「Phase X 構成」表現が残っている可能性。phase-5-2 着手時に grep して、必要なら同タスクのスコープに追加
 
 ---
 
