@@ -157,4 +157,4 @@ tailscale ip -4
 
 - Next.js の `Vary: rsc, …` は Phase 1 以降 nginx 側で無視される。RSC 別エントリにしたい場合は cache policy の `Headers` whitelist に `rsc` を追加する。詳細は [`docs/cache-policy.md`](../../docs/cache-policy.md)
 - HTTPS 非対応 (HTTP-only)。SSL 検証や HSTS テストは想定外。詳細は [`docs/limitations.md`](../../docs/limitations.md)
-- Lambda@Edge / CloudFront Functions 非対応 (Phase 4-D)
+- Lambda@Edge は viewer-request のみ対応。サンプルは [`examples/lambda-edge-basic/`](../lambda-edge-basic/) を参照。CloudFront Functions は v0.1.0 では未対応 ([`docs/limitations.md`](../../docs/limitations.md) 参照)
