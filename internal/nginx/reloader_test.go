@@ -3,6 +3,7 @@ package nginx
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,8 +81,9 @@ func TestReloader_RenderWritesFiles(t *testing.T) {
 			Distribution: nil, // no distribution → cf-local.conf skipped
 		}
 	}
-	var stdout bytes.Buffer
-	r := NewReloader(dir, fetch, &stdout)
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	r := NewReloader(dir, fetch, logger)
 	r.debounce = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -100,8 +102,11 @@ func TestReloader_RenderWritesFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "cf-local.conf")); !os.IsNotExist(err) {
 		t.Errorf("cf-local.conf should not exist when Distribution=nil, got err=%v", err)
 	}
-	if stdout.Len() == 0 {
-		t.Errorf("expected stdout message")
+	if logBuf.Len() == 0 {
+		t.Errorf("expected slog record on successful render")
+	}
+	if !bytes.Contains(logBuf.Bytes(), []byte("reloader_rendered")) {
+		t.Errorf("expected reloader_rendered event in logs, got %q", logBuf.String())
 	}
 }
 

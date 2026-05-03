@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -159,8 +159,8 @@ func decodeConfig(w http.ResponseWriter, r *http.Request) (*types.ResponseHeader
 	return cfg, true
 }
 
-// warnUnsupportedSubconfigs emits a single log line per request when the
-// caller sets one of the sub-configs cf-local persists but does not yet
+// warnUnsupportedSubconfigs emits a single slog warn line per request when
+// the caller sets one of the sub-configs cf-local persists but does not yet
 // render into nginx. The warning mentions the policy name + the list of
 // unsupported sub-configs so the operator can correlate it with their
 // Terraform / AWS CLI input.
@@ -178,7 +178,11 @@ func warnUnsupportedSubconfigs(name string, cfg *types.ResponseHeadersPolicyConf
 	if len(unsupported) == 0 {
 		return
 	}
-	log.Printf("response-headers-policy %q: %v accepted but not rendered (phase-4c scope: only CustomHeadersConfig + CorsConfig are wired into nginx)", name, unsupported)
+	slog.Warn("response_headers_policy_subconfig_ignored",
+		slog.String("policy", name),
+		slog.Any("unsupported", unsupported),
+		slog.String("note", "phase-4c scope: only CustomHeadersConfig + CorsConfig are wired into nginx"),
+	)
 }
 
 // writeResponseHeadersPolicyResponse emits a 201 / 200 response with

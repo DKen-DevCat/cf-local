@@ -30,7 +30,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -71,13 +70,13 @@ func main() {
 	cacheDir := flag.String("cache-dir", defaultCacheDir, "nginx proxy_cache_path directory (walked by the invalidation worker)")
 	flag.Parse()
 
-	log.SetFlags(0)
 	configureSlog(os.Getenv("CF_LOCAL_LOG_FORMAT"))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := run(ctx, *configDir, *outDir, *addr, *dbPath, *cacheDir, os.Stdout); err != nil {
-		log.Fatalf("cf-local: %v", err)
+		slog.Error("cf-local_fatal", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 }
 
@@ -175,13 +174,16 @@ func run(ctx context.Context, configDir, outDir, addr, dbPath, cacheDir string, 
 	fetch := func() *config.LoadResult {
 		return snapshotLoadResult(ctx, cpStore, distStore, rhpStore)
 	}
-	reloader := cfnginx.NewReloader(outDir, fetch, stdout)
+	reloader := cfnginx.NewReloader(outDir, fetch, slog.Default())
 	cpStore.SetOnChange(reloader.Trigger)
 	distStore.SetOnChange(reloader.Trigger)
 	orpStore.SetOnChange(reloader.Trigger)
 	rhpStore.SetOnChange(reloader.Trigger)
 	go reloader.Run(ctx)
-	fmt.Fprintf(stdout, "  reloader      : debounce=%s, out-dir=%s\n", cfnginx.DefaultReloadDebounce, outDir)
+	slog.Info("reloader_started",
+		slog.Duration("debounce", cfnginx.DefaultReloadDebounce),
+		slog.String("out_dir", outDir),
+	)
 
 	return api.Run(ctx, api.Config{
 		Addr:                       addr,
