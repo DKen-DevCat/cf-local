@@ -32,7 +32,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4d` | 未着手 | Lambda@Edge連携 |
 | `phase-5` | 未着手 | OSS公開準備 |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
-| `chore-2` | 未着手 | check.md D-2 セクションの手順誤記修正 (docs-only) |
+| `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
 
 ---
 
@@ -349,11 +349,12 @@ Phase 3 完了直後に cf-local の `.claude/` 配下に `/check` + `/review-di
 
 ---
 
-## chore-2: check.md D-2 セクションの手順誤記修正
+## chore-2: check.md D-2 セクションの手順誤記修正 (完了 2026-05-03)
 
-> ステータス: planned
-> ブランチ案: `chore/check-md-d2-fix`
+> ステータス: 完了 (2026-05-03) - PR #11 で develop に merge 済
+> ブランチ: `chore/check-md-d2-fix`
 > 作成日: 2026-05-03
+> タスク履歴: `.claude/tasks-archive/chore-2-2026-05-03.md`
 
 ### 目的 / 背景
 
@@ -385,9 +386,9 @@ Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β end
 
 ### タスク（実装ステップ）
 
-- [ ] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`policy=default ...`) に合わせて修正
-- [ ] **chore-2-2** (任意): トラブルシューティング表に「`X-Test-Policy` header 抜けで `400 Bad Request: X-Test-Policy header required`」の 1 行追記
-- [ ] **chore-2-3**: PR 作成前に修正後手順を実機で再走（`curl -H 'X-Test-Policy: default' ...` が 200 OK） + 他 docs (`docs/`, `README.md`, `examples/`) に同様誤記がないか grep で点検
+- [x] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`<sha256-hex>:<uri>` 形式 = 90 chars) に合わせて修正
+- [x] **chore-2-2** (任意): トラブルシューティング表に「`X-Test-Policy` header 抜けで `400 Bad Request: X-Test-Policy header required`」の 1 行追記
+- [x] **chore-2-3**: PR 作成前に修正後手順を実機で再走（`curl -H 'X-Test-Policy: default' ...` が 200 OK） + 他 docs (`docs/`, `README.md`, `examples/`) に同様誤記がないか grep で点検
 
 ### テスト方針
 
@@ -397,10 +398,10 @@ Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β end
 
 ### 完了条件
 
-- [ ] 修正後の curl コマンドが実機で 200 OK を返す
-- [ ] 期待 body 表記が実機出力と一致
-- [ ] 他ドキュメントに同様誤記が無いことを grep で確認済み
-- [ ] PR が develop に merge される
+- [x] 修正後の curl コマンドが実機で 200 OK を返す
+- [x] 期待 body 表記が実機出力と一致
+- [x] 他ドキュメントに同様誤記が無いことを grep で確認済み
+- [x] PR が develop に merge される
 
 ### リスク・未決事項
 
