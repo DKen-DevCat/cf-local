@@ -12,6 +12,6 @@
 
 設計: [`.claude/design/check-md-d2-fix-2026-05-03.md`](design/check-md-d2-fix-2026-05-03.md)
 
-- [ ] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`policy=default ...`) に合わせて修正
-- [ ] **chore-2-2** (任意): トラブルシューティング表に「`X-Test-Policy` header 抜けで 400 Bad Request」の 1 行追記
-- [ ] **chore-2-3**: PR 作成前に修正後手順を実機で再走 (200 OK 確認) + 他 docs (`docs/`, `README.md`, `examples/`) に同様誤記がないか grep で点検
+- [x] **chore-2-1**: `check.md` D-2 の curl に `-H 'X-Test-Policy: default'` を追加 + 期待 body 表記を実機 (`<sha256-hex>:<uri>` 形式 = 90 chars) に合わせて修正
+- [x] **chore-2-2**: トラブルシューティング表に「`X-Test-Policy` header 抜けで 400 Bad Request」の 1 行追記 (任意項目だが本文修正の補強として実施)
+- [ ] **chore-2-3**: PR 作成前に修正後手順を実機で再走 (200 OK 確認) + 他 docs に同様誤記がないか grep で点検 (grep は完了 — `docs/cache-policy.md` / `docs/ttl.md` は既に X-Test-Policy 付きで正しい。`examples/` 配下に hit なし。実機再走は ship 時に実施)

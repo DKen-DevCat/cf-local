@@ -165,11 +165,13 @@ merged PR #9 (`feat(phase-4b): AWS XML Invalidation API 互換`) 後の実機確
 
 - [ ] β endpoint health check が 200 を返す
 
+  `/_cache_key_test` は `X-Test-Policy: <id>` で policy を選ぶ js_content endpoint。header が無いと 400 を返すので、α テストの `requireUp` ヘルパー (`tests/integration/cache_key_test.go:152`) と同じく `X-Test-Policy: default` を付けて叩く。
+
   ```sh
-  curl -sSv http://localhost:8081/_cache_key_test/__health 2>&1 | grep -E "HTTP|<"
+  curl -sSv -H 'X-Test-Policy: default' http://localhost:8081/_cache_key_test/__health 2>&1 | grep -E "HTTP|<"
   ```
 
-  期待: `HTTP/1.1 200 OK` (body は空 or "ok" 等、α テストの `requireUp` はこの応答を見ている)
+  期待: `HTTP/1.1 200 OK`。body は cache_key.js の `compute()` が返す `<sha256-hex>:<uri>` 形式 (`<64 chars>:/_cache_key_test/__health`、Content-Length: 90)。`requireUp` は 200 ステータスだけを見ているので body 内容は assert していない。
 
 ---
 
@@ -459,6 +461,7 @@ DELETE /2020-05-31/distribution/<id>
 | 症状 | 原因 | 対処 |
 |---|---|---|
 | 全 α テストが `connect: connection refused` for `:8081/_cache_key_test/__health` | β endpoint が expose されていない (`docker-compose.test.yml` 未 override) | `docker compose down && docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build` |
+| 手動 curl が `400 Bad Request: X-Test-Policy header required` | β endpoint は `X-Test-Policy: <id>` header 必須 (D-2 の curl 例参照) | `curl -H 'X-Test-Policy: default' ...` を付け直す。α テストは `requireUp` 側で header を付けているので影響なし |
 | `bind: address already in use` | host 側で別プロセスが port 占有 | `lsof -nP -iTCP:<port>` で犯人特定し停止 |
 | 既存 cache_key 系 α が全 FAIL | nginx image を rebuild していない (v2 cache key のまま) | `docker compose -f docker-compose.yml -f docker-compose.test.yml build --no-cache` |
 | invalidation で MISS にならない | cf-local が `/var/cache/nginx` を見えていない | docker-compose.yml の cf-local volumes に `nginx-cache:/var/cache/nginx` がある? D-1 を再確認 |
