@@ -145,6 +145,100 @@ func TestRender_SamePolicyDifferentOrigins(t *testing.T) {
 	}
 }
 
+// TestRender_InnerServerOnUnixSocket verifies the 4c-7 (BL-NX1) topology:
+// the publicly listening :8080 server block contains only outer locations
+// (no `_cf_inner_*`), and a separate inner server block listens on the
+// `/run/cf-local-inner.sock` unix socket carrying every inner location.
+// `upstream self` resolves to that unix socket. This guarantees the
+// `:8080/_cf_inner_*` bypass route is structurally impossible regardless
+// of any `allow`/`deny` rules being mis-rendered.
+func TestRender_InnerServerOnUnixSocket(t *testing.T) {
+	res := &config.LoadResult{
+		CachePolicies: map[string]*types.CachePolicyConfig{
+			"E_CP1": {
+				Name:   aws.String("default"),
+				MinTTL: aws.Int64(0),
+				ParametersInCacheKeyAndForwardedToOrigin: &types.ParametersInCacheKeyAndForwardedToOrigin{
+					EnableAcceptEncodingGzip:   aws.Bool(true),
+					EnableAcceptEncodingBrotli: aws.Bool(true),
+					HeadersConfig:              &types.CachePolicyHeadersConfig{HeaderBehavior: types.CachePolicyHeaderBehaviorNone},
+					CookiesConfig:              &types.CachePolicyCookiesConfig{CookieBehavior: types.CachePolicyCookieBehaviorNone},
+					QueryStringsConfig:         &types.CachePolicyQueryStringsConfig{QueryStringBehavior: types.CachePolicyQueryStringBehaviorNone},
+				},
+			},
+		},
+		Distribution: &types.DistributionConfig{
+			CallerReference: aws.String("x"),
+			Enabled:         aws.Bool(true),
+			Origins: &types.Origins{
+				Items: []types.Origin{{
+					Id:                 aws.String("next-app"),
+					DomainName:         aws.String("host.docker.internal"),
+					CustomOriginConfig: &types.CustomOriginConfig{HTTPPort: aws.Int32(3000)},
+				}},
+			},
+			DefaultCacheBehavior: &types.DefaultCacheBehavior{
+				TargetOriginId:       aws.String("next-app"),
+				ViewerProtocolPolicy: types.ViewerProtocolPolicyAllowAll,
+				CachePolicyId:        aws.String("E_CP1"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	// upstream self must resolve to the unix socket, not a TCP loopback.
+	if !strings.Contains(conf, `upstream self {
+    server unix:/run/cf-local-inner.sock;
+}`) {
+		t.Errorf("`upstream self` not pointing at unix socket:\n%s", conf)
+	}
+	if strings.Contains(conf, `server 127.0.0.1:8080`) {
+		t.Errorf("legacy 127.0.0.1:8080 self-loop must be removed:\n%s", conf)
+	}
+
+	// The publicly listening server block must NOT carry any
+	// `_cf_inner_*` location. Locate the boundary at the FIRST
+	// `\nserver {` that follows the FIRST one (i.e. the inner-server
+	// header) and use everything before it as the public block.
+	const sep = "\nserver {"
+	first := strings.Index(conf, sep)
+	if first < 0 {
+		t.Fatalf("expected at least one server block:\n%s", conf)
+	}
+	second := strings.Index(conf[first+len(sep):], sep)
+	publicBlock := conf
+	if second >= 0 {
+		publicBlock = conf[:first+len(sep)+second]
+	}
+	if !strings.Contains(publicBlock, "listen 8080;") {
+		t.Fatalf("first server block expected to listen on 8080:\n%s", publicBlock)
+	}
+	// The public block can contain `proxy_pass http://self/_cf_inner_*`
+	// URIs (those go via `upstream self` → unix socket) but must not
+	// declare any `location /_cf_inner_*` directive — that's the
+	// structural property the unix socket migration provides.
+	if strings.Contains(publicBlock, "location /_cf_inner_") {
+		t.Errorf("public :8080 server must not declare _cf_inner_* locations:\n%s", publicBlock)
+	}
+	if strings.Contains(publicBlock, "allow 127.0.0.1") {
+		t.Errorf("public :8080 server must not need allow/deny defense (inner is on unix socket):\n%s", publicBlock)
+	}
+
+	// The second server block must listen on the unix socket and carry
+	// the inner location.
+	if !strings.Contains(conf, "listen unix:/run/cf-local-inner.sock;") {
+		t.Errorf("inner server must listen on unix socket:\n%s", conf)
+	}
+	if !strings.Contains(conf, "location /_cf_inner_E_CP1/ {") {
+		t.Errorf("inner server must carry the per-policy inner location:\n%s", conf)
+	}
+}
+
 // TestRender_ResponseHeaders_DefaultCacheBehavior verifies 4c-2 wiring:
 // when DefaultCacheBehavior.ResponseHeadersPolicyId resolves to a policy
 // in LoadResult.ResponseHeadersPolicies, the resulting cf-local.conf
