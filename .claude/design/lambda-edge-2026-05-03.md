@@ -146,8 +146,42 @@ AWS Lambda@Edge viewer-request の return 仕様に従い、以下の 3 ケー�
 - **BL-LE3** (条件付き): RIE が CloudFront event 受理に問題ある場合の Spike (4d-2 着手時に判断)
 - **BL-CFF1**: CloudFront Functions (`FunctionAssociations`) 対応 (Phase 4-E or 5 候補)
 
-## Phase 完了時メモ (Phase 完了後に追記)
+## Phase 完了時メモ (2026-05-03 追記)
 
-- 想定外だった点:
-- 次フェーズへの引き継ぎ事項:
-- DESIGN.md 更新が必要な点:
+### 想定外だった点
+
+- **REV-11 nginx `resolver` directive 必須**: docker-compose 実機起動で `ngx.fetch` が `Error: no resolver defined — failing open` を返すバグを発見。njs の `ngx.fetch` は host name 解決時に http (or server) context の `resolver` directive を要求する。`internal/config/loader.go` に `Resolver` field + `DefaultResolver=127.0.0.11` (Docker 組み込み DNS) + `CF_LOCAL_RESOLVER` env override で対応 (commit `c964faf`)。設計時には想定していなかった
+- **REV-12 `internalRedirect` 後の `$request_uri` 不変**: Lambda が viewer-request で URI を書き換えても origin に古い URI が届くバグを実機検証で発見。`r.internalRedirect(new_uri)` 後 nginx の `$request_uri` は元クライアント値で固定。Lambda@Edge forward の `proxy_pass` を `$uri$is_args$args` に切替必要 (通常 forward は URL encode 保持のため `$request_uri` 維持) (commit `297b29e`)。`writeOuterLocationBody` に `useUpdatedURI bool` を追加して使い分け
+- **4d-6 BoltDB 永続化拡張は accept+warn 撤去不要**: `LambdaFunctionAssociations` は phase-4a 時点で SDK types のまま JSON 永続化されていたため、4d-6 は accept+warn 撤去ではなく回帰テスト (`internal/api/distribution/bolt_test.go` の Create→reopen→Get round-trip) 追加で達成
+- **α 統合テストは httptest 3 サーバ連結で完結**: nginx + njs + 実 RIE 経路は実 docker-compose 起動を要し α 自動化困難。3 サーバ httptest (cf-local control / edge-proxy / 偽 RIE) で end-to-end 等価検証 (Continue / ShortCircuit / LambdaError)。実 nginx + 実 RIE 経路は ship 後の手動 walkthrough で担保 (M3 達成 OSS β 候補と同方針)
+
+### 次フェーズへの引き継ぎ事項
+
+#### 新規生成 BL (`docs/limitations.md` index 表に登録済)
+
+- **BL-LE1**: 残り 3 フック対応 (origin-request / origin-response / viewer-response) — Phase 4-E 候補
+- **BL-LE2**: viewer-request `include_body: true` 対応 — Phase 4-E 候補
+- **BL-LE4**: per-PathPattern routing (同一 EventType 複数バインディングは現状先勝ち、CacheBehaviors 単位の routing が必要)
+- **BL-LE5**: request header 改変の forward 反映 (現状 viewer-request の header 改変は origin に届かない)
+- **BL-LE6**: request method 改変の forward 反映
+- **BL-LE7**: querystring 空区別 (現状 `?` の有無を区別しない)
+- **BL-CFF1**: CloudFront Functions (`FunctionAssociations`) 対応 — Phase 4-E or 5 候補
+
+#### 解消 BL
+
+- **BL-LE3**: 4d-2 着手時の docker-compose RIE 実機起動で CloudFront event 受理に問題なし確認 → 解消
+
+#### 実機検証 walkthrough (ship 後別途)
+
+- **検証 W-1**: `examples/lambda-edge-basic/` で docker compose 起動 + 4 ケース curl (bypass / 401 short-circuit / X-Authed-By header 付与 / URL rewrite)
+- **検証 W-2**: `aws_cloudfront_distribution.lambda_function_association` を含む Terraform apply E2E
+
+→ REV-11/12 が docker compose 実機起動の過程で発見されている時点で構成自体の動作は確証あり。完全な walkthrough は `check-phase-4d.md` 形式で次セッションで実施
+
+### DESIGN.md 更新が必要な点
+
+- 「njs から edge-proxy へは `ngx.fetch`」前提に **「http context に `resolver` directive 必須」** を追記
+- viewer-request **fail-open ポリシー** (Lambda runtime エラー / 通信失敗時は forward へ進む) を明記
+- `LambdaFunctionAssociations` の永続化方針 (SDK types のまま JSON で保存、accept+warn 撤去は不要) を記録
+- edge-proxy port **4569** を確定値として記載 (RIE 系 `:9000` と衝突回避)
+- `internalRedirect` 後の `$request_uri` 不変を理由に **Lambda@Edge forward は `$uri$is_args$args`、通常 forward は `$request_uri`** という使い分けを明記

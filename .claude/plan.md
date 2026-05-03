@@ -29,7 +29,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4a` | 完了 (2026-05-02) | Terraform対応・最小 |
 | `phase-4b` | 完了 (2026-05-03) | Invalidation API互換 |
 | `phase-4c` | 完了 (2026-05-03) | 仕上げ (RHP + unix socket + slog + error codes) |
-| `phase-4d` | 未着手 | Lambda@Edge連携 |
+| `phase-4d` | 完了 (2026-05-03) | Lambda@Edge連携 (viewer-request MVP) |
 | `phase-5` | 未着手 | OSS公開準備 |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 | `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
@@ -226,37 +226,50 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-4d: Lambda@Edge連携
+## phase-4d: Lambda@Edge連携 (viewer-request MVP) (完了 2026-05-03)
 
-**到達状態**: Lambda@Edge / CloudFront Functions のローカル実行を実現する。AWS公式の Lambda Runtime Interface Emulator (RIE) と連携する。
-
-**ゴールイメージ**:
-
-- edge-proxy (Go) サイドカー実装
-- viewer-request / origin-request / origin-response / viewer-response の4フック対応
-- CloudFrontイベント形式の構築（ヘッダー正規化含む）
-- `docker-compose.lambda.yml` テンプレート提供
-- 単体使用 / Lambda連携使用 の両方を切り替え可能
-
-**重要な設計判断（DESIGN.md参照）**:
-
-- イベント形式構築は Go 側で行う（njsではない）
-- Lambda関数の管理はdocker-composeで行う（Lambda APIは実装しない）
-- njsからedge-proxyへの転送は `ngx.fetch` で行う
+**到達状態**: M4 (Lambda@Edge含めた完全構成) に向けた**第一歩**を完了。本番 Terraform の `aws_cloudfront_distribution.lambda_function_association` (event_type=`viewer-request`) をそのまま流して、AWS 公式 Lambda RIE 経由でローカルの関数が起動・実行され、レスポンス改変 / リダイレクト / 短絡応答が反映される状態を実現。`cmd/edge-proxy` (`:4569` listen) を別バイナリ別プロセスで起動する sidecar 構成で、`docker-compose.lambda.yml` を override compose として提供 (Lambda 連携を使わない構成では起動しない)。PR #14 で develop に merge 済 (merge commit `1bd3277`)。タスク履歴: `.claude/tasks-archive/phase-4d-2026-05-03.md`、設計および完了時メモ: `.claude/design/lambda-edge-2026-05-03.md`。
 
 **完了条件**:
 
-- [ ] edge-proxy (Go) 実装
-- [ ] Lambda RIE連携
-- [ ] 4フック (viewer-request/origin-request/origin-response/viewer-response)
-- [ ] docker-compose.lambda.yml テンプレート
-- [ ] イベント形式構築テスト
+- [x] edge-proxy (Go) 雛形 (`cmd/edge-proxy/main.go`、`:4569`)
+- [x] viewer-request CloudFront イベント構築 (golden file unit テスト PASS、AWS docs schema 網羅)
+- [x] Lambda RIE 連携 (`internal/edgefunc/rie_client.go`、httptest unit PASS)
+- [x] distribution 紐付け internal API (`/_internal/edge-functions/{id}`) + BoltDB 永続化拡張 (regression test 追加)
+- [x] njs `edge.js` + nginx.conf 連携 (`ngx.fetch` で edge-proxy 経由、`@cf_le_<san>_forward` 内部 location に分離)
+- [x] docker-compose.lambda.yml + `examples/lambda-edge-basic/` 一式 (RIE Node.js 20 + 4 ケース対応 auth Lambda)
+- [x] α 統合テスト 3 ケース (Continue / ShortCircuit / LambdaError、3 サーバ httptest 連結)
+- [x] Terraform `LambdaFunctionAssociations` (event_type=viewer-request) が cf-local で受理され関数が呼ばれる構成
+- [x] `docs/lambda-edge.md` 整備 + `docs/limitations.md` に積みタスク BL-LE1 / BL-LE2 / BL-LE4 / BL-LE5 / BL-LE6 / BL-LE7 / BL-CFF1 を index 追記、BL-LE3 解消マーク
 
-**着手前にユーザーと相談する点**:
+**着手前決定事項 (kickoff 2026-05-03 で確定)**:
 
-- イベント形式のテストデータをどこまで揃えるか
-- 4フック全部か、優先順位（viewer-requestから?）
-- Lambda関数とdistributionの紐付け方法（環境変数 vs 設定ファイル）
+- **U-1**: テストデータ → AWS 公式ドキュ記載フィールドを網羅した golden JSON 1 件
+- **U-2**: フック実装範囲 → **viewer-request のみ MVP**、残り 3 フックは BL-LE1
+- **U-3**: distribution 紐付け → BoltDB `LambdaFunctionAssociations` + edge-proxy が internal API で lookup
+- **U-4**: CloudFront Functions → 本フェーズ対象外、BL-CFF1
+- **U-5**: edge-proxy プロセス境界 → 別バイナリ別プロセス
+
+**ship 後別途実施 (実機検証 walkthrough)**:
+
+- **検証 W-1**: `examples/lambda-edge-basic/` で docker compose -f docker-compose.lambda.yml up + 4 ケース curl 確認 (bypass / 401 short-circuit / X-Authed-By header 付与 / URL rewrite)
+- **検証 W-2**: `aws_cloudfront_distribution.lambda_function_association` を含む Terraform を `--endpoint-url=http://localhost:4566` で apply して `LambdaFunctionAssociations` が BoltDB に入る + edge-proxy が見える挙動の E2E 確認
+
+→ REV-11 (resolver directive) と REV-12 (forward `$uri$is_args$args`) は本フェーズの docker compose 実機起動の過程で発見・対応済 (commit `c964faf` / `297b29e`) のため構成自体の動作は確証あり。残るは `check-phase-4d.md` 形式での完全 walkthrough。
+
+**Phase 4-E 以降への繰越し** (新規 BL):
+
+- **BL-LE1**: 残り 3 フック対応 (origin-request / origin-response / viewer-response) — Phase 4-E 候補、本フェーズ最大の積み
+- **BL-LE2**: viewer-request `include_body: true` 対応
+- **BL-LE4**: per-PathPattern routing (同一 EventType 複数バインディング、現状先勝ち)
+- **BL-LE5**: request header 改変の forward 反映 (現状 viewer-request の header 改変は origin に届かない)
+- **BL-LE6**: request method 改変の forward 反映
+- **BL-LE7**: querystring 空区別 (現状 `?` の有無を区別しない)
+- **BL-CFF1**: CloudFront Functions (`FunctionAssociations`) 対応 — Phase 4-E or 5 候補
+
+**Phase 4-A/B/C からの未消化繰越し継続** (`docs/limitations.md` 積みタスク一覧で indexed):
+
+- **BL-W1 / BL-W2** (Invalidation wildcard middle/suffix)、**BL-IV1** (Invalidation 並列度)、**BL-IV2** (crash recovery で `InProgress` re-execute)、**BL-PP1** (PathPattern 拡張)、**BL-NX3** (`worker_connections` tuning)、**BL-RV1 / BL-RV2** (review infra 評価、Phase 5 OSS 公開準備で再判定)
 
 ---
 
