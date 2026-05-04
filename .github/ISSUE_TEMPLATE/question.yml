@@ -1,0 +1,40 @@
+name: 質問
+description: 使い方や設計についての質問
+title: "[Q] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        質問ありがとうございます。回答前に以下を確認していただくと早く解決できます。
+
+        - 使い方: [`docs/getting-started.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/docs/getting-started.md) と [`examples/`](https://github.com/DKen-DevCat/cf-local/tree/develop/examples)
+        - 設計判断: [`DESIGN.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/DESIGN.md)
+        - 既知の制約: [`docs/limitations.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/docs/limitations.md)
+        - 既存の質問 issue: [search](https://github.com/DKen-DevCat/cf-local/issues?q=is%3Aissue+label%3Aquestion)
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 質問内容
+      description: 何を知りたいか、できるだけ具体的に
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景 / 試したこと
+      description: どの docs を読んで、何を試したか
+      placeholder: |
+        - `docs/cache-policy.md` を読んだが `Headers` whitelist の優先順位が不明
+        - `examples/nextjs-basic/` を動かして X-Cache-Key を確認した
+    validations:
+      required: true
+
+  - type: textarea
+    id: snippets
+    attributes:
+      label: 設定ファイル / コマンド (任意)
+      description: 該当する設定や実行コマンドを抜粋
+      render: shell

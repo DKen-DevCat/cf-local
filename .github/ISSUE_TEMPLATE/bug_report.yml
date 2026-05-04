@@ -1,0 +1,106 @@
+name: バグ報告
+description: cf-local の挙動が期待と異なる場合に報告
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。再現に必要な情報を可能な範囲で記入してください。
+
+        - **既知の制約か?** → [`docs/limitations.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/docs/limitations.md) を確認
+        - **設計判断によるものか?** → [`DESIGN.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/DESIGN.md) の「やらない」リストを確認
+        - **脆弱性の場合** → public な issue ではなく [Security Advisories](https://github.com/DKen-DevCat/cf-local/security/advisories/new) で報告
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何が起きているか、1〜2 文で
+      placeholder: 例) `aws cloudfront create-invalidation` で末尾 `*` wildcard を投げると 500 エラーが返る
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 影響コンポーネント
+      description: どこで問題が起きているか (複数可)
+      multiple: true
+      options:
+        - Control Plane (Go, :4566)
+        - Data Plane (nginx + njs, :8080)
+        - Edge Functions / Lambda@Edge (:4569)
+        - Invalidation API
+        - Cache Policy / Cache Key
+        - TTL / Cache-Control
+        - Terraform 連携 (examples/terraform-integration)
+        - Lambda@Edge 連携 (examples/lambda-edge-basic)
+        - Documentation
+        - その他
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順
+      description: 最小限の reproducer をコマンド or コードで
+      placeholder: |
+        1. `docker compose up -d`
+        2. `curl http://localhost:8080/foo`
+        3. `aws --endpoint-url http://localhost:4566 cloudfront create-invalidation --distribution-id ... --paths '/foo*'`
+        4. ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待される挙動
+      placeholder: 例) 200 OK が返り、wildcard prefix にマッチする cache slot が purge される
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の挙動
+      description: エラーログ / レスポンス body / コンテナログ等
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: cf-local のバージョン
+      description: タグ (`v0.1.0`) または commit SHA (`git rev-parse HEAD`)
+      placeholder: 例) v0.1.0 / abc1234
+    validations:
+      required: true
+
+  - type: input
+    id: docker
+    attributes:
+      label: Docker / docker-compose のバージョン
+      description: `docker --version` / `docker compose version`
+      placeholder: 例) Docker 24.0.7 / Docker Compose v2.21.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 実行環境
+      description: ホスト OS (macOS / Linux / Windows + Docker Desktop 等)
+      placeholder: 例) macOS 14.5 (Apple Silicon) / Ubuntu 22.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: 補足
+      description: 設定ファイル抜粋 / nginx.conf 関連箇所 / 関連 issue 等

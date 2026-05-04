@@ -1,0 +1,62 @@
+name: 機能リクエスト
+description: 新機能や既存機能の拡張を提案
+title: "[Feat] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提案ありがとうございます。cf-local は **キャッシュ挙動の検証に特化** した最小ツールです。スコープ判断のため以下を確認してください。
+
+        - **DESIGN.md の「やらない」リスト** に該当しないか — [`DESIGN.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/DESIGN.md) §2
+        - **既知の積みタスク (BL-*) と重複しないか** — [`docs/limitations.md`](https://github.com/DKen-DevCat/cf-local/blob/develop/docs/limitations.md)
+        - **AWS CloudFront 公式機能** との対応関係を明記してください
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 動機 / 解決したい問題
+      description: なぜこの機能が必要か。どんな開発体験を実現したいか
+      placeholder: 例) 本番で `aws_cloudfront_function` (CloudFront Functions) を使っているが、ローカルで挙動を再現できないため request rewrite ロジックの検証が遅い
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する機能
+      description: 想定する API / 設定 / 利用例
+      placeholder: |
+        - `aws_cloudfront_function` リソースの CRUD を `:4566` で受ける
+        - 関数本体は QuickJS 等で実行
+        - `function_associations` を distribution から参照する
+    validations:
+      required: true
+
+  - type: input
+    id: aws_reference
+    attributes:
+      label: AWS CloudFront での該当機能
+      description: 公式ドキュメント URL / API 名 / 該当バックログ ID (BL-*)
+      placeholder: 例) https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-functions.html / BL-CFF1
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 検討した代替案
+      description: 既存機能で代替できないか、回避策は無いか
+      placeholder: 例) Lambda@Edge viewer-request で代替できるが、起動オーバーヘッドが大きく軽量な request 改変には不向き
+
+  - type: dropdown
+    id: scope_check
+    attributes:
+      label: スコープ確認
+      description: DESIGN.md の「やらない」リストに該当しないことを確認しましたか
+      options:
+        - 確認済み (該当しない)
+        - 該当する可能性があるが、それでも提案する理由がある
+        - 確認していない
+    validations:
+      required: true
