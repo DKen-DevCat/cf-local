@@ -110,7 +110,7 @@ type innerView struct {
 
 func buildOriginViews(origins *types.Origins) ([]originView, error) {
 	if origins == nil || len(origins.Items) == 0 {
-		return nil, fmt.Errorf("Origins is empty")
+		return nil, fmt.Errorf("origins is empty")
 	}
 	out := make([]originView, 0, len(origins.Items))
 	for _, o := range origins.Items {
