@@ -75,15 +75,28 @@ origin (Next.js 等) を別途 `localhost:3000` で立てた状態で `http://lo
 
 ### GHCR から pull (v0.1.0 リリース後)
 
+cf-local は 3 つのイメージで構成される (リリース時に GHCR へ push):
+
+| イメージ | 役割 |
+|---|---|
+| `ghcr.io/dken-devcat/cf-local` | Control Plane (Go, `:4566`) |
+| `ghcr.io/dken-devcat/cf-local-nginx` | Data Plane (nginx + njs + ngx_cache_purge, `:8080`) |
+| `ghcr.io/dken-devcat/cf-local-edge-proxy` | Edge Proxy sidecar (Lambda@Edge 連携、`:4569`) |
+
 ```bash
 docker pull ghcr.io/dken-devcat/cf-local:latest
+docker pull ghcr.io/dken-devcat/cf-local-nginx:latest
+# Lambda@Edge を使う場合
+docker pull ghcr.io/dken-devcat/cf-local-edge-proxy:latest
 ```
 
-または特定バージョン:
+または特定バージョン (`v0.1.0` / `0.1` / `0` / `latest` のタグが利用可能):
 
 ```bash
 docker pull ghcr.io/dken-devcat/cf-local:v0.1.0
 ```
+
+`docker compose up` でソースから起動する場合は GHCR からの pull は不要 (ローカルで build される)。
 
 ### Lambda@Edge を有効にする
 
