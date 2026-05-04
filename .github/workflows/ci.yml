@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [develop]
+  # 全 PR を対象にする (target が develop 以外でも CI を走らせる)。
+  # 例: phase ブランチ向けの fix PR (PR #18 等) でも事前 CI 緑を担保したい
   pull_request:
-    branches: [develop]
 
 # 同一 PR / branch で多重起動を抑制 (古い run はキャンセル)
 concurrency:

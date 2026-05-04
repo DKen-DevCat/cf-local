@@ -191,6 +191,7 @@ phase ごとの繰越しタスクの index。詳細は `.claude/plan.md` およ�
 | `BL-LE7` | viewer-request の querystring 空文字 (Lambda が `{"querystring": ""}` で意図クリア) を区別できない (json field の有無検出が必要) | 利用者要望次第 |
 | `BL-CFF1` | CloudFront Functions (`FunctionAssociations`) 対応 | v0.2.0 候補 |
 | `BL-RV1` / `BL-RV2` | Review infra 評価 (rules 領域別分割の要否 / 軸 4 公式ドキュ準拠精度) | v0.1.0 公開後の utilisation を見て再評価 |
+| `BL-CI1` | golangci-lint errcheck 再有効化 (phase-5 で 16 件検出、defer Close 等の慣用パターン含むため一旦 disable。個別評価して fix or `//nolint` 付与) | v0.2.0 候補 |
 
 優先度判断の目安:
 
