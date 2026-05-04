@@ -55,11 +55,15 @@ jobs:
           cache: true
 
       # .golangci.yml が無い場合は default 設定で動く。ノイズが多ければ
-      # .golangci.yml を追加する判断を本フェーズの phase-5-8 リスク R-2 で扱う
+      # .golangci.yml を追加する判断を本フェーズの phase-5-8 リスク R-2 で扱う。
+      # install-mode: goinstall は host の Go (= go.mod の 1.26.1) で
+      # golangci-lint を都度ビルドするため、prebuilt binary が古い Go で
+      # ビルドされている場合の "Go language version mismatch" を構造的に回避
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+          install-mode: goinstall
           args: --timeout=5m
 
   build:
