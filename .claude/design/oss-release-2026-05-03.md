@@ -1,10 +1,12 @@
 ---
 phase: phase-5
-title: OSS公開準備 + v0.1.0 リリース
+title: OSS公開準備 + v0.1.0 リリース基盤
 date: 2026-05-03
+completed: 2026-05-05
 branch: feat/phase-5-oss-release
 base: develop @ e588aae
-status: draft
+merge: PR #17 (cf49bc0) + PR #18 (38958a2)
+status: completed
 ---
 
 # Phase 5: OSS公開準備 + v0.1.0 リリース
@@ -204,3 +206,41 @@ cf-local v0.1.0 では以下の機能/挙動は未対応または制約があり
 **判断根拠**: 新規ロジック追加なし、文字列修正と既存テストの観測コード修正のみ。CI ジョブを通すための必要条件として phase-5-8 完遂に必要。`docs/limitations.md` BL-CI1 (errcheck の package-wide disable) として残課題は backlog 化済。
 
 CLAUDE.md「設計判断は DESIGN.md に従う / 逸脱はコードを書く前にユーザーに確認」運用との関係: 本件は CI 着手時に判断したため事前確認の機会は限定的だったが、commit メッセージに経緯を記録 + 本フェーズ完了時メモで整理することで運用整合を取る。
+
+### Review iteration timeline (REV-1〜REV-8)
+
+PR #17 のレビュー対応で 8 件を 2 commit に分けて消化。中身は CI 緑化と公開フロー堅牢化に集中。
+
+| REV | 内容 | 種別 | commit |
+|---|---|---|---|
+| REV-1 | design doc に CI 緑化 Go コード同梱の Phase完了時メモ追記 (BE: N/A 規定との整合) | docs | `3526284` |
+| REV-2 | `TestReloader_NilFetchResult` を `time.Sleep(80ms)` → `waitFor` に統一 (helper 一貫性) | test | `3526284` |
+| REV-3 | `ci.yml` の `:8080` / `:8081` / `:4566` 待機ループを失敗時 `exit 1` 化 (`::error::` で診断容易化、3 step 統一) | ci | `3526284` |
+| REV-4 | `release.yml` の Docker 系 actions を現行 major へ bump (qemu/buildx/login@v4, metadata@v6, build-push@v7) | ci | `3526284` |
+| REV-5 | `ci.yml` の golangci-lint version を `latest` → `v2.12.1` 固定 (公式 Production Workflow 推奨の再現性) | ci | `3526284` |
+| REV-6 | `TestReloader_TriggerCoalesce` を `done channel + cancel + <-done` 形に統一し既存 TempDir cleanup race を解消 | test | `3526284` |
+| REV-7 | `CONTRIBUTING.md` の `<YOUR_GITHUB_OWNER>` 残置を `DKen-DevCat` に置換 (5-1/5-2 漏れの後追い) | docs | `3526284` |
+| REV-8 | `ci.yml` nginx :8080 wait の `curl -fsS` 誤用を code= パターンに統一 (5xx を "応答した" とみなして抜ける) | ci | `4a99a69` |
+
+検証: REV-2 / REV-6 適用前 14/20 pass → 適用後 20/20 pass で reloader test の flake 撲滅確認。
+
+### 想定外だった点
+
+1. **REV-3 → REV-8 の連鎖**: REV-3 で待機ループに `exit 1` を入れた瞬間、:8080 step だけ `curl -fsS` を使っていた既存誤用が顕在化した (5xx をエラー扱いして break に到達しない → 旧版は "応答ある" コメントの意図と裏腹に "200 のみ" 待機していた)。CI runner では origin が居ないので 502 になり、厳格化前は黙過、厳格化後はタイムアウト exit 1。**緩い検証は壊れたまま延命する** という典型例 (Schrödinger's wait loop)。
+
+2. **golangci-lint v2 が既存 ST1005 違反を検出**: BE: N/A の規定で Phase 5 着手したが、CI 導入で既存 6 箇所のエラーメッセージが Go conventions 違反として浮上。`docs/conventions.md` でも明文化済みのルールが lint 未導入のため遵守ドリフトしていた。lint 導入は静的に既存債を可視化する。
+
+3. **race detector が既存 flake を発覚**: `internal/nginx/reloader_test.go` の観測コード (test 側のメッセージ蓄積) に data race があり、`go test -race` で fail。本番コードは race-free だが、テスト側の `bytes.Buffer` 直書きと goroutine 並走の組合せが原因。`syncBuf` / `atomic.Int32` を導入して観測側を thread-safe 化することで解消。
+
+### 次フェーズへの引き継ぎ事項
+
+- **BL-CI1 (errcheck 再有効化)**: v0.2.0 候補のまま継続。CI が緑になっている事実を踏まえて再評価できる状態。chore-3 では index 維持のみ、v0.2.0 の最初の chore 候補。
+- **GHCR バッジ URL 最終確定**: chore-3-4 で「現状の仮 URL 維持」か「実 push 後に確定」かを決める。`v0.1.0` タグ push (chore-3 範囲外) を待つ判断が妥当。
+- **実 release 操作**: chore-3 完了後の独立作業。CHANGELOG `[0.1.0] - TBD` 置換 → `v0.1.0` タグ作成 + push → release.yml 実走 → GHCR push 完了確認 → GitHub Release notes 作成 → (任意) Zenn 告知。
+- **CONTRIBUTING.md 改善余地**: REV-7 で plain text 置換のみ実施。owner 名 hardcode の代わりに `${GITHUB_REPOSITORY_OWNER}` 等の placeholder 化検討は v0.2 候補 (本フェーズ範囲外)。
+
+### DESIGN.md 更新が必要な点
+
+該当なし。Phase 5 は公開フロー整備 + 既存制約のドキュメント化が中心で、設計判断 (`DESIGN.md` の「やらない」リストやアーキ方針) には影響しない。BL-CI1 / BL-DEP1 等の backlog は `docs/limitations.md` に index 集約しており、`DESIGN.md` 側の追記は不要。
+
+唯一の例外候補は「`BE: N/A` 規定でも CI 緑化のための既存 lint 違反修正は同梱許容」の運用ルールだが、これは事例 1 件で一般化するには弱い。今後の chore でも同様の事例が複数出れば運用ルールとして DESIGN.md または CLAUDE.md に明文化を検討。
