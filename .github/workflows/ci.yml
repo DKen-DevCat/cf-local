@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [develop]
+  # 全 PR を対象にする (target が develop 以外でも CI を走らせる)。
+  # 例: phase ブランチ向けの fix PR (PR #18 等) でも事前 CI 緑を担保したい
+  pull_request:
+
+# 同一 PR / branch で多重起動を抑制 (古い run はキャンセル)
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (go vet + gofmt + go test ./internal/...)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt -l (must be empty)
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go test ./internal/...
+        run: go test -race -count=1 ./internal/...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # .golangci.yml が無い場合は default 設定で動く。ノイズが多ければ
+      # .golangci.yml を追加する判断を本フェーズの phase-5-8 リスク R-2 で扱う。
+      # install-mode: goinstall は host の Go (= go.mod の 1.26.1) で
+      # golangci-lint を都度ビルドするため、prebuilt binary が古い Go で
+      # ビルドされている場合の "Go language version mismatch" を構造的に回避
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          # 公式 README "Production Workflow Integration" は再現性のため version を
+          # 固定推奨。v0.2.0 で bump 判断する運用にする。
+          version: v2.12.1
+          install-mode: goinstall
+          args: --timeout=5m
+
+  build:
+    name: Docker build (compose dry-run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker compose build
+        run: docker compose build
+
+  integration:
+    name: Integration tests (α + β)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [unit, build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: docker compose up -d (with test override for :8081)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+
+      - name: Wait for nginx :8080 to respond
+        run: |
+          ok=false
+          for i in {1..30}; do
+            # 200 でなくとも 4xx/5xx のように HTTP 応答すればプロキシ層は up
+            # (curl -fsS は 5xx を失敗扱いするため使えない、:4566 と同じパターン)
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080/" 2>/dev/null || echo "000")
+            if [ "$code" != "000" ]; then
+              echo "nginx :8080 responded ($code)"
+              ok=true
+              break
+            fi
+            echo "waiting for nginx :8080 (attempt $i/30, last=$code)"
+            sleep 2
+          done
+          if [ "$ok" != "true" ]; then
+            echo "::error::nginx :8080 did not respond within 60s"
+            exit 1
+          fi
+
+      - name: Wait for nginx :8081 (β test endpoint)
+        run: |
+          ok=false
+          for i in {1..30}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Test-Policy: default" "http://localhost:8081/_cache_key_test" 2>/dev/null || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "nginx :8081 responded 200"
+              ok=true
+              break
+            fi
+            echo "waiting for nginx :8081 (attempt $i/30, last=$code)"
+            sleep 2
+          done
+          if [ "$ok" != "true" ]; then
+            echo "::error::nginx :8081 (β test endpoint) did not respond within 60s"
+            exit 1
+          fi
+
+      - name: Wait for cf-local :4566
+        run: |
+          ok=false
+          for i in {1..30}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:4566/2020-05-31/cache-policy" 2>/dev/null || echo "000")
+            # 200 でなくても 4xx/5xx のように HTTP 応答すれば up
+            if [ "$code" != "000" ]; then
+              echo "cf-local :4566 responded ($code)"
+              ok=true
+              break
+            fi
+            echo "waiting for cf-local :4566 (attempt $i/30)"
+            sleep 2
+          done
+          if [ "$ok" != "true" ]; then
+            echo "::error::cf-local :4566 did not respond within 60s"
+            exit 1
+          fi
+
+      - name: go test ./tests/integration/...
+        run: go test -count=1 -timeout=10m ./tests/integration/...
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          echo "=== docker compose ps ==="
+          docker compose ps
+          echo "=== nginx logs ==="
+          docker compose logs --no-color nginx | tail -200 || true
+          echo "=== cf-local logs ==="
+          docker compose logs --no-color cf-local | tail -200 || true
+
+      - name: docker compose down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml down -v

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 設計の判断理由を確認
+    url: https://github.com/DKen-DevCat/cf-local/blob/develop/DESIGN.md
+    about: 「なぜこの実装になっているか」は DESIGN.md に書かれています。issue を立てる前に該当箇所を確認してください。
+  - name: 既知の制約を確認
+    url: https://github.com/DKen-DevCat/cf-local/blob/develop/docs/limitations.md
+    about: 未対応機能 (Lambda@Edge 残り 3 フック / PathPattern 拡張 / Invalidation wildcard 等) は docs/limitations.md にまとまっています。
+  - name: 脆弱性の報告
+    url: https://github.com/DKen-DevCat/cf-local/security/advisories/new
+    about: セキュリティ脆弱性は public な issue ではなく Security Advisories で報告してください。

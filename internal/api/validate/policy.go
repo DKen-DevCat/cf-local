@@ -47,10 +47,10 @@ func CachePolicyConfig(cfg *types.CachePolicyConfig) error {
 		return errors.New("CachePolicyConfig is nil")
 	}
 	if cfg.Name == nil || *cfg.Name == "" {
-		return errors.New("Name is required")
+		return errors.New("name is required")
 	}
 	if !isSafeName(*cfg.Name) {
-		return fmt.Errorf("Name %q contains unsupported characters (allowed: A-Za-z 0-9 . _ -)", *cfg.Name)
+		return fmt.Errorf("name %q contains unsupported characters (allowed: A-Za-z 0-9 . _ -)", *cfg.Name)
 	}
 	p := cfg.ParametersInCacheKeyAndForwardedToOrigin
 	if p == nil {
@@ -149,10 +149,10 @@ func OriginRequestPolicyConfig(cfg *types.OriginRequestPolicyConfig) error {
 		return errors.New("OriginRequestPolicyConfig is nil")
 	}
 	if cfg.Name == nil || *cfg.Name == "" {
-		return errors.New("Name is required")
+		return errors.New("name is required")
 	}
 	if !isSafeName(*cfg.Name) {
-		return fmt.Errorf("Name %q contains unsupported characters (allowed: A-Za-z 0-9 . _ -)", *cfg.Name)
+		return fmt.Errorf("name %q contains unsupported characters (allowed: A-Za-z 0-9 . _ -)", *cfg.Name)
 	}
 	if err := validateORPHeaders(cfg.HeadersConfig); err != nil {
 		return err
@@ -252,10 +252,10 @@ func ResponseHeadersPolicyConfig(cfg *types.ResponseHeadersPolicyConfig) error {
 		return errors.New("ResponseHeadersPolicyConfig is nil")
 	}
 	if cfg.Name == nil || *cfg.Name == "" {
-		return errors.New("Name is required")
+		return errors.New("name is required")
 	}
 	if !isSafeName(*cfg.Name) {
-		return fmt.Errorf("Name %q contains unsupported characters (allowed: A-Za-z 0-9 . _ -)", *cfg.Name)
+		return fmt.Errorf("name %q contains unsupported characters (allowed: A-Za-z 0-9 . _ -)", *cfg.Name)
 	}
 	if cfg.CustomHeadersConfig != nil {
 		for i, h := range cfg.CustomHeadersConfig.Items {

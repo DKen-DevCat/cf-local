@@ -3,6 +3,10 @@
 > CloudFront cache behavior emulator for local development.
 > Bring your production Terraform — change just the endpoint.
 
+[![License: MIT](https://img.shields.io/github/license/DKen-DevCat/cf-local)](LICENSE)
+[![CI](https://github.com/DKen-DevCat/cf-local/actions/workflows/ci.yml/badge.svg)](https://github.com/DKen-DevCat/cf-local/actions/workflows/ci.yml)
+[![GHCR](https://img.shields.io/badge/ghcr-cf--local-blue?logo=docker)](https://github.com/DKen-DevCat/cf-local/pkgs/container/cf-local)
+
 `cf-local` はAmazon CloudFrontのキャッシュ挙動をローカルで再現するエミュレータ。本番のTerraformコードを `endpoints` 指定だけ変えて向けると、ローカルにCloudFrontディストリビューションが立ち上がる。Lambda@EdgeはAWS公式のLambda Runtime Interface Emulator (RIE)と組み合わせて実行できる。
 
 ## このツールが解決する問題
@@ -16,11 +20,11 @@ cf-localはローカルのDockerだけでこれらを解決する。完全なClo
 
 ## できること
 
-- CloudFront Distribution / Cache Policy / Origin Request Policy のローカル再現
+- CloudFront Distribution / Cache Policy / Origin Request Policy / Response Headers Policy のローカル再現
 - Terraform AWS providerの `endpoints` 指定で `terraform apply` 可能
 - AWS CLI (`aws cloudfront ...`) での操作可能
-- `aws cloudfront create-invalidation` でキャッシュパージ
-- Lambda@Edge / CloudFront Functions の実行（AWS公式 Lambda RIE 経由）
+- `aws cloudfront create-invalidation` でキャッシュパージ（末尾 `*` wildcard 対応）
+- Lambda@Edge **viewer-request** フックの実行（AWS公式 Lambda RIE 経由）
 
 ## できないこと
 
@@ -32,7 +36,7 @@ cf-localはローカルのDockerだけでこれらを解決する。完全なClo
 - HTTPS / TLS（ローカル開発なので不要）
 - Lambda関数自体のAPI管理（関数の作成・更新はDockerで管理）
 
-詳細は `docs/limitations.md` を参照。
+詳細は [`docs/limitations.md`](docs/limitations.md) を参照。
 
 ## アーキテクチャ概要
 
@@ -53,46 +57,106 @@ cf-localはローカルのDockerだけでこれらを解決する。完全なClo
                          (公式・任意)         (Next.js等)
 ```
 
-設計の詳細と判断理由は `DESIGN.md` を参照。
+設計の詳細と判断理由は [`DESIGN.md`](DESIGN.md) を参照。
 
 ## クイックスタート
 
+### ソースから起動
+
 ```bash
-git clone https://github.com/<YOUR_GITHUB_OWNER>/cf-local.git
+git clone https://github.com/DKen-DevCat/cf-local.git
 cd cf-local
 docker compose up -d
-# あとは origin (Next.js等) を 3000 番で立てて、
-# ブラウザから localhost:8080 にアクセス
+# nginx :8080  (キャッシュ経路)
+# cf-local :4566 (AWS API 互換 endpoint)
 ```
 
-詳細は `docs/getting-started.md` を参照。
+origin (Next.js 等) を別途 `localhost:3000` で立てた状態で `http://localhost:8080` にアクセスすればキャッシュ越しに配信される。詳細は [`docs/getting-started.md`](docs/getting-started.md) を参照。
+
+### GHCR から pull (v0.1.0 リリース後)
+
+cf-local は 3 つのイメージで構成される (リリース時に GHCR へ push):
+
+| イメージ | 役割 |
+|---|---|
+| `ghcr.io/dken-devcat/cf-local` | Control Plane (Go, `:4566`) |
+| `ghcr.io/dken-devcat/cf-local-nginx` | Data Plane (nginx + njs + ngx_cache_purge, `:8080`) |
+| `ghcr.io/dken-devcat/cf-local-edge-proxy` | Edge Proxy sidecar (Lambda@Edge 連携、`:4569`) |
+
+```bash
+docker pull ghcr.io/dken-devcat/cf-local:latest
+docker pull ghcr.io/dken-devcat/cf-local-nginx:latest
+# Lambda@Edge を使う場合
+docker pull ghcr.io/dken-devcat/cf-local-edge-proxy:latest
+```
+
+または特定バージョン (`v0.1.0` / `0.1` / `0` / `latest` のタグが利用可能):
+
+```bash
+docker pull ghcr.io/dken-devcat/cf-local:v0.1.0
+```
+
+`docker compose up` でソースから起動する場合は GHCR からの pull は不要 (ローカルで build される)。
+
+### Lambda@Edge を有効にする
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.lambda.yml up -d
+```
+
+サンプル: [`examples/lambda-edge-basic/`](examples/lambda-edge-basic/)
+
+## v0.1.0 マイルストーン到達状況
+
+| マイルストーン | 状態 | 内容 |
+|---|---|---|
+| M1 | ✅ | PoC (Phase 0) |
+| M2 | ✅ | 他プロジェクト流用可能 (Phase 3) |
+| M3 | ✅ | Terraform 連携 (Phase 4-A〜C) |
+| M4 | ✅ | Lambda@Edge viewer-request MVP (Phase 4-D) |
+| M5 | 🚧 | OSS 公開 (Phase 5、本リリースで進行中) |
+
+v0.1.0 では **Lambda@Edge は viewer-request のみ**。残り 3 フック (origin-request / origin-response / viewer-response) と CloudFront Functions は次バージョン以降で検討。詳細は [`docs/limitations.md`](docs/limitations.md) §「Known limitations」。
 
 ## ステータス
 
-このプロジェクトは段階的に開発中。詳細は `.claude/plan.md` を参照。
+詳細なフェーズ管理は [`.claude/plan.md`](.claude/plan.md) を参照。
 
 | Phase | 状態 | 内容 |
 |---|---|---|
-| 0 | 完了 | nginx前段配置とPoC |
-| 1 | 未着手 | cache key動的計算 |
-| 2 | 未着手 | TTL正確化 |
-| 3 | 未着手 | Invalidation API + 設定ファイル方式 |
-| 4-A | 未着手 | Terraform対応・最小 |
-| 4-B | 未着手 | Invalidation API互換 |
-| 4-C | 未着手 | 仕上げ |
-| 4-D | 未着手 | Lambda@Edge連携 |
-| 5 | 未着手 | OSS公開 |
+| 0 | 完了 | nginx 前段配置と PoC |
+| 1 | 完了 | cache key 動的計算 |
+| 2 | 完了 | TTL 正確化 |
+| 3 | 完了 | Invalidation API + 設定ファイル方式 |
+| 4-A | 完了 | Terraform 対応・最小 |
+| 4-B | 完了 | Invalidation API 互換 |
+| 4-C | 完了 | 仕上げ (RHP + unix socket + slog + error codes) |
+| 4-D | 完了 | Lambda@Edge 連携 (viewer-request MVP) |
+| 5 | 進行中 | OSS 公開準備 + v0.1.0 リリース |
+
+## ドキュメント
+
+- [`docs/getting-started.md`](docs/getting-started.md): 5 分で動かす
+- [`docs/cache-policy.md`](docs/cache-policy.md): cache policy / cache key の組み立てルール
+- [`docs/ttl.md`](docs/ttl.md): TTL 決定ロジック
+- [`docs/invalidation-api.md`](docs/invalidation-api.md): CreateInvalidation / wildcard / CMS webhook 連携
+- [`docs/lambda-edge.md`](docs/lambda-edge.md): Lambda@Edge viewer-request の使い方
+- [`docs/config-schema.md`](docs/config-schema.md): 設定ファイルスキーマ
+- [`docs/limitations.md`](docs/limitations.md): 既知の制約と未対応機能
 
 ## 開発に参加する
 
-開発を進める際は、以下を順に読むこと。
+issue 報告 / PR を歓迎します。事前に以下を読んでください。
 
-1. `DESIGN.md` - 設計と判断理由
-2. `.claude/plan.md` - フェーズの全体像
-3. `CLAUDE.md` - Claude Codeで作業する場合の指針
-4. `docs/conventions.md` - コーディング規約
-5. `.claude/design/<active>.md` - 現在進行中のフェーズの設計ドキュメント
+1. [`DESIGN.md`](DESIGN.md) - 設計と判断理由
+2. [`.claude/plan.md`](.claude/plan.md) - フェーズの全体像
+3. [`CLAUDE.md`](CLAUDE.md) - Claude Code で作業する場合の指針
+4. [`docs/conventions.md`](docs/conventions.md) - コーディング規約
+5. [`CONTRIBUTING.md`](CONTRIBUTING.md) - 開発フロー
+6. [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) - 行動規範
+
+脆弱性報告は [`SECURITY.md`](SECURITY.md) の手順に従ってください。
 
 ## ライセンス
 
-MIT License. `LICENSE` を参照。
+MIT License. [`LICENSE`](LICENSE) を参照。

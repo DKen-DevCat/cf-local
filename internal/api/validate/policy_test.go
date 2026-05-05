@@ -41,12 +41,12 @@ func TestCachePolicyConfig_Errors(t *testing.T) {
 		{
 			name:      "missing name",
 			mutate:    func(c *types.CachePolicyConfig) { c.Name = nil },
-			wantSubst: "Name is required",
+			wantSubst: "name is required",
 		},
 		{
 			name:      "empty name",
 			mutate:    func(c *types.CachePolicyConfig) { c.Name = aws.String("") },
-			wantSubst: "Name is required",
+			wantSubst: "name is required",
 		},
 		{
 			name:      "name with whitespace",

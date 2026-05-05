@@ -1,6 +1,26 @@
 # Limitations
 
-cf-localと本物のCloudFrontとの違い。意図的に再現していない部分と、未対応の部分を明記する。フェーズが進むにつれて更新される。
+cf-local と本物の CloudFront との違い。意図的に再現していない部分と、未対応の部分を明記する。フェーズが進むにつれて更新される。
+
+## Known limitations (v0.1.0)
+
+cf-local v0.1.0 リリース時点で利用者が踏みやすい制約のサマリ。詳細は本ドキュメント以降の各セクション参照。利用者フィードバックを元に v0.2.0 以降で優先度を判断する方針。
+
+| カテゴリ | 制約 | 詳細 | 対応予定 |
+|---|---|---|---|
+| Lambda@Edge | viewer-request のみ。残り 3 フック (origin-request / origin-response / viewer-response) は未対応 | [BL-LE1](#積みタスク-backlog-一覧) | v0.2.0 候補 |
+| Lambda@Edge | viewer-request の request **header** / **method** 改変が origin に反映されない | [BL-LE5 / BL-LE6](#積みタスク-backlog-一覧) | v0.2.0 候補 |
+| Lambda@Edge | `include_body: true` 未対応 (request body は Lambda に渡らない) | [BL-LE2](#積みタスク-backlog-一覧) | v0.2.0 候補 |
+| Lambda@Edge | per-PathPattern Lambda routing 未対応 (DefaultCacheBehavior 側が常に優先) | [BL-LE4](#積みタスク-backlog-一覧) | 利用者要望次第 |
+| CloudFront Functions | `FunctionAssociations` 完全未対応 | [BL-CFF1](#積みタスク-backlog-一覧) | v0.2.0 候補 |
+| Invalidation | wildcard は **末尾 `*` のみ**。`*.jpg` / `/a/*/b` 等は 400 reject | [BL-W1 / BL-W2](#積みタスク-backlog-一覧) | 利用者要望次第 (AWS 仕様外) |
+| Invalidation | worker は serial (並列度 1)、crash 時 `InProgress` は強制 Completed | [BL-IV1 / BL-IV2](#積みタスク-backlog-一覧) | 利用者要望次第 |
+| PathPattern | prefix wildcard と `*` のみ。suffix / middle / exact wildcard は 400 reject | [BL-PP1](#積みタスク-backlog-一覧) | 利用者要望次第 |
+| ResponseHeadersPolicy | SecurityHeaders / ServerTiming / RemoveHeaders は accept のみで nginx 注入なし | [§ResponseHeadersPolicy](#responseheaderspolicy-phase-4-c) | 利用者要望次第 |
+| ResponseHeadersPolicy | CORS の AllowOrigins は単一 origin のみ反映 | [§ResponseHeadersPolicy](#responseheaderspolicy-phase-4-c) | 利用者要望次第 |
+| ETag | `If-Match` は parse するが strict 検証しない (`InvalidIfMatchVersion` を返さない) | [§未対応の CloudFront API](#未対応のcloudfront-api) | v0.2.0 候補 |
+| HTTPS / TLS | 非対応 (HTTP-only) | [§意図的にスコープ外にしているもの](#意図的にスコープ外にしているもの) | 設計上の判断 (実装予定なし) |
+| 認証 / 認可 / 暗号化 | 非対応 (`:4566` / `:4569` 管理 API は信頼ネットワーク前提) | [DESIGN.md §2](../DESIGN.md) | 設計上の判断 (実装予定なし) |
 
 ## 意図的にスコープ外にしているもの
 
@@ -140,36 +160,44 @@ ETag 関連:
 
 ## 積みタスク (backlog) 一覧
 
-phase ごとの繰越しタスクの index。詳細は `.claude/plan.md` および各 phase の `.claude/design/<phase>-<date>.md` 参照。優先度は OSS 公開 (phase-5) や利用者からの要望次第で変動する。
+phase ごとの繰越しタスクの index。詳細は `.claude/plan.md` および各 phase の `.claude/design/<phase>-<date>.md` 参照。
 
-| ID | 内容 | 状態 |
+**v0.1.0 公開時点の対応予定 status**:
+
+- **完了**: 既に解消済み
+- **v0.2.0 候補**: 次バージョンで実装を検討する (利用要望と実装コストで判断)
+- **利用者要望次第**: 明確な要望が出るまで保留 (AWS 仕様外 / 利用例が稀 / 性能要件待ち 等)
+- **設計上の判断**: 実装予定なし ([`DESIGN.md`](../DESIGN.md) §2 と整合)
+
+| ID | 内容 | 対応予定 |
 |---|---|---|
-| `BL-W1` | Invalidation `*.jpg` 等の suffix wildcard 受理 | 未着手 (AWS 仕様外、要望次第) |
-| `BL-W2` | Invalidation `/a/*/b` 等の middle wildcard 受理 | 未着手 (同上) |
-| `BL-IV1` | Invalidation worker の並列度向上 (現状 serial 1) | 未着手 (性能要件出てから) |
-| `BL-IV2` | Crash recovery で `InProgress` を re-execute (現状は強制 Completed 遷移) | 未着手 (phase-5 で本物 AWS 同等が必要なら) |
-| `BL-IM1` | Managed CachePolicy `IllegalUpdate` AWS 正規コード確認 | phase-4c 4c-4 で SDK 解釈互換は確認済。実 AWS 挙動の正確値は phase-5 で再評価 |
-| `BL-NX1` | Inner location の unix socket 化 | **完了 (phase-4c 4c-7)** |
+| `BL-W1` | Invalidation `*.jpg` 等の suffix wildcard 受理 | 利用者要望次第 (AWS 仕様外) |
+| `BL-W2` | Invalidation `/a/*/b` 等の middle wildcard 受理 | 利用者要望次第 (AWS 仕様外) |
+| `BL-IV1` | Invalidation worker の並列度向上 (現状 serial 1) | 利用者要望次第 (性能要件待ち) |
+| `BL-IV2` | Crash recovery で `InProgress` を re-execute (現状は強制 Completed 遷移) | v0.2.0 候補 |
+| `BL-IM1` | Managed CachePolicy `IllegalUpdate` AWS 正規コード確認 | 完了 (phase-4c 4c-4 で SDK 解釈互換は確認済。実 AWS 挙動の正確値は v0.2.0 で再評価) |
+| `BL-NX1` | Inner location の unix socket 化 | **完了** (phase-4c 4c-7) |
 | `BL-NX2` | Stress test (vegeta 1000 RPS) | harness 完成 (phase-4c 4c-8)、実機 baseline は手動実行 |
-| `BL-NX3` | Renderer atomic rename の race condition staging dir 化 | 未着手 (実機問題が再発したら) |
-| `BL-PP1` | CacheBehavior PathPattern の suffix / middle / exact wildcard 拡張 | 未着手 (phase-4d 以降 or OSS 公開後) |
-| `BL-LD1` | Go loader sanitize (njs validation 相当を Go 側で再実装) | **完了 (phase-4c 4c-9)** |
-| `BL-OB1` | HTTP request log middleware | **完了 (phase-4c 4c-5)** |
-| `BL-LE1` | Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) | 未着手 (phase-4e 候補) |
-| `BL-LE2` | Lambda@Edge `include_body: true` 対応 (request body の Lambda 転送) | 未着手 (phase-4e 候補) |
-| `BL-LE3` | RIE が CloudFront event 受理に問題ある場合の Spike (4d-2 着手前は条件付きだったが実装で問題なしを確認 → 不要) | **解消 (phase-4d 4d-2)** |
-| `BL-LE4` | per-PathPattern Lambda function routing (CacheBehavior[] ごとに viewer-request 関数を切り替え) | 未着手 (phase-4e or 利用要望次第) |
-| `BL-LE5` | Lambda@Edge viewer-request の request **header** 改変反映 (proxy_set_header 経由 or 別の機構) | 未着手 (phase-4e 候補) |
-| `BL-LE6` | Lambda@Edge viewer-request の request **method** 改変反映 | 未着手 (phase-4e 候補、利用例が稀なので優先度低) |
-| `BL-LE7` | viewer-request の querystring 空文字 (Lambda が `{"querystring": ""}` で意図クリア) を区別できない (json field の有無検出が必要) | 未着手 (phase-4e or 利用要望次第) |
-| `BL-CFF1` | CloudFront Functions (`FunctionAssociations`) 対応 | 未着手 (phase-4e or phase-5 候補) |
-| `BL-RV1` / `BL-RV2` | Review infra 評価 (rules 領域別分割の要否 / 軸 4 公式ドキュ準拠精度) | 未着手 (phase-5 OSS 公開準備で再評価) |
+| `BL-NX3` | Renderer atomic rename の race condition staging dir 化 | 利用者要望次第 (実機問題が再発したら) |
+| `BL-PP1` | CacheBehavior PathPattern の suffix / middle / exact wildcard 拡張 | 利用者要望次第 |
+| `BL-LD1` | Go loader sanitize (njs validation 相当を Go 側で再実装) | **完了** (phase-4c 4c-9) |
+| `BL-OB1` | HTTP request log middleware | **完了** (phase-4c 4c-5) |
+| `BL-LE1` | Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) | v0.2.0 候補 (Lambda@Edge 完全構成に向けた最大の積み) |
+| `BL-LE2` | Lambda@Edge `include_body: true` 対応 (request body の Lambda 転送) | v0.2.0 候補 |
+| `BL-LE3` | RIE が CloudFront event 受理に問題ある場合の Spike | **解消** (phase-4d 4d-2 で問題なしを確認) |
+| `BL-LE4` | per-PathPattern Lambda function routing (CacheBehavior[] ごとに viewer-request 関数を切り替え) | 利用者要望次第 |
+| `BL-LE5` | Lambda@Edge viewer-request の request **header** 改変反映 (proxy_set_header 経由 or 別の機構) | v0.2.0 候補 |
+| `BL-LE6` | Lambda@Edge viewer-request の request **method** 改変反映 | 利用者要望次第 (利用例が稀) |
+| `BL-LE7` | viewer-request の querystring 空文字 (Lambda が `{"querystring": ""}` で意図クリア) を区別できない (json field の有無検出が必要) | 利用者要望次第 |
+| `BL-CFF1` | CloudFront Functions (`FunctionAssociations`) 対応 | v0.2.0 候補 |
+| `BL-RV1` / `BL-RV2` | Review infra 評価 (rules 領域別分割の要否 / 軸 4 公式ドキュ準拠精度) | v0.1.0 公開後の utilisation を見て再評価 |
+| `BL-CI1` | golangci-lint errcheck 再有効化 (phase-5 で 16 件検出、defer Close 等の慣用パターン含むため一旦 disable。個別評価して fix or `//nolint` 付与) | v0.2.0 候補 |
 
-優先度の付け方の目安:
+優先度判断の目安:
 
-- **高**: 本物 AWS との `terraform apply` 互換が壊れる / セキュリティに関わる → 即対応 (今のところ該当なし)
-- **中**: 実機検証で観測された問題 / OSS 公開時に embarrassing になる → phase-5 までに対応
-- **低**: 仕様拡張 / 性能チューニング → 利用者の要望次第
+- **高**: 本物 AWS との `terraform apply` 互換が壊れる / セキュリティに関わる → 即対応 (現状該当なし)
+- **中**: 実機検証で観測された問題 / 主要ユースケースを阻害する → v0.2.0 候補
+- **低**: 仕様拡張 / 性能チューニング → 利用者要望次第
 
 ## 環境固有の差分
 

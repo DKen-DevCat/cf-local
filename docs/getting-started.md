@@ -11,10 +11,9 @@
 ## 5分で動かす
 
 ```bash
-git clone https://github.com/<YOUR_GITHUB_OWNER>/cf-local.git
+git clone https://github.com/DKen-DevCat/cf-local.git
 cd cf-local
 
-# Phase 0時点では以下のコマンドで起動可能
 docker compose up -d
 
 # 別ターミナルでoriginを起動（例）
@@ -29,6 +28,7 @@ open http://localhost:8080
 
 `docker compose up` で起動するもの:
 
+- **cf-local** (port 4566): AWS API 互換の Control Plane (Go)
 - **nginx** (port 8080): ブラウザからのリクエストを受ける Data Plane
 
 origin（Next.js等）はホストマシン上で `localhost:3000` で起動している前提。
@@ -50,10 +50,15 @@ curl -I http://localhost:8080/
 
 ## 次のステップ
 
-このプロジェクトは段階的に開発中。現時点（Phase 0）で使える機能は限定的。
+cf-local は v0.1.0 時点で以下が利用可能:
 
-- Phase 1完了後: cache policyによる動的キャッシュキー制御
-- Phase 3完了後: 設定ファイルによる複数distribution管理
-- Phase 4-A完了後: Terraformからローカルcf-localにapply可能
+- **cache policy** による動的キャッシュキー制御 — [`docs/cache-policy.md`](cache-policy.md)
+- **TTL 決定ロジック** (`Cache-Control` 互換) — [`docs/ttl.md`](ttl.md)
+- **設定ファイル** による複数 distribution 管理 — [`docs/config-schema.md`](config-schema.md)
+- **Terraform** からローカル cf-local に `apply` (`endpoints` 指定) — [`examples/terraform-integration/`](../examples/terraform-integration/)
+- **CreateInvalidation** API (AWS REST/XML 互換、末尾 `*` wildcard 対応) — [`docs/invalidation-api.md`](invalidation-api.md)
+- **Lambda@Edge viewer-request** フック (AWS 公式 RIE 経由) — [`docs/lambda-edge.md`](lambda-edge.md)
 
-詳細は `.claude/plan.md` を参照。
+未対応の機能と既知の制約は [`docs/limitations.md`](limitations.md) を参照。
+
+フェーズ管理の詳細は [`.claude/plan.md`](../.claude/plan.md) を参照。

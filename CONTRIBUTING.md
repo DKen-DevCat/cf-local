@@ -11,7 +11,7 @@
 ## 開発フロー
 
 ```bash
-git clone https://github.com/<YOUR_GITHUB_OWNER>/cf-local.git
+git clone https://github.com/DKen-DevCat/cf-local.git
 cd cf-local
 
 git checkout -b feat/your-feature
