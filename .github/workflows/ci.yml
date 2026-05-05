@@ -63,7 +63,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # 公式 README "Production Workflow Integration" は再現性のため version を
+          # 固定推奨。v0.2.0 で bump 判断する運用にする。
+          version: v2.12.1
           install-mode: goinstall
           args: --timeout=5m
 
@@ -96,42 +98,60 @@ jobs:
 
       - name: Wait for nginx :8080 to respond
         run: |
+          ok=false
           for i in {1..30}; do
             if curl -fsS -o /dev/null http://localhost:8080/ 2>/dev/null \
                || curl -fsS -o /dev/null http://localhost:8080 2>/dev/null; then
               # 200 でなくとも応答すればプロキシ層は up
               echo "nginx :8080 responded"
+              ok=true
               break
             fi
             echo "waiting for nginx :8080 (attempt $i/30)"
             sleep 2
           done
+          if [ "$ok" != "true" ]; then
+            echo "::error::nginx :8080 did not respond within 60s"
+            exit 1
+          fi
           curl -fsS -o /dev/null -w "%{http_code}\n" "http://localhost:8080/" || true
 
       - name: Wait for nginx :8081 (β test endpoint)
         run: |
+          ok=false
           for i in {1..30}; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Test-Policy: default" "http://localhost:8081/_cache_key_test" 2>/dev/null || echo "000")
             if [ "$code" = "200" ]; then
               echo "nginx :8081 responded 200"
+              ok=true
               break
             fi
             echo "waiting for nginx :8081 (attempt $i/30, last=$code)"
             sleep 2
           done
+          if [ "$ok" != "true" ]; then
+            echo "::error::nginx :8081 (β test endpoint) did not respond within 60s"
+            exit 1
+          fi
 
       - name: Wait for cf-local :4566
         run: |
+          ok=false
           for i in {1..30}; do
             code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:4566/2020-05-31/cache-policy" 2>/dev/null || echo "000")
             # 200 でなくても 4xx/5xx のように HTTP 応答すれば up
             if [ "$code" != "000" ]; then
               echo "cf-local :4566 responded ($code)"
+              ok=true
               break
             fi
             echo "waiting for cf-local :4566 (attempt $i/30)"
             sleep 2
           done
+          if [ "$ok" != "true" ]; then
+            echo "::error::cf-local :4566 did not respond within 60s"
+            exit 1
+          fi
 
       - name: go test ./tests/integration/...
         run: go test -count=1 -timeout=10m ./tests/integration/...

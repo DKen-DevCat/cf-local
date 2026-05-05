@@ -34,8 +34,19 @@ func TestReloader_TriggerCoalesce(t *testing.T) {
 	r := NewReloader(dir, fetch, nil)
 	r.debounce = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go r.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx)
+		close(done)
+	}()
+	// Stop the Run goroutine and wait for it to exit before t.TempDir
+	// cleanup runs; otherwise render() can write policies.json into a
+	// directory being removed by t.Cleanup, surfacing as
+	// "TempDir RemoveAll cleanup: directory not empty".
+	defer func() {
+		cancel()
+		<-done
+	}()
 
 	// Burst of 10 triggers within < debounce window → 1 render.
 	for i := 0; i < 10; i++ {
@@ -190,7 +201,7 @@ func TestReloader_NilFetchResult(t *testing.T) {
 	defer cancel()
 	go r.Run(ctx)
 	r.Trigger()
-	time.Sleep(80 * time.Millisecond)
+	waitFor(t, time.Second, func() bool { return r.LastError() != nil })
 	if r.LastError() == nil {
 		t.Errorf("nil fetch result should produce an error")
 	}
