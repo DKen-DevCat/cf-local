@@ -5,6 +5,7 @@
 
 [![License: MIT](https://img.shields.io/github/license/DKen-DevCat/cf-local)](LICENSE)
 [![CI](https://github.com/DKen-DevCat/cf-local/actions/workflows/ci.yml/badge.svg)](https://github.com/DKen-DevCat/cf-local/actions/workflows/ci.yml)
+<!-- GHCR badge: v0.1.0 タグ push までは静的バッジ。実 push 後に shields.io の動的 GHCR バッジへ差し替え予定。 -->
 [![GHCR](https://img.shields.io/badge/ghcr-cf--local-blue?logo=docker)](https://github.com/DKen-DevCat/cf-local/pkgs/container/cf-local)
 
 `cf-local` はAmazon CloudFrontのキャッシュ挙動をローカルで再現するエミュレータ。本番のTerraformコードを `endpoints` 指定だけ変えて向けると、ローカルにCloudFrontディストリビューションが立ち上がる。Lambda@EdgeはAWS公式のLambda Runtime Interface Emulator (RIE)と組み合わせて実行できる。
@@ -114,7 +115,9 @@ docker compose -f docker-compose.yml -f docker-compose.lambda.yml up -d
 | M2 | ✅ | 他プロジェクト流用可能 (Phase 3) |
 | M3 | ✅ | Terraform 連携 (Phase 4-A〜C) |
 | M4 | ✅ | Lambda@Edge viewer-request MVP (Phase 4-D) |
-| M5 | 🚧 | OSS 公開 (Phase 5、本リリースで進行中) |
+| M5 | 🚧 | OSS 公開フロー基盤整備済 (Phase 5、`v0.1.0` タグ push 待ち) |
+
+公開フロー基盤 (LICENSE / CHANGELOG / CoC / SECURITY / Issue・PR テンプレ / GHA CI workflow / GHA Release workflow / `.golangci.yml` / `docs/limitations.md`) は develop に投入済 (PR #17 merge / 2026-05-05)。`v0.1.0` タグ push で `release.yml` が起動し GHCR への multi-arch push が走る。
 
 v0.1.0 では **Lambda@Edge は viewer-request のみ**。残り 3 フック (origin-request / origin-response / viewer-response) と CloudFront Functions は次バージョン以降で検討。詳細は [`docs/limitations.md`](docs/limitations.md) §「Known limitations」。
 
@@ -132,7 +135,7 @@ v0.1.0 では **Lambda@Edge は viewer-request のみ**。残り 3 フック (or
 | 4-B | 完了 | Invalidation API 互換 |
 | 4-C | 完了 | 仕上げ (RHP + unix socket + slog + error codes) |
 | 4-D | 完了 | Lambda@Edge 連携 (viewer-request MVP) |
-| 5 | 進行中 | OSS 公開準備 + v0.1.0 リリース |
+| 5 | 完了 (2026-05-05) | OSS 公開準備 + v0.1.0 リリース基盤 (PR #17 merge 済) |
 
 ## ドキュメント
 
