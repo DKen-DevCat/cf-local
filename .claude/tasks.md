@@ -2,7 +2,7 @@
 
 進行中フェーズの作業タスクを記録する。フェーズ完了後は `.claude/plan.md` のステータスを更新し、対応セクションを「完了」に移す（または削除）。
 
-(直近完了: Phase 5 OSS公開準備 + v0.1.0 リリース基盤 (2026-05-05) — `.claude/plan.md` の phase-5 セクションと `.claude/design/oss-release-2026-05-03.md` を参照。タスク履歴の archive 切り出しは chore-3-2 で実施予定。前回 Phase 4d: `.claude/tasks-archive/phase-4d-2026-05-03.md`、Phase 4c: `.claude/tasks-archive/phase-4c-2026-05-03.md`、Phase chore-2: `.claude/tasks-archive/chore-2-2026-05-03.md`、Phase 4b: `.claude/tasks-archive/phase-4b-2026-05-03.md`、Phase 4a: `.claude/tasks-archive/phase-4a-2026-05-02.md`、Phase chore-1: `.claude/tasks-archive/chore-1-2026-05-01.md`、Phase 3: `.claude/tasks-archive/phase-3-2026-04-30.md`)
+(直近完了: Phase 5 OSS公開準備 + v0.1.0 リリース基盤 (2026-05-05) — `.claude/plan.md` の phase-5 セクションと `.claude/design/oss-release-2026-05-03.md` を参照。タスク履歴: `.claude/tasks-archive/phase-5-2026-05-05.md`。前回 Phase 4d: `.claude/tasks-archive/phase-4d-2026-05-03.md`、Phase 4c: `.claude/tasks-archive/phase-4c-2026-05-03.md`、Phase chore-2: `.claude/tasks-archive/chore-2-2026-05-03.md`、Phase 4b: `.claude/tasks-archive/phase-4b-2026-05-03.md`、Phase 4a: `.claude/tasks-archive/phase-4a-2026-05-02.md`、Phase chore-1: `.claude/tasks-archive/chore-1-2026-05-01.md`、Phase 3: `.claude/tasks-archive/phase-3-2026-04-30.md`)
 
 ---
 
