@@ -30,9 +30,10 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-4b` | 完了 (2026-05-03) | Invalidation API互換 |
 | `phase-4c` | 完了 (2026-05-03) | 仕上げ (RHP + unix socket + slog + error codes) |
 | `phase-4d` | 完了 (2026-05-03) | Lambda@Edge連携 (viewer-request MVP) |
-| `phase-5` | 計画済 (2026-05-03) | OSS公開準備 + v0.1.0 リリース |
+| `phase-5` | 完了 (2026-05-05) | OSS公開準備 + v0.1.0 リリース基盤 (PR #17 merge 済) |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 | `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
+| `chore-3` | 計画済 (2026-05-05) | Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming) |
 
 ---
 
@@ -273,11 +274,19 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 
 ---
 
-## phase-5: OSS公開準備 + v0.1.0 リリース
+## phase-5: OSS公開準備 + v0.1.0 リリース基盤 (完了 2026-05-05)
 
-> ステータス: 計画済 (2026-05-03、未着手)
-> ブランチ案: `feat/phase-5-oss-release`
-> 作成日: 2026-05-03
+> ステータス: 完了 (2026-05-05) — PR #17 で develop に merge 済 (HEAD `4a99a69` を含む計 21 commits)
+> ブランチ: `feat/phase-5-oss-release` (merge 後はローカル削除予定 — chore-3-2)
+> 作成日: 2026-05-03 / 完了日: 2026-05-05
+
+**到達状態**: M5 (OSS 公開) の **公開フロー基盤** が完成。LICENSE / README / CHANGELOG / CoC / SECURITY / Issue・PR テンプレ / GHA CI workflow / GHA Release workflow (multi-arch GHCR push) / `.golangci.yml` / docs/limitations.md「Known limitations」整備が一式 develop に投入された。Phase 5-1〜5-12 全タスクおよびレビュー対応 REV-1〜REV-8 (CI 緑化のための Go コード lint fix / test race fix / ci.yml :8080 wait 誤用修正等) 完了。
+
+**実 release 作業 (v0.1.0 タグ付け / GHCR への実 push / Zenn 告知記事) は本フェーズ外**。後続作業のうち記録更新・README 仕上げ・backlog grooming は `chore-3` で消化。実 release は別途 (`v0.1.0` タグ push 操作)。
+
+詳細仕様および完了時メモ: `.claude/design/oss-release-2026-05-03.md`
+
+### 旧 (計画段階) 内容
 
 ### 目的 / 背景
 
@@ -291,7 +300,7 @@ M5 (OSS公開) の達成。Phase 4-D 完了時点で機能セットは β 候補
   - LICENSE の Copyright 名解決 (`<YOUR_NAME>` → 実名/GitHub user 名)
   - README 更新 (ステータス表最新化 / Quick start 強化 / バッジ追加 / GHCR pull コマンド追記)
   - CHANGELOG.md 新設 (Keep a Changelog 形式、`[Unreleased]` + `[0.1.0]` セクション、Phase 0〜4d 機能を Added 列挙)
-  - CODE_OF_CONDUCT.md 配置 (Contributor Covenant v2.1)
+  - CODE_OF_CONDUCT.md 配置 (Contributor Covenant バージョン 2.1)
   - SECURITY.md 配置 (脆弱性報告は GitHub Security Advisories 経由)
   - `.github/ISSUE_TEMPLATE/` (bug_report.yml / feature_request.yml / question.yml + config.yml で blank issue 無効化)
   - `.github/PULL_REQUEST_TEMPLATE.md` (Summary / Changes / Test plan / Mermaid 任意の最小構成)
@@ -325,7 +334,7 @@ M5 (OSS公開) の達成。Phase 4-D 完了時点で機能セットは β 候補
 - [ ] **phase-5-1**: LICENSE の `<YOUR_NAME>` を実名/GitHub user 名で確定 (着手時に最終確認)
 - [ ] **phase-5-2**: README 更新 (ステータス表を Phase 4-D まで反映 / Quick start 強化 / License・GHCR・CI バッジ追加 / GHCR pull コマンド追記)
 - [ ] **phase-5-3**: CHANGELOG.md 新設 (Keep a Changelog v1.1.0 形式、`[Unreleased]` + `[0.1.0]` セクション、Phase 0〜4d で実装した機能を Added に列挙)
-- [ ] **phase-5-4**: CODE_OF_CONDUCT.md 配置 (Contributor Covenant v2.1 そのまま、連絡先 email は着手時に確定)
+- [ ] **phase-5-4**: CODE_OF_CONDUCT.md 配置 (Contributor Covenant バージョン 2.1 そのまま、連絡先 email は着手時に確定)
 - [ ] **phase-5-5**: SECURITY.md 配置 (GitHub Security Advisories 経由、SLA は記載しない)
 - [ ] **phase-5-6**: `.github/ISSUE_TEMPLATE/` に bug_report.yml / feature_request.yml / question.yml + config.yml (blank issue 無効化)
 - [ ] **phase-5-7**: `.github/PULL_REQUEST_TEMPLATE.md` 配置 (Summary / Changes / Test plan / Mermaid 任意)
@@ -481,6 +490,76 @@ Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β end
 
 - chore-2-2 のトラブル表追記は実施判断を着手時に行う（実施しない場合は task を deleted に倒して理由を残す）
 - 他 docs の同様誤記の有無は着手前 grep 点検で判明する。複数ある場合はスコープ拡張を検討
+
+---
+
+## chore-3: Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming)
+
+> ステータス: 計画済 (2026-05-05、未着手)
+> ブランチ案: `chore/phase-5-closure-2026-05-05`
+> 作成日: 2026-05-05
+
+### 目的 / 背景
+
+Phase 5 (PR #17) が develop に merge された直後の後処理。CLAUDE.md「進捗の記録」ルールに従ったフェーズ完了処理 (記録更新、design doc に Phase完了時メモ追記、ブランチ整理) と、v0.1.0 タグ push (本フェーズでは実行しない別作業) に向けた README 仕上げ、利用者要望に応じる前段としての backlog grooming を 1 chore で消化する。
+
+実 release 操作 (v0.1.0 タグ作成 + push + GHCR 実検証 + GitHub Release notes 作成 + Zenn 告知) は本 chore とは別の独立作業。本 chore は「release 操作を起動する前の最終整備」までを範囲とする。
+
+### スコープ
+
+- in:
+  - design doc `.claude/design/oss-release-2026-05-03.md` の status を `draft` → `completed` に更新 + 「Phase完了時メモ」を充実 (REV-1〜REV-8 経緯、想定外発見、次フェーズ引継 — 該当があれば DESIGN.md 更新指針)
+  - tasks.md の Phase 5 セクションを `.claude/tasks-archive/phase-5-2026-05-05.md` に切り出し
+  - ローカルブランチ `feat/phase-5-oss-release` を削除 (merged 済)
+  - README.md の Phase 5 完了反映 (ステータス表で phase-5「進行中」→「完了」、v0.1.0 release 状態セクションの表現を release 直前 prep 形に微調整、CI バッジ URL の最終確認 — R-4 の決着)
+  - docs/limitations.md backlog 表に新規 BL を追加: `BL-DEP1` (Dependabot 設定で Docker actions / golangci-lint / Go modules の定期 bump 自動化、v0.2.0 候補)
+  - `/check` で全テスト + lint pass を確認 (sanity)
+- out:
+  - v0.1.0 タグ作成 + push (release.yml workflow 実走) — 本 chore 外の独立作業
+  - GHCR 実 push 後の image 動作検証 — 同上
+  - GitHub Release notes 作成 — 同上
+  - Zenn 告知記事 — 同上
+  - BL-LE1 等 Lambda@Edge 残課題の実装 — v0.2.0 候補で別フェーズ
+  - 英語化 / ロゴ / docs サイト等 v0.2 候補
+
+### 影響範囲
+
+| レイヤー | 内容 |
+|---|---|
+| FE | N/A |
+| BE | N/A |
+| DB | N/A |
+| Infra | N/A |
+| Tooling (.claude/) | plan.md / tasks.md / design doc 更新 |
+| Docs | README.md 微調整 + docs/limitations.md backlog 表 BL-DEP1 追記 |
+
+### タスク (実装ステップ)
+
+- [ ] **chore-3-1**: design doc `.claude/design/oss-release-2026-05-03.md` の `status: draft` → `completed` + 「Phase完了時メモ」セクション拡充 (想定外だった点 / 次フェーズへの引き継ぎ事項 / DESIGN.md 更新が必要な点)
+- [ ] **chore-3-2**: `.claude/tasks.md` の「Phase 5: ... 進行中」セクションを `.claude/tasks-archive/phase-5-2026-05-05.md` に切り出し、tasks.md は chore-3 のみ「進行中」状態に
+- [ ] **chore-3-3**: ローカルブランチ `feat/phase-5-oss-release` を `git branch -d feat/phase-5-oss-release` で削除 (merged 済の確認後)
+- [ ] **chore-3-4**: README.md の Phase 5 完了反映 + v0.1.0 release 直前状態の表現微調整 (ステータス表 / マイルストーン / CI バッジ URL 確認)
+- [ ] **chore-3-5**: `docs/limitations.md` backlog 表に `BL-DEP1` 追加 (Dependabot 設定、v0.2.0 候補)
+- [ ] **chore-3-6**: `/check` で全テスト + lint pass 確認 (PR 作成前最終)
+
+### テスト方針
+
+| レイヤー | 何をテストするか |
+|---|---|
+| Tooling (.claude/) | 自動テスト不可。`/phase-resume` で plan.md / tasks.md の整合を主観確認 |
+| Docs | README の修正後 markdown を目視確認。バッジ URL 実走 (CI / GHCR が実際にレンダリングされるか) |
+
+### 完了条件
+
+- [ ] chore-3-1〜chore-3-6 全タスク完了
+- [ ] PR が develop に向けて作成済 (chore-2 同様 PR 経由で merge)
+- [ ] CI workflow が PR 上で全ジョブ緑
+
+### リスク・未決事項
+
+- **GHCR バッジ URL**: Phase 5 段階で仮 URL を入れた箇所がある場合、R-4 の決着として実 URL に確定する必要がある (実 GHCR push 前なら現状 URL のままで問題ないこともある — chore-3-4 着手時に判断)
+- **BL-DEP1 (Dependabot) のスコープ**: Docker actions のみ、Go modules も含むか、golangci-lint version pin 連動も含めるか — chore-3-5 着手時に判断 (本 chore は backlog index への追記のみ、設定実装は v0.2.0 候補)
+- **ローカルブランチ削除タイミング**: `chore/phase-5-closure-2026-05-05` ブランチを `feat/phase-5-oss-release` から派生させた場合、削除は派生後にしないと local 操作が混乱する。**develop から派生するのが安全**
 
 ---
 
