@@ -100,21 +100,21 @@ jobs:
         run: |
           ok=false
           for i in {1..30}; do
-            if curl -fsS -o /dev/null http://localhost:8080/ 2>/dev/null \
-               || curl -fsS -o /dev/null http://localhost:8080 2>/dev/null; then
-              # 200 でなくとも応答すればプロキシ層は up
-              echo "nginx :8080 responded"
+            # 200 でなくとも 4xx/5xx のように HTTP 応答すればプロキシ層は up
+            # (curl -fsS は 5xx を失敗扱いするため使えない、:4566 と同じパターン)
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080/" 2>/dev/null || echo "000")
+            if [ "$code" != "000" ]; then
+              echo "nginx :8080 responded ($code)"
               ok=true
               break
             fi
-            echo "waiting for nginx :8080 (attempt $i/30)"
+            echo "waiting for nginx :8080 (attempt $i/30, last=$code)"
             sleep 2
           done
           if [ "$ok" != "true" ]; then
             echo "::error::nginx :8080 did not respond within 60s"
             exit 1
           fi
-          curl -fsS -o /dev/null -w "%{http_code}\n" "http://localhost:8080/" || true
 
       - name: Wait for nginx :8081 (β test endpoint)
         run: |
