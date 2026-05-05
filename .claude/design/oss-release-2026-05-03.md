@@ -32,7 +32,7 @@ M5 (OSS公開) の達成。Phase 4-D 完了時点で機能セットは β 候補
 | **CI** | Go test + golangci-lint + Docker build + α 統合テスト | β endpoint 系は CI で動かさず手動 `/check` に倒す (現状の运用継承) |
 | **Release workflow** | tag `v*` push で multi-arch build (linux/amd64 + linux/arm64) → GHCR push、`latest` + `vX.Y.Z` 両タグ付け | 標準的な GHA パターン |
 | **CHANGELOG** | Keep a Changelog v1.1.0 形式、`[Unreleased]` + `[0.1.0]` から記載 | OSS 標準 |
-| **CoC** | Contributor Covenant v2.1 そのまま | OSS 標準。連絡先 email は着手時に確定 |
+| **CoC** | Contributor Covenant バージョン 2.1 そのまま | OSS 標準。連絡先 email は着手時に確定 |
 | **SECURITY** | GitHub Security Advisories 経由、SLA 記載なし | 個人プロジェクトとして無理のない範囲 |
 | **Issue template** | bug_report.yml + feature_request.yml + question.yml + config.yml (blank issue 無効化) の 4 種 | 整理された report を促す |
 | **PR template** | Summary / Changes / Test plan / Mermaid 任意の最小構成 | 既存 commit log の Mermaid 慣習 (memory) を踏襲 |
@@ -44,7 +44,7 @@ M5 (OSS公開) の達成。Phase 4-D 完了時点で機能セットは β 候補
 | 5-1 | LICENSE の `<YOUR_NAME>` 確定 | `LICENSE` | GitHub user 名 (`DKen-DevCat`) と本名どちらにするか着手時に user に最終確認 |
 | 5-2 | README 更新 (ステータス表 / Quick start / バッジ / GHCR pull) | `README.md` | ステータス表は Phase 4-D まで反映。Quick start は `docker compose up -d` ワンライナーで動くまで強化。License / GHCR / CI バッジ追加 |
 | 5-3 | CHANGELOG.md 新設 | `CHANGELOG.md` (新規) | Keep a Changelog v1.1.0 形式。`[Unreleased]` + `[0.1.0] - YYYY-MM-DD` セクション。Phase 0〜4d の機能を Added 列挙 |
-| 5-4 | CODE_OF_CONDUCT.md 配置 | `CODE_OF_CONDUCT.md` (新規) | Contributor Covenant v2.1 そのまま。連絡先 email 差込 |
+| 5-4 | CODE_OF_CONDUCT.md 配置 | `CODE_OF_CONDUCT.md` (新規) | Contributor Covenant バージョン 2.1 そのまま。連絡先 email 差込 |
 | 5-5 | SECURITY.md 配置 | `SECURITY.md` (新規) | GitHub Security Advisories 経由。SLA 記載なし |
 | 5-6 | `.github/ISSUE_TEMPLATE/` 整備 | `.github/ISSUE_TEMPLATE/{bug_report,feature_request,question}.yml` + `config.yml` | YAML form 形式。`config.yml` で `blank_issues_enabled: false` |
 | 5-7 | `.github/PULL_REQUEST_TEMPLATE.md` 配置 | `.github/PULL_REQUEST_TEMPLATE.md` (新規) | Summary / Changes / Test plan / Mermaid 任意 |
@@ -74,7 +74,7 @@ M5 (OSS公開) の達成。Phase 4-D 完了時点で機能セットは β 候補
 1. **5-1**: `chore(license): set copyright holder`
 2. **5-2 + 5-11**: `docs(readme): refresh status table + quick start + v0.1.0 milestone section + badges`
 3. **5-3**: `docs(changelog): add CHANGELOG.md (Keep a Changelog v1.1.0)`
-4. **5-4**: `docs(coc): add CODE_OF_CONDUCT.md (Contributor Covenant v2.1)`
+4. **5-4**: `docs(coc): add CODE_OF_CONDUCT.md (Contributor Covenant バージョン 2.1)`
 5. **5-5**: `docs(security): add SECURITY.md`
 6. **5-6**: `chore(github): add issue templates (bug/feature/question + blank disabled)`
 7. **5-7**: `chore(github): add PR template`
