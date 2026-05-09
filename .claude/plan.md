@@ -33,7 +33,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `phase-5` | 完了 (2026-05-05) | OSS公開準備 + v0.1.0 リリース基盤 (PR #17 merge 済) |
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 | `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
-| `chore-3` | 計画済 (2026-05-05) | Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming) |
+| `chore-3` | 完了 (2026-05-05) | Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming) (PR #19 merge 済) |
 
 ---
 
@@ -493,11 +493,12 @@ Phase 4-B 実機検証 (2026-05-03) で `check.md` の D-2「制御 API + β end
 
 ---
 
-## chore-3: Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming)
+## chore-3: Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming) (完了 2026-05-05)
 
-> ステータス: 計画済 (2026-05-05、未着手)
-> ブランチ案: `chore/phase-5-closure-2026-05-05`
+> ステータス: 完了 (2026-05-05) — PR #19 で develop に merge 済 (`3f8be91`)
+> ブランチ: `chore/phase-5-closure-2026-05-05` (merge 後にローカル削除済)
 > 作成日: 2026-05-05
+> タスク履歴: `.claude/tasks-archive/chore-3-2026-05-05.md`
 
 ### 目的 / 背景
 
@@ -535,12 +536,12 @@ Phase 5 (PR #17) が develop に merge された直後の後処理。CLAUDE.md�
 
 ### タスク (実装ステップ)
 
-- [ ] **chore-3-1**: design doc `.claude/design/oss-release-2026-05-03.md` の `status: draft` → `completed` + 「Phase完了時メモ」セクション拡充 (想定外だった点 / 次フェーズへの引き継ぎ事項 / DESIGN.md 更新が必要な点)
-- [ ] **chore-3-2**: `.claude/tasks.md` の「Phase 5: ... 進行中」セクションを `.claude/tasks-archive/phase-5-2026-05-05.md` に切り出し、tasks.md は chore-3 のみ「進行中」状態に
-- [ ] **chore-3-3**: ローカルブランチ `feat/phase-5-oss-release` を `git branch -d feat/phase-5-oss-release` で削除 (merged 済の確認後)
-- [ ] **chore-3-4**: README.md の Phase 5 完了反映 + v0.1.0 release 直前状態の表現微調整 (ステータス表 / マイルストーン / CI バッジ URL 確認)
-- [ ] **chore-3-5**: `docs/limitations.md` backlog 表に `BL-DEP1` 追加 (Dependabot 設定、v0.2.0 候補)
-- [ ] **chore-3-6**: `/check` で全テスト + lint pass 確認 (PR 作成前最終)
+- [x] **chore-3-1**: design doc `.claude/design/oss-release-2026-05-03.md` の `status: draft` → `completed` + 「Phase完了時メモ」セクション拡充 (commit `54d4905`)
+- [x] **chore-3-2**: `.claude/tasks.md` の「Phase 5: ... 進行中」セクションを `.claude/tasks-archive/phase-5-2026-05-05.md` に切り出し (commit `0950861`)
+- [x] **chore-3-3**: ローカルブランチ `feat/phase-5-oss-release` を削除 (merge 後に削除済、現在ローカル不在)
+- [x] **chore-3-4**: README.md の Phase 5 完了反映 + v0.1.0 release 直前状態の表現微調整 (commit `d47e9a4`)
+- [x] **chore-3-5**: `docs/limitations.md` backlog 表に `BL-DEP1` 追加 (commit `9593bcf`)
+- [x] **chore-3-6**: `/check` で全テスト + lint pass 確認 (PR #19 CI で全ジョブ緑)
 
 ### テスト方針
 
@@ -551,15 +552,15 @@ Phase 5 (PR #17) が develop に merge された直後の後処理。CLAUDE.md�
 
 ### 完了条件
 
-- [ ] chore-3-1〜chore-3-6 全タスク完了
-- [ ] PR が develop に向けて作成済 (chore-2 同様 PR 経由で merge)
-- [ ] CI workflow が PR 上で全ジョブ緑
+- [x] chore-3-1〜chore-3-6 全タスク完了
+- [x] PR #19 が develop に merge 済
+- [x] CI workflow が PR 上で全ジョブ緑
 
-### リスク・未決事項
+### リスク・未決事項 (完了時の決着メモ)
 
-- **GHCR バッジ URL**: Phase 5 段階で仮 URL を入れた箇所がある場合、R-4 の決着として実 URL に確定する必要がある (実 GHCR push 前なら現状 URL のままで問題ないこともある — chore-3-4 着手時に判断)
-- **BL-DEP1 (Dependabot) のスコープ**: Docker actions のみ、Go modules も含むか、golangci-lint version pin 連動も含めるか — chore-3-5 着手時に判断 (本 chore は backlog index への追記のみ、設定実装は v0.2.0 候補)
-- **ローカルブランチ削除タイミング**: `chore/phase-5-closure-2026-05-05` ブランチを `feat/phase-5-oss-release` から派生させた場合、削除は派生後にしないと local 操作が混乱する。**develop から派生するのが安全**
+- **GHCR バッジ URL** (R-4): 実 GHCR push 前のため仮 URL のまま据え置き。v0.1.0 タグ push 後に再点検する後続作業
+- **BL-DEP1 (Dependabot) のスコープ**: 本 chore は backlog index への追記のみで完了。設定実装は v0.2.0 候補のまま
+- **ローカルブランチ削除タイミング**: `chore/phase-5-closure-2026-05-05` は develop から派生させたため問題なし。merge 後に削除済
 
 ---
 
