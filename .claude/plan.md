@@ -563,6 +563,43 @@ Phase 5 (PR #17) が develop に merge された直後の後処理。CLAUDE.md�
 
 ---
 
+## v0.2 候補の暫定優先順位 (working draft、2026-05-09 起票)
+
+`docs/limitations.md` backlog 表で「v0.2.0 候補」とラベルされた項目について、v0.2 内での着手順を暫定で明文化する。**正式な優先度は利用者要望と実装コストで再判定** (`docs/limitations.md` の判断基準準拠) なので、Issue / discussion で要望が出れば順序を動かす前提の draft。
+
+### Lambda@Edge 系 4 件の順位
+
+| 順位 | ID | 内容 | 性格 | 推定実装コスト |
+|---|---|---|---|---|
+| 1 | `BL-LE1` | 残り 3 フック (origin-request / origin-response / viewer-response) | カバレッジ拡張 (M4 完全構成達成の本丸) | 大 |
+| 2 | `BL-LE5` | viewer-request の **request header 改変反映** | 既存 viewer-request 機能の完成度 | 中 |
+| 3 | `BL-LE2` | `include_body: true` (request body の Lambda 転送) | 既存 viewer-request 機能の完成度 | 中 |
+| 4 | `BL-CFF1` | CloudFront Functions (`FunctionAssociations`) | 別ランタイムの新規対応 | 大 |
+
+### 順位の判断根拠
+
+- **BL-LE1 を 1 位に据える理由**: M4「Lambda@Edge 含めた完全構成」の達成には残り 3 フック対応が必須。Phase 4-D の plan.md 本文 `phase-4d` §「Phase 4-E 以降への繰越し」でも「本フェーズ最大の積み」と明文化済。カバレッジを上げないと「viewer-request しかない」状態が続き、本物 CloudFront 構成のローカル再現範囲が頭打ちになる
+- **BL-LE5 を 2 位に据える理由**: viewer-request の主要ユースケース 3 系統 (auth ショートサーキット / header・URL 正規化 / origin 切替) のうち、現状動くのは auth ショートサーキットだけ。BL-LE5 解消で「header・URL 正規化」(A/B test 振り分け、`Accept-Encoding` 正規化、Next.js App Router の `next-router-state-tree` 正規化など) が一気に解禁される。**カバレッジは BL-LE1 ほどではないが「viewer-request 既存機能の完成度」のインパクトが大きい**
+- **BL-LE2 を 3 位に据える理由**: `include_body: true` は API 系 Lambda@Edge 用途で必要。static cache 中心の典型ユースケースには直接当たらないため、BL-LE5 より後でも実害が小さい
+- **BL-CFF1 を 4 位に据える理由**: CloudFront Functions は Lambda@Edge と別ランタイム (JS-only / sub-ms 制約 / 専用 event 形式)。実装は大きいが、Lambda@Edge で代替できるユースケースが多く、優先度は v0.2 内で最後
+
+### 順位を動かす契機
+
+以下が観測されたら順位を再判定する:
+
+- **GitHub Issue / discussions で具体的ユースケースが付いた要望**が出る (例: 「BL-LE2 が無いと API 系 viewer-request の動作確認ができない」具体例) → 該当項目を上に持ち上げる
+- **Phase 4-E (or v0.2 開始) の kickoff 時点で実装スパイク**を 1 件入れて、LE1 / LE5 のコスト見積もりが大きくぶれた場合 → 順位入れ替え検討
+- **本物 CloudFront 仕様の更新**で代替手段が変わった場合 (例: CloudFront Functions が Lambda@Edge 機能を吸収) → BL-CFF1 の優先度再評価
+
+### v0.2.0 候補のうち Lambda@Edge 以外
+
+参考: 同じ「v0.2.0 候補」ラベルの非 Lambda@Edge 項目は別途優先度判断する。現時点では:
+
+- `BL-IV2` (Invalidation crash recovery)、`BL-CI1` (errcheck 再有効化)、`BL-DEP1` (Dependabot)、ETag strict 検証
+- これらは Lambda@Edge 系より独立性が高く、**v0.2 内で並行に進められる小さな chore 候補**として扱う
+
+---
+
 ## 見積もり
 
 | フェーズ | フルタイム想定 | 業務後 + 週末想定 |
