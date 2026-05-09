@@ -34,6 +34,7 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 | `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
 | `chore-3` | 完了 (2026-05-05) | Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming) (PR #19 merge 済) |
+| `phase-4e` | 計画済 (2026-05-09) | Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) — BL-LE1 解消 / M4 完全化 |
 
 ---
 
@@ -561,6 +562,101 @@ Phase 5 (PR #17) が develop に merge された直後の後処理。CLAUDE.md�
 - **GHCR バッジ URL** (R-4): 実 GHCR push 前のため仮 URL のまま据え置き。v0.1.0 タグ push 後に再点検する後続作業
 - **BL-DEP1 (Dependabot) のスコープ**: 本 chore は backlog index への追記のみで完了。設定実装は v0.2.0 候補のまま
 - **ローカルブランチ削除タイミング**: `chore/phase-5-closure-2026-05-05` は develop から派生させたため問題なし。merge 後に削除済
+
+---
+
+## phase-4e: Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response)
+
+> ステータス: 計画済 (2026-05-09、未着手)
+> ブランチ案: `feat/phase-4e-lambda-edge-remaining-hooks`
+> 作成日: 2026-05-09
+
+### 目的 / 背景
+
+M4 (Lambda@Edge含めた完全構成) の完成。phase-4d で **viewer-request MVP** を達成し、本物 CloudFront 構成のローカル再現に向けた第一歩を完了。BL-LE1 として積んだ残り 3 フック (origin-request / origin-response / viewer-response) に対応することで、4 フック完全カバーを実現する。Phase 4-D `phase-4d` §「Phase 4-E 以降への繰越し」で「本フェーズ最大の積み」と明文化済。v0.2 候補内で **筆頭優先** (`plan.md` §「v0.2 候補の暫定優先順位」)。
+
+### スコープ
+
+- in:
+  - **origin-request** フック対応: cache MISS 時、cf-local が origin にリクエストを投げる**前**に呼ばれる。request の URI / querystring / header / body / origin 切替・短絡応答を実装
+  - **origin-response** フック対応: origin response が cache に格納される**前**に呼ばれる。response の status / headers / body 改変が cache に格納される (AWS 仕様準拠 = 「実挙動に近い方」)。短絡応答も対応
+  - **viewer-response** フック対応: viewer (browser) に返す**直前**、cache HIT/MISS 共通で呼ばれる。response 改変は cache に書き込まれず transient transformation のみ
+  - Go 側: `BuildOriginRequestEvent` / `BuildOriginResponseEvent` / `BuildViewerResponseEvent` + 各 golden file (`testdata/<event>.golden.json`)
+  - Go 側: `rie_client.go` を 4 フック共通の **generic invocation** に refactor (重複 4 回確定で CLAUDE.md「3 回以降抽象化」原則に合致)
+  - Go 側: `internal/edgefunc/server.go` の `event_type` dispatch を 3 フック分追加 (現状 `BuildViewerRequestEvent` 専用)
+  - njs: `nginx/njs/edge.js` に `runOriginRequest` / `runOriginResponse` / `runViewerResponse` 追加
+  - infra: nginx renderer (`internal/nginx/renderer.go`) で 3 フック発火タイミングに対応する location / directive を生成。kickoff 直後の spike で各フックの njs directive (`js_set` / `js_header_filter` / `js_body_filter` / `js_content`) 割当を確定
+  - tests: α 統合テスト 9 ケース (3 フック × 3 case = Continue / ShortCircuit / LambdaError) を 3-server httptest 連結で
+  - examples: `examples/lambda-edge-full/` 新設 — 4 フック組合せの本物 CloudFront 構成相当のサンプル (`lambda-edge-basic/` は auth 用途特化の viewer-request サンプルとして keep)
+  - docs: `docs/lambda-edge.md` を 4 フック構成に拡張、`docs/limitations.md` の **BL-LE1 解消マーク**
+  - Terraform 互換: `lambda_function_association.event_type` が 4 種すべて受理され関数が呼ばれる
+- out:
+  - **BL-LE2** (`include_body: true` / request body の Lambda 転送): phase-4f 候補
+  - **BL-LE4** (per-PathPattern routing): 利用者要望次第で別フェーズ
+  - **BL-LE5** (viewer-request の request **header** 改変 forward 反映): viewer-request 既存挙動の修正で本フェーズと別問題、別フェーズ
+  - **BL-LE6** (request method 改変 forward 反映): 利用者要望次第
+  - **BL-LE7** (querystring 空区別): 利用者要望次第
+  - **BL-CFF1** (CloudFront Functions): 別ランタイムで phase-4f or v0.3 候補
+
+### 影響範囲
+
+| レイヤー | 内容 |
+|---|---|
+| FE | N/A |
+| BE (Go) | `internal/edgefunc/event.go` (3 builder 追加) / `server.go` (event_type dispatch) / `rie_client.go` (generic refactor) / `types.go` (定数は phase-4d で既に 4 種宣言済、ロジック側のガード解除) / `event_test.go` 拡張 |
+| njs | `nginx/njs/edge.js` 拡張 (3 フック起動関数追加) |
+| Infra (nginx) | `internal/nginx/renderer.go` で 3 フック発火 location / directive 生成 (kickoff 直後 spike で確定) |
+| DB | N/A (`LambdaFunctionAssociations` は phase-4a/4d で既に 4 event_type を SDK types のまま JSON 永続化済) |
+| Tests | unit golden file (3 builder) / unit dispatch (httptest) / α 統合 9 ケース |
+| Docs | `docs/lambda-edge.md` 4 フック構成に拡張 / `docs/limitations.md` BL-LE1 解消マーク + 関連 BL-LE5/6/7 等のステータス更新 |
+| Examples | `examples/lambda-edge-full/` 新設 |
+
+### タスク (実装ステップ)
+
+- [ ] **phase-4e-1**: nginx 各フック発火タイミング spike — 3 フックそれぞれに割り当てる njs directive (`js_set` / `js_header_filter` / `js_body_filter` / `js_content`) を実機検証で確定。spike commit にメモを残す (R-1 解消)
+- [ ] **phase-4e-2**: `BuildOriginRequestEvent` + `testdata/origin-request.golden.json` (AWS docs schema 網羅、phase-4d viewer-request と同方針)
+- [ ] **phase-4e-3**: `BuildOriginResponseEvent` + `testdata/origin-response.golden.json` (response 形式、cache write 前の前提を docstring に明記)
+- [ ] **phase-4e-4**: `BuildViewerResponseEvent` + `testdata/viewer-response.golden.json` (transient transformation 前提、cache 不変)
+- [ ] **phase-4e-5**: `rie_client.go` を 4 フック共通の generic invocation に refactor + `server.go` の event_type dispatch 拡張 (R-3 / R-4 決着)
+- [ ] **phase-4e-6**: nginx renderer (`internal/nginx/renderer.go`) を spike 結果に基づき拡張。3 フック発火 location / directive を生成
+- [ ] **phase-4e-7**: njs `edge.js` に `runOriginRequest` / `runOriginResponse` / `runViewerResponse` を追加。viewer-request の `runViewerRequest` と共通化できる箇所は generic 化
+- [ ] **phase-4e-8**: α 統合テスト 9 ケース (3 フック × 3 case = Continue / ShortCircuit / LambdaError) を 3-server httptest 連結で `tests/integration/lambda_edge_test.go` 拡張
+- [ ] **phase-4e-9**: `examples/lambda-edge-full/` 新設 — 4 フック組合せの本物 CloudFront 構成相当のサンプル関数 + docker-compose + README
+- [ ] **phase-4e-10**: `docs/lambda-edge.md` 4 フック構成に拡張 + `docs/limitations.md` BL-LE1 解消マーク + Phase 完了時メモ + DESIGN.md 更新が必要な点を design doc に列挙
+
+### テスト方針
+
+| レイヤー | 何をテストするか |
+|---|---|
+| unit (Go) | `event.go` 各 builder の golden file diff 一致 (phase-4d 4d-3 と同方針) |
+| unit (Go) | generic `rie_client.go` の event_type 別 invocation (httptest で RIE モック) |
+| unit (Go) | `server.go` の event_type dispatch (httptest) |
+| α 統合 | 3-server httptest (cf-local control / edge-proxy / 偽 RIE) で 9 ケース (3 フック × Continue / ShortCircuit / LambdaError) |
+| 実機検証 | `examples/lambda-edge-full/` で `docker compose up` + 4 フック組合せ walkthrough (ship 後手動、phase-4d W-1/W-2 と同方針) |
+
+### 完了条件
+
+- [ ] phase-4e-1〜phase-4e-10 全タスク完了
+- [ ] 3 フック (origin-request / origin-response / viewer-response) で event 構築 / RIE 連携 / 改変反映 / 短絡応答 / エラー応答が動く
+- [ ] Terraform `lambda_function_association.event_type` が 4 種すべて受理され関数が呼ばれる (実機 walkthrough)
+- [ ] α 統合テスト 9 ケース全 PASS
+- [ ] `docs/lambda-edge.md` が 4 フック構成に対応
+- [ ] `docs/limitations.md` の BL-LE1 が解消マーク済 (BL-LE3 と同方針)
+- [ ] PR が develop に向けて作成済 + CI 全ジョブ緑
+
+### リスク・未決事項
+
+- **R-1 nginx 各フック発火タイミング**: njs directive (`js_set` / `js_header_filter` / `js_body_filter` / `js_content`) のうちどれをどのフックに割り当てるか実機 spike が必要。phase-4e-1 で確定
+- **R-2 origin-response cache 書込みタイミング**: AWS 仕様 = origin-response の Lambda 改変結果が cache に格納される (cache write 前)。「実挙動に近い方」原則 = AWS 準拠で実装。proxy_cache の動作と njs body filter 順序が成立するか phase-4e-3/6 着手時に AWS docs と実装の整合確認 (Spike が必要なら `BL-LE-Cache1` を起こして retreat)
+- **R-3 RIE invocation refactor 単位**: 4 フック共通の generic 関数に refactor する方針で確定 (CLAUDE.md「重複 3 回以降抽象化」+ 4 フック × 同じ HTTP POST = 重複 4 回)。phase-4e-5 で実施
+- **R-4 viewer-response の cache 結果不変保証**: viewer-response は AWS 仕様で cache に書き込まれない (transient transformation のみ)。実装側で cache 書き込み済みのレスポンスを変えてしまわないようロジック分離。phase-4e-4 着手時に njs/nginx 経路で確認
+- **R-5 examples 新設の docker-compose 構成**: `examples/lambda-edge-full/` は 4 フック分の RIE container を起動 (現 `lambda-edge-basic/` は 1 個)。docker-compose の RIE 4 個並列起動が docker desktop でメモリ不足を起こさないか着手時 (phase-4e-9) に確認
+- **R-6 ship 後 walkthrough の必須化**: 実 nginx + 実 RIE 経路は α だけで完結しないため、ship 後の walkthrough を必須に (phase-4d と同方針)。完了時メモに walkthrough 結果を追記
+
+### Phase 4-D からの繰越し参照
+
+- **phase-4d Phase 完了時メモ §「DESIGN.md 更新が必要な点」**: 「http context に `resolver` directive 必須」「fail-open ポリシー」「`internalRedirect` 後の `$request_uri` 不変」等は phase-4e でも継承する前提。phase-4e の最初の spike (phase-4e-1) で再確認
+- **phase-4d REV-12 `internalRedirect` 後 `$request_uri` 不変**: viewer-request では `$uri$is_args$args` で proxy_pass。origin-request も同方針か別方針かは phase-4e-2/6 の設計時に判断 (origin-request は `proxy_pass` 直前なので origin への URI は viewer-request 改変後 + origin-request 改変後の合成が必要)
 
 ---
 
