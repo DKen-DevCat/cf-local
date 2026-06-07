@@ -76,8 +76,8 @@ type CloudFrontConfig struct {
 	RequestID              string `json:"requestId"`
 }
 
-// CloudFrontRequest is the viewer-request request block. body is omitted
-// for Phase 4-D MVP (BL-LE2 will add IncludeBody handling).
+// CloudFrontRequest is the request block for request-phase events. body is
+// omitted for Phase 4-D MVP (BL-LE2 will add IncludeBody handling).
 type CloudFrontRequest struct {
 	ClientIP    string                `json:"clientIp"`
 	Headers     map[string][]CFHeader `json:"headers"`
@@ -85,7 +85,8 @@ type CloudFrontRequest struct {
 	QueryString string                `json:"querystring"`
 	URI         string                `json:"uri"`
 	// Body is intentionally omitted (BL-LE2). Origin / origin-only fields
-	// are also omitted (this is viewer-request scope only).
+	// are also omitted for the origin-request MVP because cf-local does not
+	// carry origin configuration in the njs snapshot.
 }
 
 // CFHeader is one (Key, Value) pair within a header's values list.
@@ -131,6 +132,51 @@ func BuildViewerRequestEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEven
 	// this field as opaque; using a uuid-like format keeps it AWS-shaped
 	// without taking on a uuid dependency for a value Lambda code rarely
 	// inspects.
+	requestID := newCFRequestID()
+
+	event := &CloudFrontEvent{
+		Records: []CloudFrontRecord{
+			{
+				CF: CloudFrontPayload{
+					Config: CloudFrontConfig{
+						DistributionDomainName: distributionDomainName(req.DistributionID),
+						DistributionID:         req.DistributionID,
+						EventType:              req.EventType,
+						RequestID:              requestID,
+					},
+					Request: &CloudFrontRequest{
+						ClientIP:    req.Request.ClientIP,
+						Headers:     headers,
+						Method:      req.Request.Method,
+						QueryString: req.Request.QueryString,
+						URI:         req.Request.URI,
+					},
+				},
+			},
+		},
+	}
+	return event, nil
+}
+
+// BuildOriginRequestEvent assembles a CloudFront origin-request event from
+// the raw njs request snapshot. Header keys are lowercased per AWS spec;
+// the original casing is preserved in CFHeader.Key.
+//
+// cf-local does not carry origin configuration in the snapshot, so the MVP
+// intentionally omits the origin object. Dynamic origin selection is not
+// supported; task-12 is expected to file that limitation in docs/limitations.md.
+func BuildOriginRequestEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEvent, error) {
+	if req.EventType != EventOriginRequest {
+		return nil, fmt.Errorf("unsupported event_type %q (Phase 4-E origin-request builder supports origin-request only)", req.EventType)
+	}
+	if req.Request.Method == "" {
+		return nil, errors.New("request.method is required")
+	}
+	if req.Request.URI == "" {
+		return nil, errors.New("request.uri is required")
+	}
+
+	headers := normaliseHeadersForEvent(req.Request.Headers)
 	requestID := newCFRequestID()
 
 	event := &CloudFrontEvent{

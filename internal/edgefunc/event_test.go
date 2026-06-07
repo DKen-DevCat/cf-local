@@ -64,6 +64,55 @@ func TestBuildViewerRequestEvent_GoldenFile(t *testing.T) {
 	}
 }
 
+func TestBuildOriginRequestEvent_GoldenFile(t *testing.T) {
+	// Stub the request id source so the golden file is byte-stable.
+	prev := newCFRequestID
+	newCFRequestID = func() string { return "deadbeefdeadbeefdeadbeefdeadbeef" }
+	defer func() { newCFRequestID = prev }()
+
+	req := InvokeRequest{
+		DistributionID: "EDFDVBD6EXAMPLE",
+		EventType:      EventOriginRequest,
+		Request: InvokeRawRequest{
+			Method:      "GET",
+			URI:         "/picture.jpg",
+			QueryString: "size=large&color=red",
+			ClientIP:    "203.0.113.178",
+			Headers: map[string][]string{
+				"Host":       {"d111111abcdef8.cloudfront.local"},
+				"User-Agent": {"curl/8.0"},
+				"X-Cf-Test":  {"alpha", "beta"},
+			},
+		},
+	}
+	event, err := BuildOriginRequestEvent(req, EdgeFunction{})
+	if err != nil {
+		t.Fatalf("BuildOriginRequestEvent: %v", err)
+	}
+
+	// Use the same encoder settings as the on-wire path so `&` does not
+	// become `&` in the golden diff.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(event); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got := buf.Bytes()
+
+	goldenPath := filepath.Join("testdata", "origin-request.golden.json")
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("event JSON differs from golden\n\n--- got\n%s\n--- want\n%s",
+			string(got), string(want))
+	}
+}
+
 func TestBuildViewerRequestEvent_HeaderNormalisation(t *testing.T) {
 	prev := newCFRequestID
 	newCFRequestID = func() string { return "x" }
