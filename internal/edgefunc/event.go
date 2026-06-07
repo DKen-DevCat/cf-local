@@ -61,10 +61,12 @@ type CloudFrontRecord struct {
 	CF CloudFrontPayload `json:"cf"`
 }
 
-// CloudFrontPayload bundles config and request blocks for a single event.
+// CloudFrontPayload bundles config, request, and response blocks for a
+// single event.
 type CloudFrontPayload struct {
-	Config  CloudFrontConfig   `json:"config"`
-	Request *CloudFrontRequest `json:"request,omitempty"`
+	Config   CloudFrontConfig    `json:"config"`
+	Request  *CloudFrontRequest  `json:"request,omitempty"`
+	Response *CloudFrontResponse `json:"response,omitempty"`
 }
 
 // CloudFrontConfig is the per-event metadata CloudFront stamps on every
@@ -201,6 +203,61 @@ func BuildOriginRequestEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEven
 		},
 	}
 	return event, nil
+}
+
+// BuildOriginResponseEvent assembles a CloudFront origin-response event from
+// the raw njs request snapshot and the origin response snapshot. The response
+// block intentionally excludes body/bodyEncoding: AWS does not expose the
+// origin server body to origin-response triggers (B3).
+func BuildOriginResponseEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEvent, error) {
+	if req.EventType != EventOriginResponse {
+		return nil, fmt.Errorf("unsupported event_type %q (Phase 4-E origin-response builder supports origin-response only)", req.EventType)
+	}
+	if req.Response == nil {
+		return nil, errors.New("response snapshot is required for origin-response")
+	}
+	if req.Request.Method == "" {
+		return nil, errors.New("request.method is required")
+	}
+	if req.Request.URI == "" {
+		return nil, errors.New("request.uri is required")
+	}
+
+	headers := normaliseHeadersForEvent(req.Request.Headers)
+	response := eventResponseFromSnapshot(*req.Response)
+	requestID := newCFRequestID()
+
+	event := &CloudFrontEvent{
+		Records: []CloudFrontRecord{
+			{
+				CF: CloudFrontPayload{
+					Config: CloudFrontConfig{
+						DistributionDomainName: distributionDomainName(req.DistributionID),
+						DistributionID:         req.DistributionID,
+						EventType:              req.EventType,
+						RequestID:              requestID,
+					},
+					Request: &CloudFrontRequest{
+						ClientIP:    req.Request.ClientIP,
+						Headers:     headers,
+						Method:      req.Request.Method,
+						QueryString: req.Request.QueryString,
+						URI:         req.Request.URI,
+					},
+					Response: response,
+				},
+			},
+		},
+	}
+	return event, nil
+}
+
+func eventResponseFromSnapshot(resp InvokeRawResponse) *CloudFrontResponse {
+	return &CloudFrontResponse{
+		Status:            strconv.Itoa(resp.Status),
+		StatusDescription: resp.StatusDesc,
+		Headers:           normaliseHeadersForEvent(resp.Headers),
+	}
 }
 
 // normaliseHeadersForEvent maps njs's `{name: [v1, v2]}` shape into
