@@ -147,14 +147,17 @@ function appendSnapshotHeader(out, name, value) {
     if (value !== undefined && value !== null) out[name].push(String(value));
 }
 
-function snapshotResponse(upstreamResp, bodyText) {
-    // Origin-response Lambda には origin body を渡さない (B3)。bodyText は
-    // caller が upstream body を消費済みであることを明示するための引数。
+function snapshotResponse(upstreamResp) {
+    // Origin-response Lambda には origin body を渡さない (B3)。status と
+    // headers だけを snapshot する。
     const headers = {};
     const respHeaders = upstreamResp.headers;
     if (respHeaders) {
         if (typeof respHeaders.forEach === 'function') {
-            respHeaders.forEach(function(value, name) {
+            // njs の Headers.forEach は WHATWG の (value, name) ではなく
+            // (name, value) 順でコールバックを呼ぶ。逆順だと header の
+            // name/value が入れ替わって "invalid header" になる (walkthrough で確認)。
+            respHeaders.forEach(function(name, value) {
                 appendSnapshotHeader(headers, name, value);
             });
         } else if (typeof respHeaders.entries === 'function') {
@@ -369,14 +372,16 @@ async function runOriginResponse(r) {
         return;
     }
 
-    const snapshot = snapshotResponse(upstream, originBody);
-    const originResponseHeaderSkip = ['content-length'].concat(hopByHopHeaders);
-    function returnOriginResponse(status, headers) {
+    const snapshot = snapshotResponse(upstream);
+    // Date / Server は r.return() で nginx が再生成するため、origin のものを
+    // 重ねて出すと outer proxy が "invalid header" で弾く (walkthrough で確認)。
+    const originResponseHeaderSkip = ['content-length', 'date', 'server'].concat(hopByHopHeaders);
+    const returnOriginResponse = function(status, headers) {
         // X-Accel-Expires / Cache-Control を outer proxy_cache に見せる。
         copyOriginHeadersToOut(r, snapshot.headers, originResponseHeaderSkip);
         if (headers) applyResponseHeaders(r, headers, originResponseHeaderSkip);
         r.return(status, originBody);
-    }
+    };
 
     await runEdgeFunction(r, 'origin-response', {
         payloadExtra: { response: snapshot },
