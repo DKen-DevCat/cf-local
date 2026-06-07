@@ -50,3 +50,9 @@ docker-compose.override.yml
 
 # /goal:exec が codex の各タスク出力を書き出す作業用ディレクトリ
 .codex-out/
+
+# Terraform runtime artifacts (examples の walkthrough で生成される)。
+# .terraform.lock.hcl は provider 固定用に各 example で必要なら個別に commit する。
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*

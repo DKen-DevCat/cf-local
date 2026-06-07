@@ -22,6 +22,7 @@ services:
       CF_LOCAL_LAMBDA_FUNCTIONS: |
         auth=lambda-auth:8080
         origin-rewrite=lambda-origin-rewrite:8080
+        origin-response=lambda-origin-response:8080
     volumes:
       - ./cf-local:/cf-local:ro
       - cf-local-conf:/work/cf-local-conf
@@ -83,6 +84,14 @@ services:
     command: ["index.handler"]
     volumes:
       - ./lambdas/origin-rewrite:/var/task:ro
+    restart: unless-stopped
+
+  lambda-origin-response:
+    image: public.ecr.aws/lambda/nodejs:20
+    container_name: cf-local-full-lambda-origin-response
+    command: ["index.handler"]
+    volumes:
+      - ./lambdas/origin-response:/var/task:ro
     restart: unless-stopped
 
   origin:
