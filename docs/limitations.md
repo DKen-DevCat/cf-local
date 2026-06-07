@@ -8,9 +8,10 @@ cf-local v0.1.0 リリース時点で利用者が踏みやすい制約のサマ�
 
 | カテゴリ | 制約 | 詳細 | 対応予定 |
 |---|---|---|---|
-| Lambda@Edge | viewer-request のみ。残り 3 フック (origin-request / origin-response / viewer-response) は未対応 | [BL-LE1](#積みタスク-backlog-一覧) | v0.2.0 候補 |
-| Lambda@Edge | viewer-request の request **header** / **method** 改変が origin に反映されない | [BL-LE5 / BL-LE6](#積みタスク-backlog-一覧) | v0.2.0 候補 |
+| Lambda@Edge | viewer-request + origin-request まで。origin-response / viewer-response は未対応 | [BL-LE1](#積みタスク-backlog-一覧) | Phase 4-F |
+| Lambda@Edge | viewer-request / origin-request の request **header** / **method** 改変が origin に反映されない | [BL-LE5 / BL-LE6](#積みタスク-backlog-一覧) | v0.2.0 候補 |
 | Lambda@Edge | `include_body: true` 未対応 (request body は Lambda に渡らない) | [BL-LE2](#積みタスク-backlog-一覧) | v0.2.0 候補 |
+| Lambda@Edge | origin-request の dynamic origin selection 非対応 (`request.origin` object 省略) | [BL-LE8](#積みタスク-backlog-一覧) | 利用者要望次第 |
 | Lambda@Edge | per-PathPattern Lambda routing 未対応 (DefaultCacheBehavior 側が常に優先) | [BL-LE4](#積みタスク-backlog-一覧) | 利用者要望次第 |
 | CloudFront Functions | `FunctionAssociations` 完全未対応 | [BL-CFF1](#積みタスク-backlog-一覧) | v0.2.0 候補 |
 | Invalidation | wildcard は **末尾 `*` のみ**。`*.jpg` / `/a/*/b` 等は 400 reject | [BL-W1 / BL-W2](#積みタスク-backlog-一覧) | 利用者要望次第 (AWS 仕様外) |
@@ -107,22 +108,26 @@ cf-local 側の制約:
 
 ### Lambda@Edge / CloudFront Functions
 
-Phase 4-D は **viewer-request hook MVP** をサポート。詳細仕様は [`docs/lambda-edge.md`](./lambda-edge.md)。
+Phase 4-E は **viewer-request + origin-request** の request hooks をサポート。詳細仕様は [`docs/lambda-edge.md`](./lambda-edge.md)。
 
-実装している (Phase 4-D):
+実装している (Phase 4-E):
 
 - **viewer-request** イベントの構築 (AWS 公式ドキュメント記載フィールドを網羅)
+- **origin-request** イベントの構築 (F3=B により `request.origin` object は省略)
 - **AWS 公式 Lambda RIE** 経由での同期 invoke (5s timeout、Lambda@Edge viewer-* 上限相当)
 - **3 系統の return 仕様**: 改変 (request override) / 短絡応答 (response) / runtime error
-- **Terraform `lambda_function_association`** 受理 (event_type=viewer-request)
+- **Terraform `lambda_function_association`** 受理 (event_type=viewer-request / origin-request)
 - **distribution → 関数 ARN → RIE endpoint** の二段解決 (cf-local 内部 API + `CF_LOCAL_LAMBDA_FUNCTIONS` env)
+- **origin-request の inner-hop `js_content` topology** — cache MISS 時のみ発火し、continue は `internalRedirect` で origin へ進む
 
-cf-local 側の制約 (Phase 4-D MVP):
+cf-local 側の制約 (Phase 4-E):
 
-- **viewer-request 以外の 3 フック (origin-request / origin-response / viewer-response) は未対応** — 積みタスク `BL-LE1`。phase-4e 候補
+- **BL-LE1 は部分解消** — origin-request は Phase 4-E で対応済み。origin-response / viewer-response は Phase 4-F に分離
 - **`include_body: true` 未対応** — request body は Lambda に渡らない (AWS 仕様で本来渡るはず)。積みタスク `BL-LE2`
-- **request header の改変は反映されない** — Lambda が変更後 headers を返しても、cf-local は origin に流す前にそれを proxy_set_header 経由で適用しない (URI / querystring の改変は反映される)。積みタスク `BL-LE5`
-- **request method の改変は反映されない** — viewer-request での method 改変は CloudFront 仕様上稀。積みタスク `BL-LE6`
+- **request header の改変は反映されない** — viewer-request / origin-request で Lambda が変更後 headers を返しても、cf-local は origin に流す前にそれを proxy_set_header 経由で適用しない (URI / querystring の改変は反映される)。積みタスク `BL-LE5`
+- **request method の改変は反映されない** — request hook での method 改変は CloudFront 仕様上稀。積みタスク `BL-LE6`
+- **dynamic origin selection 非対応** — origin-request event の `request.origin` object は省略する (F3=B)。Lambda が origin を差し替える構成は未対応。積みタスク `BL-LE8`
+- **origin-response / viewer-response 未対応** — B1 により filter phase で `ngx.fetch` は使えないため、Phase 4-F で `js_content` ベースの response hook topology として実装する。origin-response の cache-write は `BL-LE-Cache1`
 - **per-PathPattern Lambda routing 未対応** — 同一 distribution に複数の viewer-request 関数を attach した場合、`DefaultCacheBehavior` 側の関数が常に優先される (find-first-match)。`CacheBehavior[].PathPattern` で関数を切り替えたい場合は本フェーズでは未対応。積みタスク `BL-LE4`
 - **request `querystring=""` で意図的にクリアできない** — Lambda が `{"querystring": ""}` を返してクエリを除去する仕様は cf-local では「unchanged」と解釈し original を引き継ぐ。AWS Lambda contract「unchanged はフィールド省略」と整合する妥協。積みタスク `BL-LE7`
 - **CloudFront Functions (`FunctionAssociations`) 完全未対応** — JS-only / sub-ms 実行モデルで Lambda@Edge と別ランタイム。積みタスク `BL-CFF1`、phase-4e or phase-5 候補
@@ -182,13 +187,15 @@ phase ごとの繰越しタスクの index。詳細は `.claude/plan.md` およ�
 | `BL-PP1` | CacheBehavior PathPattern の suffix / middle / exact wildcard 拡張 | 利用者要望次第 |
 | `BL-LD1` | Go loader sanitize (njs validation 相当を Go 側で再実装) | **完了** (phase-4c 4c-9) |
 | `BL-OB1` | HTTP request log middleware | **完了** (phase-4c 4c-5) |
-| `BL-LE1` | Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) | v0.2.0 候補 (Lambda@Edge 完全構成に向けた最大の積み) |
+| `BL-LE1` | Lambda@Edge 残り 3 フック対応 | **部分解消** (origin-request は phase-4e で完了。origin-response / viewer-response は phase-4f) |
 | `BL-LE2` | Lambda@Edge `include_body: true` 対応 (request body の Lambda 転送) | v0.2.0 候補 |
 | `BL-LE3` | RIE が CloudFront event 受理に問題ある場合の Spike | **解消** (phase-4d 4d-2 で問題なしを確認) |
 | `BL-LE4` | per-PathPattern Lambda function routing (CacheBehavior[] ごとに viewer-request 関数を切り替え) | 利用者要望次第 |
-| `BL-LE5` | Lambda@Edge viewer-request の request **header** 改変反映 (proxy_set_header 経由 or 別の機構) | v0.2.0 候補 |
-| `BL-LE6` | Lambda@Edge viewer-request の request **method** 改変反映 | 利用者要望次第 (利用例が稀) |
+| `BL-LE5` | Lambda@Edge request hooks の request **header** 改変反映 (proxy_set_header 経由 or 別の機構) | v0.2.0 候補 |
+| `BL-LE6` | Lambda@Edge request hooks の request **method** 改変反映 | 利用者要望次第 (利用例が稀) |
 | `BL-LE7` | viewer-request の querystring 空文字 (Lambda が `{"querystring": ""}` で意図クリア) を区別できない (json field の有無検出が必要) | 利用者要望次第 |
+| `BL-LE8` | origin-request の dynamic origin selection 非対応 (`request.origin` object 省略、F3=B) | 利用者要望次第 |
+| `BL-LE-Cache1` | origin-response の Lambda 改変結果を outer cache に書き込む topology 確定 (phase-4f、B2/B3 絡み) | Phase 4-F |
 | `BL-CFF1` | CloudFront Functions (`FunctionAssociations`) 対応 | v0.2.0 候補 |
 | `BL-RV1` / `BL-RV2` | Review infra 評価 (rules 領域別分割の要否 / 軸 4 公式ドキュ準拠精度) | v0.1.0 公開後の utilisation を見て再評価 |
 | `BL-CI1` | golangci-lint errcheck 再有効化 (phase-5 で 16 件検出、defer Close 等の慣用パターン含むため一旦 disable。個別評価して fix or `//nolint` 付与) | v0.2.0 候補 |

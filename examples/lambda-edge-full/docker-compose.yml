@@ -1,0 +1,97 @@
+# Self-contained Lambda@Edge phase-4e example.
+#
+# Run from the repository root:
+#
+#   docker compose -f examples/lambda-edge-full/docker-compose.yml up --build -d
+#
+# The compose file builds cf-local/nginx/edge-proxy from the repository source,
+# but all example configuration, Lambda code, and the origin container live
+# under examples/lambda-edge-full/.
+
+services:
+  cf-local:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: cf-local-full
+    ports:
+      - "4566:4566"
+    environment:
+      CF_LOCAL_EDGE_PROXY: http://edge-proxy:4569
+      CF_LOCAL_RESOLVER: 127.0.0.11
+      CF_LOCAL_LAMBDA_FUNCTIONS: |
+        auth=lambda-auth:8080
+        origin-rewrite=lambda-origin-rewrite:8080
+    volumes:
+      - ./cf-local:/cf-local:ro
+      - cf-local-conf:/work/cf-local-conf
+      - nginx-cache:/var/cache/nginx
+    command:
+      - --config-dir
+      - /cf-local
+      - --out-dir
+      - /work/cf-local-conf
+      - --addr
+      - ":4566"
+      - --cache-dir
+      - /var/cache/nginx
+    restart: unless-stopped
+
+  nginx:
+    build: ../../nginx
+    container_name: cf-local-full-nginx
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../nginx/njs:/etc/nginx/njs:ro
+      - cf-local-conf:/etc/nginx/cf-local
+      - nginx-cache:/var/cache/nginx
+    depends_on:
+      cf-local:
+        condition: service_started
+    restart: unless-stopped
+
+  edge-proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.edge-proxy
+    container_name: cf-local-full-edge-proxy
+    ports:
+      - "4569:4569"
+    command:
+      - --addr
+      - ":4569"
+      - --control-plane-url
+      - http://cf-local:4566
+    depends_on:
+      cf-local:
+        condition: service_started
+    restart: unless-stopped
+
+  lambda-auth:
+    image: public.ecr.aws/lambda/nodejs:20
+    container_name: cf-local-full-lambda-auth
+    command: ["index.handler"]
+    volumes:
+      - ./lambdas/auth:/var/task:ro
+    restart: unless-stopped
+
+  lambda-origin-rewrite:
+    image: public.ecr.aws/lambda/nodejs:20
+    container_name: cf-local-full-lambda-origin-rewrite
+    command: ["index.handler"]
+    volumes:
+      - ./lambdas/origin-rewrite:/var/task:ro
+    restart: unless-stopped
+
+  origin:
+    image: ealen/echo-server:0.9.2
+    container_name: cf-local-full-origin
+    expose:
+      - "80"
+    restart: unless-stopped
+
+volumes:
+  cf-local-conf:
+  nginx-cache:

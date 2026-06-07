@@ -186,10 +186,27 @@ outer hop:                                                     proxy_cache_valid
 
 ## Phase 完了時メモ
 
-(Phase 完了時に追記する)
+F1=A により、phase-4e は **viewer-request + origin-request の request hooks 完了**までで close。origin-response / viewer-response は phase-4f に分離する。BL-LE1 は「origin-request 分だけ部分解消」とし、完全解消は phase-4f に持ち越す。
 
 ### 想定外だった点
 
+- **B1: filter phase で `ngx.fetch` 不可**。nginx 公式 `ngx_http_js_module` の制約により、`js_header_filter` / `js_body_filter` は同期処理のみで、当初想定していた filter 発火案は不成立だった。Lambda@Edge response/origin hooks は `js_content` ベースに再アーキする必要がある。
+- **origin-request は inner-hop `js_content` で成立**。`nginx/spike/origin-request/README.md` の Option 2 により、outer `proxy_cache` → inner `js_content` → `internalRedirect @origin` の topology で、origin-request が cache MISS 時のみ発火することを確認した。
+- **B3: origin-response は origin body 非露出**。AWS Lambda@Edge の origin-response trigger は origin body を Lambda に渡さないため、body 読取による書き換えは AWS でも不可。phase-4f では status / headers と body 生成・削除に限定して考える。
+- **F3=B を採用**。phase-4e の origin-request event では `request.origin` object を省略し、dynamic origin selection は未対応 backlog とした。request uri/querystring rewrite と short-circuit を working set とする。
+
 ### 次フェーズへの引き継ぎ事項
 
+- **phase-4f = origin-response / viewer-response**。response 系 2 hooks は filter 発火ではなく `js_content` ベースの topology として設計する。
+- **F2: origin-response cache-write 方針**。B2 により、Lambda 改変結果を cache に格納するには inner hop 側で改変を済ませ、outer `proxy_cache` に upstream response として見せる必要がある。これを `BL-LE-Cache1` として docs/limitations.md に追加した。
+- **B3 を仕様に反映**。origin-response Lambda は origin body を読めない。phase-4f の event/translator/docs は status / headers と body 生成・削除のみを扱い、body 読取 rewrite を要件にしない。
+- **request header 改変は別 backlog のまま**。viewer-request と origin-request のどちらも、Lambda が返した request headers は origin へ反映されない。既存 `BL-LE5` を request hooks 共通の制約として扱う。
+- **dynamic origin selection は別 backlog**。origin-request の `request.origin` object 省略により、Lambda から origin を差し替える構成は未対応。F3=B の結果として新規 backlog に残す。
+- **examples/lambda-edge-full は phase-4e working set のみ**。viewer-request + origin-request の 2 RIE 構成で自己完結させ、response hooks 用 Lambda は phase-4f で追加する。
+
 ### DESIGN.md 更新が必要な点
+
+- §4.2 付近に「Lambda@Edge response/origin hooks は `js_header_filter` / `js_body_filter` で `ngx.fetch` できないため filter 発火不可。`js_content` + 2-hop/追加 hop で実装する」を追記する。
+- §4.2 付近に「origin-request は inner-hop `js_content` topology。outer `proxy_cache` の MISS 時のみ発火し、continue は `internalRedirect` で origin へ進む」を追記する。
+- Lambda@Edge の制限一覧に「phase-4e は viewer-request + origin-request まで。origin-response / viewer-response は phase-4f」「origin-request の `request.origin` object 省略 = dynamic origin selection 非対応」「request header 改変は request hooks 共通で未反映」を追記する。
+- cache-write 設計に「origin-response の Lambda 改変結果を cache に入れる場合、inner hop で改変済み response を作って outer `proxy_cache` に見せる。詳細は `BL-LE-Cache1` / phase-4f」を追記する。
