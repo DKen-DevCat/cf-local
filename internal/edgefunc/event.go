@@ -252,6 +252,54 @@ func BuildOriginResponseEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEve
 	return event, nil
 }
 
+// BuildViewerResponseEvent assembles a CloudFront viewer-response event from
+// the raw njs request snapshot and the viewer response snapshot. The response
+// block intentionally excludes body/bodyEncoding: AWS viewer-response events
+// expose status, statusDescription, and headers only. Viewer-response mutation
+// constraints, such as immutable status codes, are enforced by the translator.
+func BuildViewerResponseEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEvent, error) {
+	if req.EventType != EventViewerResponse {
+		return nil, fmt.Errorf("unsupported event_type %q (Phase 4-E viewer-response builder supports viewer-response only)", req.EventType)
+	}
+	if req.Response == nil {
+		return nil, errors.New("response snapshot is required for viewer-response")
+	}
+	if req.Request.Method == "" {
+		return nil, errors.New("request.method is required")
+	}
+	if req.Request.URI == "" {
+		return nil, errors.New("request.uri is required")
+	}
+
+	headers := normaliseHeadersForEvent(req.Request.Headers)
+	response := eventResponseFromSnapshot(*req.Response)
+	requestID := newCFRequestID()
+
+	event := &CloudFrontEvent{
+		Records: []CloudFrontRecord{
+			{
+				CF: CloudFrontPayload{
+					Config: CloudFrontConfig{
+						DistributionDomainName: distributionDomainName(req.DistributionID),
+						DistributionID:         req.DistributionID,
+						EventType:              req.EventType,
+						RequestID:              requestID,
+					},
+					Request: &CloudFrontRequest{
+						ClientIP:    req.Request.ClientIP,
+						Headers:     headers,
+						Method:      req.Request.Method,
+						QueryString: req.Request.QueryString,
+						URI:         req.Request.URI,
+					},
+					Response: response,
+				},
+			},
+		},
+	}
+	return event, nil
+}
+
 func eventResponseFromSnapshot(resp InvokeRawResponse) *CloudFrontResponse {
 	return &CloudFrontResponse{
 		Status:            strconv.Itoa(resp.Status),
