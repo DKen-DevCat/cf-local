@@ -44,11 +44,11 @@ import (
 // (RHP は optional で、未登録の RHP を参照していても render を fail させ
 // ない設計判断 — CachePolicy は required なので扱いが異なる)。
 //
-// distributionID と edgeProxyURL は Phase 4-D 4d-7 で追加。viewer-request
-// LambdaFunctionAssociation を持つ behavior が 1 つでもあると edge.js を
-// import し、`set $cf_distribution_id "..."` / `set $cf_edge_proxy "..."` を
-// 各該当 location に出す。distributionID が "" のときは Lambda@Edge bridge
-// は完全に無効化 (file-based loader が ID を持たないケース等)。
+// distributionID と edgeProxyURL は Phase 4-D 4d-7 で追加。Lambda@Edge
+// association を持つ behavior が 1 つでもあると edge.js を import し、
+// `set $cf_distribution_id "..."` / `set $cf_edge_proxy "..."` を各該当
+// location に出す。distributionID が "" のときは Lambda@Edge bridge は
+// 完全に無効化 (file-based loader が ID を持たないケース等)。
 func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConfig, rhp map[string]*types.ResponseHeadersPolicyConfig, distributionID, edgeProxyURL, resolver string) ([]byte, error) {
 	origins, err := buildOriginViews(d.Origins)
 	if err != nil {
@@ -61,7 +61,7 @@ func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConf
 
 	hasLambdaEdge := false
 	for _, b := range behaviors {
-		if b.LambdaEdgeViewerRequest || b.LambdaEdgeOriginRequest || b.LambdaEdgeOriginResponse {
+		if b.LambdaEdgeViewerRequest || b.LambdaEdgeViewerResponse || b.LambdaEdgeOriginRequest || b.LambdaEdgeOriginResponse {
 			hasLambdaEdge = true
 			break
 		}
@@ -96,6 +96,11 @@ type behaviorView struct {
 	// `js_content edge.viewerRequest;` のみを置き、cache + proxy_pass は
 	// `@cf_le_<sanpolicy>_forward` named location 側に出す。
 	LambdaEdgeViewerRequest bool
+	// LambdaEdgeViewerResponse は Phase 4-F task-6。viewer-response EventType の
+	// LambdaFunctionAssociation を持つ behavior は true。outer location は
+	// transient な `js_content edge.runViewerResponse;` にし、cache + origin
+	// chain は inner server の `/_cf_vr_fwd_<san>/` prefix location に出す。
+	LambdaEdgeViewerResponse bool
 	// LambdaEdgeOriginRequest は Phase 4-E task-8。origin-request EventType の
 	// LambdaFunctionAssociation を持つ behavior は true。cache hop の
 	// proxy_pass を inner-B 直通ではなく `/_cf_or_<san>` inner-A に向ける。
@@ -237,6 +242,7 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 			}
 			comment += ")."
 			viewerRequest := hasViewerRequestAssociation(b.LambdaFunctionAssociations)
+			viewerResponse := hasViewerResponseAssociation(b.LambdaFunctionAssociations)
 			originRequest := hasOriginRequestAssociation(b.LambdaFunctionAssociations)
 			originResponse := hasOriginResponseAssociation(b.LambdaFunctionAssociations)
 			behaviors = append(behaviors, behaviorView{
@@ -246,6 +252,7 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 				InnerPrefix:              "/_cf_inner_" + san,
 				HeaderDirectives:         lookupResponseHeaders(rhp, rhpID),
 				LambdaEdgeViewerRequest:  viewerRequest,
+				LambdaEdgeViewerResponse: viewerResponse,
 				LambdaEdgeOriginRequest:  originRequest,
 				LambdaEdgeOriginResponse: originResponse,
 				SanitizedPolicyID:        san,
@@ -270,6 +277,7 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 	}
 	defaultComment += ")."
 	defaultViewerRequest := hasViewerRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
+	defaultViewerResponse := hasViewerResponseAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
 	defaultOriginRequest := hasOriginRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
 	defaultOriginResponse := hasOriginResponseAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
 	behaviors = append(behaviors, behaviorView{
@@ -279,6 +287,7 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 		InnerPrefix:              "/_cf_inner_" + defaultSan,
 		HeaderDirectives:         lookupResponseHeaders(rhp, defaultRHPID),
 		LambdaEdgeViewerRequest:  defaultViewerRequest,
+		LambdaEdgeViewerResponse: defaultViewerResponse,
 		LambdaEdgeOriginRequest:  defaultOriginRequest,
 		LambdaEdgeOriginResponse: defaultOriginResponse,
 		SanitizedPolicyID:        defaultSan,
@@ -351,6 +360,21 @@ func hasViewerRequestAssociation(lfa *types.LambdaFunctionAssociations) bool {
 		// REV-9 (Phase 4-D): SDK 定数で比較する。`string(item.EventType) == "..."`
 		// より型安全 + grep 性が高い。
 		if item.EventType == types.EventTypeViewerRequest {
+			return true
+		}
+	}
+	return false
+}
+
+// hasViewerResponseAssociation は Phase 4-F task-6。指定の
+// LambdaFunctionAssociations に EventType=viewer-response が含まれていれば
+// true。
+func hasViewerResponseAssociation(lfa *types.LambdaFunctionAssociations) bool {
+	if lfa == nil {
+		return false
+	}
+	for _, item := range lfa.Items {
+		if item.EventType == types.EventTypeViewerResponse {
 			return true
 		}
 	}
@@ -440,8 +464,12 @@ func writeUpstreams(b *bytes.Buffer, origins []originView) {
 // Phase 4-D 4d-7: behaviors のうち LambdaEdgeViewerRequest=true のものは、
 // outer location が `js_content edge.viewerRequest;` のみとなり、cache +
 // origin 配信ロジックは同 server block 内の `@cf_le_<san>_forward` 名前付き
-// 内部 location に出される。distributionID と edgeProxyURL はその set
-// directive で各 location に焼き込まれる。
+// 内部 location に出される。
+//
+// Phase 4-F task-6: LambdaEdgeViewerResponse=true のものは viewer-response が
+// 最外段 transient hop になる。outer location には proxy_cache を置かず、
+// cache + viewer-request + origin chain は inner server の per-behavior
+// `/_cf_vr_fwd_<san>/` prefix location に出す。
 func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerView, distributionID, edgeProxyURL string) {
 	// Phase 3 の独自 invalidation 経路 (`/_cf_purge<path>` location +
 	// ngx_cache_purge proxy_cache_purge) は phase-4b 4b-9 で撤去。
@@ -453,7 +481,9 @@ func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerV
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		if beh.LambdaEdgeViewerRequest {
+		if beh.LambdaEdgeViewerResponse {
+			writeViewerResponseOuter(b, beh, distributionID, edgeProxyURL)
+		} else if beh.LambdaEdgeViewerRequest {
 			writeLambdaEdgeOuter(b, beh, distributionID, edgeProxyURL)
 			b.WriteByte('\n')
 			writeForwardLocation(b, beh)
@@ -465,6 +495,16 @@ func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerV
 
 	fmt.Fprintf(b, "server {\n    listen unix:%s;\n\n", innerSocketPath)
 	firstInnerLocation := true
+	for _, beh := range behaviors {
+		if !beh.LambdaEdgeViewerResponse {
+			continue
+		}
+		if !firstInnerLocation {
+			b.WriteByte('\n')
+		}
+		writeViewerResponseInnerForward(b, beh, distributionID, edgeProxyURL)
+		firstInnerLocation = false
+	}
 	for _, inner := range inners {
 		if inner.LambdaEdgeOriginRequest {
 			if !firstInnerLocation {
@@ -495,6 +535,21 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
 	fmt.Fprintf(b, "    # %s\n", sanitizeCommentText(beh.Comment))
 	fmt.Fprintf(b, "    location %s {\n", beh.Location)
 	writeOuterLocationBody(b, beh, false)
+	b.WriteString("    }\n")
+}
+
+// writeViewerResponseOuter は viewer-response hook が attach されている behavior
+// の最外段 transient hop を出す。cache + origin chain は inner unix socket
+// server の viewer-response forward prefix に隠し、outer には proxy_cache を
+// 置かない。
+func writeViewerResponseOuter(b *bytes.Buffer, beh behaviorView, distributionID, edgeProxyURL string) {
+	fmt.Fprintf(b, "    # %s — Lambda@Edge viewer-response\n", sanitizeCommentText(beh.Comment))
+	fmt.Fprintf(b, "    location %s {\n", beh.Location)
+	fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", sanitizeNginxSetValue(distributionID))
+	fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", sanitizeNginxSetValue(edgeProxyURL))
+	fmt.Fprintf(b, "        set $cf_le_inner_socket %q;\n", innerSocketPath)
+	fmt.Fprintf(b, "        set $cf_le_vr_fwd_prefix %q;\n", viewerResponseFwdPrefix(beh.SanitizedPolicyID))
+	b.WriteString("        js_content edge.runViewerResponse;\n")
 	b.WriteString("    }\n")
 }
 
@@ -558,8 +613,32 @@ func writeForwardLocation(b *bytes.Buffer, beh behaviorView) {
 	b.WriteString("    }\n")
 }
 
+// writeViewerResponseInnerForward は viewer-response outer hop から ngx.fetch で
+// 到達する inner prefix location を出す。viewer-request も attach されている
+// behavior ではここで viewer-request を実行し、継続先の named forward を同じ
+// inner server に出す。
+func writeViewerResponseInnerForward(b *bytes.Buffer, beh behaviorView, distributionID, edgeProxyURL string) {
+	prefix := viewerResponseFwdPrefix(beh.SanitizedPolicyID)
+	fmt.Fprintf(b, "    location %s/ {\n", prefix)
+	if beh.LambdaEdgeViewerRequest {
+		fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", sanitizeNginxSetValue(distributionID))
+		fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", sanitizeNginxSetValue(edgeProxyURL))
+		fmt.Fprintf(b, "        set $cf_le_forward %q;\n", forwardLocationName(beh.SanitizedPolicyID))
+		b.WriteString("        js_content edge.viewerRequest;\n")
+		b.WriteString("    }\n\n")
+		writeForwardLocation(b, beh)
+		return
+	}
+	writeOuterLocationBody(b, beh, true)
+	b.WriteString("    }\n")
+}
+
 func forwardLocationName(sanitizedPolicyID string) string {
 	return "@cf_le_" + sanitizedPolicyID + "_forward"
+}
+
+func viewerResponseFwdPrefix(sanitizedPolicyID string) string {
+	return "/_cf_vr_fwd_" + sanitizedPolicyID
 }
 
 func originRequestPrefix(sanitizedPolicyID string) string {
