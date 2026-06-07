@@ -61,10 +61,12 @@ type CloudFrontRecord struct {
 	CF CloudFrontPayload `json:"cf"`
 }
 
-// CloudFrontPayload bundles config and request blocks for a single event.
+// CloudFrontPayload bundles config, request, and response blocks for a
+// single event.
 type CloudFrontPayload struct {
-	Config  CloudFrontConfig   `json:"config"`
-	Request *CloudFrontRequest `json:"request,omitempty"`
+	Config   CloudFrontConfig    `json:"config"`
+	Request  *CloudFrontRequest  `json:"request,omitempty"`
+	Response *CloudFrontResponse `json:"response,omitempty"`
 }
 
 // CloudFrontConfig is the per-event metadata CloudFront stamps on every
@@ -76,8 +78,8 @@ type CloudFrontConfig struct {
 	RequestID              string `json:"requestId"`
 }
 
-// CloudFrontRequest is the viewer-request request block. body is omitted
-// for Phase 4-D MVP (BL-LE2 will add IncludeBody handling).
+// CloudFrontRequest is the request block for request-phase events. body is
+// omitted for Phase 4-D MVP (BL-LE2 will add IncludeBody handling).
 type CloudFrontRequest struct {
 	ClientIP    string                `json:"clientIp"`
 	Headers     map[string][]CFHeader `json:"headers"`
@@ -85,7 +87,8 @@ type CloudFrontRequest struct {
 	QueryString string                `json:"querystring"`
 	URI         string                `json:"uri"`
 	// Body is intentionally omitted (BL-LE2). Origin / origin-only fields
-	// are also omitted (this is viewer-request scope only).
+	// are also omitted for the origin-request MVP because cf-local does not
+	// carry origin configuration in the njs snapshot.
 }
 
 // CFHeader is one (Key, Value) pair within a header's values list.
@@ -157,6 +160,154 @@ func BuildViewerRequestEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEven
 	return event, nil
 }
 
+// BuildOriginRequestEvent assembles a CloudFront origin-request event from
+// the raw njs request snapshot. Header keys are lowercased per AWS spec;
+// the original casing is preserved in CFHeader.Key.
+//
+// cf-local does not carry origin configuration in the snapshot, so the MVP
+// intentionally omits the origin object. Dynamic origin selection is not
+// supported; task-12 is expected to file that limitation in docs/limitations.md.
+func BuildOriginRequestEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEvent, error) {
+	if req.EventType != EventOriginRequest {
+		return nil, fmt.Errorf("unsupported event_type %q (Phase 4-E origin-request builder supports origin-request only)", req.EventType)
+	}
+	if req.Request.Method == "" {
+		return nil, errors.New("request.method is required")
+	}
+	if req.Request.URI == "" {
+		return nil, errors.New("request.uri is required")
+	}
+
+	headers := normaliseHeadersForEvent(req.Request.Headers)
+	requestID := newCFRequestID()
+
+	event := &CloudFrontEvent{
+		Records: []CloudFrontRecord{
+			{
+				CF: CloudFrontPayload{
+					Config: CloudFrontConfig{
+						DistributionDomainName: distributionDomainName(req.DistributionID),
+						DistributionID:         req.DistributionID,
+						EventType:              req.EventType,
+						RequestID:              requestID,
+					},
+					Request: &CloudFrontRequest{
+						ClientIP:    req.Request.ClientIP,
+						Headers:     headers,
+						Method:      req.Request.Method,
+						QueryString: req.Request.QueryString,
+						URI:         req.Request.URI,
+					},
+				},
+			},
+		},
+	}
+	return event, nil
+}
+
+// BuildOriginResponseEvent assembles a CloudFront origin-response event from
+// the raw njs request snapshot and the origin response snapshot. The response
+// block intentionally excludes body/bodyEncoding: AWS does not expose the
+// origin server body to origin-response triggers (B3).
+func BuildOriginResponseEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEvent, error) {
+	if req.EventType != EventOriginResponse {
+		return nil, fmt.Errorf("unsupported event_type %q (Phase 4-E origin-response builder supports origin-response only)", req.EventType)
+	}
+	if req.Response == nil {
+		return nil, errors.New("response snapshot is required for origin-response")
+	}
+	if req.Request.Method == "" {
+		return nil, errors.New("request.method is required")
+	}
+	if req.Request.URI == "" {
+		return nil, errors.New("request.uri is required")
+	}
+
+	headers := normaliseHeadersForEvent(req.Request.Headers)
+	response := eventResponseFromSnapshot(*req.Response)
+	requestID := newCFRequestID()
+
+	event := &CloudFrontEvent{
+		Records: []CloudFrontRecord{
+			{
+				CF: CloudFrontPayload{
+					Config: CloudFrontConfig{
+						DistributionDomainName: distributionDomainName(req.DistributionID),
+						DistributionID:         req.DistributionID,
+						EventType:              req.EventType,
+						RequestID:              requestID,
+					},
+					Request: &CloudFrontRequest{
+						ClientIP:    req.Request.ClientIP,
+						Headers:     headers,
+						Method:      req.Request.Method,
+						QueryString: req.Request.QueryString,
+						URI:         req.Request.URI,
+					},
+					Response: response,
+				},
+			},
+		},
+	}
+	return event, nil
+}
+
+// BuildViewerResponseEvent assembles a CloudFront viewer-response event from
+// the raw njs request snapshot and the viewer response snapshot. The response
+// block intentionally excludes body/bodyEncoding: AWS viewer-response events
+// expose status, statusDescription, and headers only. Viewer-response mutation
+// constraints, such as immutable status codes, are enforced by the translator.
+func BuildViewerResponseEvent(req InvokeRequest, _ EdgeFunction) (*CloudFrontEvent, error) {
+	if req.EventType != EventViewerResponse {
+		return nil, fmt.Errorf("unsupported event_type %q (Phase 4-E viewer-response builder supports viewer-response only)", req.EventType)
+	}
+	if req.Response == nil {
+		return nil, errors.New("response snapshot is required for viewer-response")
+	}
+	if req.Request.Method == "" {
+		return nil, errors.New("request.method is required")
+	}
+	if req.Request.URI == "" {
+		return nil, errors.New("request.uri is required")
+	}
+
+	headers := normaliseHeadersForEvent(req.Request.Headers)
+	response := eventResponseFromSnapshot(*req.Response)
+	requestID := newCFRequestID()
+
+	event := &CloudFrontEvent{
+		Records: []CloudFrontRecord{
+			{
+				CF: CloudFrontPayload{
+					Config: CloudFrontConfig{
+						DistributionDomainName: distributionDomainName(req.DistributionID),
+						DistributionID:         req.DistributionID,
+						EventType:              req.EventType,
+						RequestID:              requestID,
+					},
+					Request: &CloudFrontRequest{
+						ClientIP:    req.Request.ClientIP,
+						Headers:     headers,
+						Method:      req.Request.Method,
+						QueryString: req.Request.QueryString,
+						URI:         req.Request.URI,
+					},
+					Response: response,
+				},
+			},
+		},
+	}
+	return event, nil
+}
+
+func eventResponseFromSnapshot(resp InvokeRawResponse) *CloudFrontResponse {
+	return &CloudFrontResponse{
+		Status:            strconv.Itoa(resp.Status),
+		StatusDescription: resp.StatusDesc,
+		Headers:           normaliseHeadersForEvent(resp.Headers),
+	}
+}
+
 // normaliseHeadersForEvent maps njs's `{name: [v1, v2]}` shape into
 // CloudFront's `{lowername: [{key:OrigName, value:v}, ...]}` shape.
 //
@@ -201,22 +352,25 @@ func distributionDomainName(id string) string {
 // "errorType": "...", "stackTrace": [...]}) when the function panics. We
 // surface that as Action=error.
 func TranslateViewerRequestResponse(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
+	return translateRequestHook(rieBody, original)
+}
+
+// TranslateOriginRequestResponse decodes an origin-request Lambda result.
+// origin-request is also a request hook, so it follows the same continue /
+// short-circuit / error rules as viewer-request.
+func TranslateOriginRequestResponse(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
+	return translateRequestHook(rieBody, original)
+}
+
+func translateRequestHook(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
 	if len(rieBody) == 0 {
 		return nil, errors.New("RIE response body is empty")
 	}
 
 	// Detect Lambda error envelope first. The RIE forwards function
 	// runtime errors with errorMessage/errorType keys.
-	var maybeErr struct {
-		ErrorMessage string `json:"errorMessage"`
-		ErrorType    string `json:"errorType"`
-	}
-	if err := json.Unmarshal(rieBody, &maybeErr); err == nil && maybeErr.ErrorMessage != "" {
-		msg := maybeErr.ErrorMessage
-		if maybeErr.ErrorType != "" {
-			msg = maybeErr.ErrorType + ": " + msg
-		}
-		return &InvokeResponse{Action: ActionError, Error: msg}, nil
+	if resp, ok := lambdaErrorResponse(rieBody); ok {
+		return resp, nil
 	}
 
 	// Success path: the function's return value, which CloudFront treats
@@ -254,6 +408,72 @@ func TranslateViewerRequestResponse(rieBody []byte, original InvokeRequest) (*In
 	}
 	merged := mergeRequest(original.Request, modified)
 	return &InvokeResponse{Action: ActionContinue, Request: &merged}, nil
+}
+
+// TranslateOriginResponseResponse decodes an origin-response Lambda result.
+// Lambda error envelopes map to Action=error. Successful results are flattened
+// as response mutations; njs での適用（cache 前格納）の最終形は phase-4f で確定.
+func TranslateOriginResponseResponse(rieBody []byte, _ InvokeRequest) (*InvokeResponse, error) {
+	if len(rieBody) == 0 {
+		return nil, errors.New("RIE response body is empty")
+	}
+	if resp, ok := lambdaErrorResponse(rieBody); ok {
+		return resp, nil
+	}
+
+	var modified CloudFrontResponse
+	if err := json.Unmarshal(rieBody, &modified); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	flat, err := flattenResponse(modified)
+	if err != nil {
+		return nil, err
+	}
+	return &InvokeResponse{Action: ActionContinue, Response: flat}, nil
+}
+
+// TranslateViewerResponseResponse decodes a viewer-response Lambda result.
+// Lambda error envelopes map to Action=error. viewer-response は status/body
+// 不変（AWS 制約）、transient 適用は phase-4f で確定.
+func TranslateViewerResponseResponse(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
+	if len(rieBody) == 0 {
+		return nil, errors.New("RIE response body is empty")
+	}
+	if resp, ok := lambdaErrorResponse(rieBody); ok {
+		return resp, nil
+	}
+	if original.Response == nil {
+		return nil, errors.New("original response snapshot is required for viewer-response")
+	}
+
+	var modified CloudFrontResponse
+	if err := json.Unmarshal(rieBody, &modified); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	flat := &InvokeRawResponse{
+		Status:     original.Response.Status,
+		StatusDesc: original.Response.StatusDesc,
+	}
+	if len(modified.Headers) > 0 {
+		flat.Headers = flattenHeaders(modified.Headers)
+	}
+	return &InvokeResponse{Action: ActionContinue, Response: flat}, nil
+}
+
+func lambdaErrorResponse(rieBody []byte) (*InvokeResponse, bool) {
+	var maybeErr struct {
+		ErrorMessage string `json:"errorMessage"`
+		ErrorType    string `json:"errorType"`
+	}
+	if err := json.Unmarshal(rieBody, &maybeErr); err == nil && maybeErr.ErrorMessage != "" {
+		msg := maybeErr.ErrorMessage
+		if maybeErr.ErrorType != "" {
+			msg = maybeErr.ErrorType + ": " + msg
+		}
+		return &InvokeResponse{Action: ActionError, Error: msg}, true
+	}
+	return nil, false
 }
 
 // flattenResponse converts the CloudFront response shape (status as

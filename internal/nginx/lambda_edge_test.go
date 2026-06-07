@@ -22,6 +22,11 @@ import (
 //
 // When no LambdaFunctionAssociation is attached, the renderer output is
 // unchanged from the Phase 4-C baseline (covered by TestRender_Golden).
+//
+// Phase 4-E task-8 adds origin-request wiring:
+//   - cache hop proxy_pass goes to `/_cf_or_<san>` instead of inner-B
+//   - inner server carries `/_cf_or_<san>/` with `js_content edge.runOriginRequest`
+//   - inner-B `/_cf_inner_<san>/` remains the origin proxy location
 
 func newBaseLoadResult() *config.LoadResult {
 	return &config.LoadResult{
@@ -226,10 +231,7 @@ func TestRender_LambdaEdge_CustomResolver(t *testing.T) {
 	}
 }
 
-func TestRender_LambdaEdge_NonViewerRequest_HookIgnored(t *testing.T) {
-	// origin-request only — Phase 4-D MVP does not bridge anything but
-	// viewer-request, so the renderer falls back to the legacy inline
-	// cache form (no edge.js, no @cf_le_*_forward).
+func TestRender_LambdaEdge_OriginRequest_DefaultCacheBehavior(t *testing.T) {
 	res := newBaseLoadResult()
 	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
 		Items: []types.LambdaFunctionAssociation{
@@ -244,11 +246,90 @@ func TestRender_LambdaEdge_NonViewerRequest_HookIgnored(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	conf := string(out.Conf)
-	if strings.Contains(conf, "js_import edge from edge.js;") {
-		t.Errorf("edge.js must not be imported for non-viewer-request hooks:\n%s", conf)
+	if !strings.Contains(conf, "js_import edge from edge.js;") {
+		t.Errorf("expected edge.js import for origin-request:\n%s", conf)
+	}
+	if !strings.Contains(conf, "resolver 127.0.0.11 valid=30s ipv6=off;") {
+		t.Errorf("expected resolver directive for origin-request:\n%s", conf)
 	}
 	if strings.Contains(conf, "js_content edge.viewerRequest;") {
 		t.Errorf("no js_content edge.viewerRequest expected:\n%s", conf)
+	}
+
+	outerStart := strings.Index(conf, "    location / {\n")
+	if outerStart < 0 {
+		t.Fatalf("missing outer default location:\n%s", conf)
+	}
+	outerEnd := strings.Index(conf[outerStart:], "\n    }\n")
+	if outerEnd < 0 {
+		t.Fatalf("could not find end of outer default location")
+	}
+	outerBlock := conf[outerStart : outerStart+outerEnd]
+	if !strings.Contains(outerBlock, "proxy_pass http://self/_cf_or_E_CP1$request_uri;") {
+		t.Errorf("origin-request cache hop must proxy to inner-A:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "proxy_pass http://self/_cf_inner_E_CP1$request_uri;") {
+		t.Errorf("origin-request cache hop must not bypass inner-A:\n%s", outerBlock)
+	}
+
+	wantSubs := []string{
+		"location /_cf_or_E_CP1/ {",
+		`set $cf_distribution_id "EDFDVBD6EXAMPLE";`,
+		`set $cf_edge_proxy "http://edge-proxy:4569";`,
+		`set $cf_le_origin_inner_prefix "/_cf_inner_E_CP1";`,
+		`set $cf_le_or_prefix "/_cf_or_E_CP1";`,
+		"js_content edge.runOriginRequest;",
+		"location /_cf_inner_E_CP1/ {",
+		"js_header_filter ttl.computeAndInject;",
+	}
+	for _, want := range wantSubs {
+		if !strings.Contains(conf, want) {
+			t.Errorf("rendered conf missing %q\n%s", want, conf)
+		}
+	}
+}
+
+func TestRender_LambdaEdge_ViewerAndOriginRequest_ForwardTargetsOriginRequestHop(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeViewerRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1"),
+			},
+			{
+				EventType:         types.EventTypeOriginRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:rewrite:1"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	if !strings.Contains(conf, "js_content edge.viewerRequest;") {
+		t.Errorf("viewer-request bridge must remain active:\n%s", conf)
+	}
+	forwardStart := strings.Index(conf, "    location @cf_le_E_CP1_forward {\n")
+	if forwardStart < 0 {
+		t.Fatalf("missing viewer-request forward location:\n%s", conf)
+	}
+	forwardEnd := strings.Index(conf[forwardStart:], "\n    }\n")
+	if forwardEnd < 0 {
+		t.Fatalf("could not find end of forward block")
+	}
+	forwardBlock := conf[forwardStart : forwardStart+forwardEnd]
+	if !strings.Contains(forwardBlock, "proxy_pass http://self/_cf_or_E_CP1$uri$is_args$args;") {
+		t.Errorf("viewer-request forward cache hop must route through origin-request inner-A:\n%s", forwardBlock)
+	}
+	if strings.Contains(forwardBlock, "proxy_pass http://self/_cf_inner_E_CP1$uri$is_args$args;") {
+		t.Errorf("viewer-request forward cache hop must not bypass origin-request inner-A:\n%s", forwardBlock)
+	}
+	if !strings.Contains(conf, "location /_cf_or_E_CP1/ {") {
+		t.Errorf("missing origin-request inner-A location:\n%s", conf)
 	}
 }
 

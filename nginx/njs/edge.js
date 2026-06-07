@@ -139,6 +139,26 @@ function computeOverrideTarget(r, override) {
     return overrideQS ? uri + '?' + overrideQS : uri;
 }
 
+function ensureLeadingSlash(path) {
+    if (!path || !path.length) return '/';
+    if (path[0] === '/') return path;
+    return '/' + path;
+}
+
+function originRequestTail(r, orPrefix) {
+    const uri = r.uri || '/';
+    let tail = uri;
+    if (orPrefix && uri.indexOf(orPrefix) === 0) {
+        tail = uri.slice(orPrefix.length);
+    }
+    return ensureLeadingSlash(tail);
+}
+
+function originRequestRedirectTarget(innerPrefix, tail, qs) {
+    const path = (innerPrefix || '') + ensureLeadingSlash(tail);
+    return qs ? path + '?' + qs : path;
+}
+
 async function viewerRequest(r) {
     const distId = r.variables.cf_distribution_id || '';
     const forward = r.variables.cf_le_forward || '@cf_le_forward';
@@ -198,4 +218,64 @@ async function viewerRequest(r) {
     r.internalRedirect(forward);
 }
 
-export default { viewerRequest };
+async function runOriginRequest(r) {
+    const distId = r.variables.cf_distribution_id || '';
+    const innerPrefix = r.variables.cf_le_origin_inner_prefix || '';
+    const orPrefix = r.variables.cf_le_or_prefix || '';
+    const tail = originRequestTail(r, orPrefix);
+    const args = r.variables.args || '';
+    const originalPath = tail;
+    const failOpenTarget = originRequestRedirectTarget(innerPrefix, tail, args);
+
+    if (!distId) {
+        r.warn('edge: cf_distribution_id is empty, bypassing origin-request edge-proxy');
+        r.internalRedirect(failOpenTarget);
+        return;
+    }
+
+    const request = snapshotRequest(r);
+    request.uri = originalPath;
+    const payload = {
+        distribution_id: distId,
+        event_type: 'origin-request',
+        request: request,
+    };
+
+    let resp;
+    try {
+        const fetchResp = await ngx.fetch(edgeProxyURL(r) + '/invoke', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const text = await fetchResp.text();
+        resp = JSON.parse(text);
+    } catch (e) {
+        r.error('edge: origin-request edge-proxy invoke failed: ' + e + ' — failing open');
+        r.internalRedirect(failOpenTarget);
+        return;
+    }
+
+    if (!resp || !resp.action) {
+        r.warn('edge: malformed origin-request edge-proxy response, failing open');
+        r.internalRedirect(failOpenTarget);
+        return;
+    }
+
+    if (resp.action === 'short_circuit') {
+        applyResponse(r, resp.response);
+        return;
+    }
+    if (resp.action === 'error') {
+        r.warn('edge: origin-request edge-proxy returned action=error: ' + (resp.error || ''));
+        r.internalRedirect(failOpenTarget);
+        return;
+    }
+
+    const override = resp.request || {};
+    const finalTail = (override.uri && override.uri !== originalPath) ? override.uri : tail;
+    const qs = (override.querystring !== undefined) ? override.querystring : args;
+    r.internalRedirect(originRequestRedirectTarget(innerPrefix, finalTail, qs));
+}
+
+export default { viewerRequest, runOriginRequest };

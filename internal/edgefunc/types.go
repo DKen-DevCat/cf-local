@@ -6,7 +6,8 @@ package edgefunc
 
 // InvokeRequest is the JSON body njs POSTs to edge-proxy's /invoke
 // endpoint. Field names are lowercase to match njs conventions and avoid
-// any per-side mapping layer.
+// any per-side mapping layer. Response is omitted for request hooks and
+// populated only when response hooks pass the response snapshot to inspect.
 //
 // Example:
 //
@@ -25,6 +26,16 @@ type InvokeRequest struct {
 	DistributionID string           `json:"distribution_id"`
 	EventType      string           `json:"event_type"`
 	Request        InvokeRawRequest `json:"request"`
+	// Response is the response snapshot origin-response / viewer-response
+	// hooks pass to Lambda for inspection and mutation. It is nil for
+	// viewer-request / origin-request hooks, so omitempty keeps the phase-4d
+	// request path backward compatible.
+	//
+	// For origin-response, AWS does not expose the origin server body to
+	// Lambda (lambda-updating-http-responses), so the meaningful input is
+	// status / headers. Body is only for Lambda-generated or deleted
+	// responses.
+	Response *InvokeRawResponse `json:"response,omitempty"`
 }
 
 // InvokeRawRequest is the verbatim request snapshot njs hands to

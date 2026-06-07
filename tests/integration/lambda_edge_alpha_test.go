@@ -12,7 +12,7 @@
 // (port 8080) には触れない (njs を実 nginx で回すには docker compose が必要
 // なため、それは check-phase-4d.md 側の手動検証で担保)。
 //
-// 検証する 3 ケース:
+// viewer-request の既存 3 ケース:
 //
 //  1. **改変** — Lambda が修正後 request を返す → Action=continue + Request
 //     に override が乗る
@@ -20,6 +20,9 @@
 //     short_circuit + Response にステータス/headers が乗る
 //  3. **エラー応答** — Lambda が runtime error envelope を返す → Action=error +
 //     njs 側は forward へ fail-open する想定
+//
+// Phase 4-E task-10 では同じ α 経路を origin-request / origin-response /
+// viewer-response に拡張する。
 package integration
 
 import (
@@ -44,6 +47,11 @@ import (
 // returns the edge-proxy HTTP base URL. lambdaBody is what the fake RIE
 // returns to a invocation.
 func stage(t *testing.T, lambdaBody string) (edgeProxyURL string, distID string) {
+	t.Helper()
+	return stageForEvent(t, types.EventTypeViewerRequest, lambdaBody)
+}
+
+func stageForEvent(t *testing.T, eventType types.EventType, lambdaBody string) (edgeProxyURL string, distID string) {
 	t.Helper()
 
 	// 1. fake Lambda RIE
@@ -76,7 +84,7 @@ func stage(t *testing.T, lambdaBody string) (edgeProxyURL string, distID string)
 				Quantity: aws.Int32(1),
 				Items: []types.LambdaFunctionAssociation{
 					{
-						EventType:         types.EventTypeViewerRequest,
+						EventType:         eventType,
 						LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1"),
 					},
 				},
@@ -221,5 +229,199 @@ func TestLambdaEdgeAlpha_LambdaError(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, "ReferenceError") {
 		t.Errorf("expected ReferenceError in message, got %q", resp.Error)
+	}
+}
+
+func TestLambdaEdgeAlpha_OriginRequest_Continue(t *testing.T) {
+	lambdaBody := `{
+		"method": "GET",
+		"uri":    "/origin-rewritten",
+		"querystring": "from=origin"
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeOriginRequest, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventOriginRequest,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/original",
+		},
+	})
+
+	if resp.Action != edgefunc.ActionContinue {
+		t.Fatalf("expected continue, got %s (resp=%+v)", resp.Action, resp)
+	}
+	if resp.Request == nil {
+		t.Fatal("expected Request, got nil")
+	}
+	if resp.Request.URI != "/origin-rewritten" {
+		t.Errorf("URI override lost: got %q", resp.Request.URI)
+	}
+}
+
+func TestLambdaEdgeAlpha_OriginRequest_ShortCircuit(t *testing.T) {
+	lambdaBody := `{
+		"status": "403",
+		"statusDescription": "Forbidden"
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeOriginRequest, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventOriginRequest,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/blocked",
+		},
+	})
+
+	if resp.Action != edgefunc.ActionShortCircuit {
+		t.Fatalf("expected short_circuit, got %s (resp=%+v)", resp.Action, resp)
+	}
+	if resp.Response == nil || resp.Response.Status != 403 {
+		t.Errorf("expected status=403, got %+v", resp.Response)
+	}
+}
+
+func TestLambdaEdgeAlpha_OriginRequest_LambdaError(t *testing.T) {
+	lambdaBody := `{
+		"errorMessage": "origin request failed",
+		"errorType":    "OriginRequestError"
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeOriginRequest, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventOriginRequest,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/",
+		},
+	})
+
+	if resp.Action != edgefunc.ActionError {
+		t.Fatalf("expected error action, got %s", resp.Action)
+	}
+}
+
+func TestLambdaEdgeAlpha_OriginResponse_Continue(t *testing.T) {
+	lambdaBody := `{
+		"status": "201",
+		"statusDescription": "Created",
+		"headers": {
+			"x-origin-edge": [{"key":"X-Origin-Edge","value":"mutated"}]
+		}
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeOriginResponse, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventOriginResponse,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/asset.html",
+		},
+		Response: &edgefunc.InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+			Headers: map[string][]string{
+				"Content-Type": {"text/html"},
+			},
+		},
+	})
+
+	if resp.Action != edgefunc.ActionContinue {
+		t.Fatalf("expected continue, got %s (resp=%+v)", resp.Action, resp)
+	}
+	if resp.Response == nil || resp.Response.Status != 201 {
+		t.Fatalf("expected status=201, got %+v", resp.Response)
+	}
+	if got := resp.Response.Headers["X-Origin-Edge"]; len(got) != 1 || got[0] != "mutated" {
+		t.Errorf("expected X-Origin-Edge header, got %v", resp.Response.Headers)
+	}
+}
+
+func TestLambdaEdgeAlpha_OriginResponse_LambdaError(t *testing.T) {
+	lambdaBody := `{
+		"errorMessage": "origin response failed",
+		"errorType":    "OriginResponseError"
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeOriginResponse, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventOriginResponse,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/asset.html",
+		},
+		Response: &edgefunc.InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+		},
+	})
+
+	if resp.Action != edgefunc.ActionError {
+		t.Fatalf("expected error action, got %s", resp.Action)
+	}
+}
+
+func TestLambdaEdgeAlpha_ViewerResponse_Continue(t *testing.T) {
+	lambdaBody := `{
+		"status": "999",
+		"statusDescription": "Ignored",
+		"headers": {
+			"x-viewer-edge": [{"key":"X-Viewer-Edge","value":"mutated"}]
+		}
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeViewerResponse, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventViewerResponse,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/asset.html",
+		},
+		Response: &edgefunc.InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+		},
+	})
+
+	if resp.Action != edgefunc.ActionContinue {
+		t.Fatalf("expected continue, got %s (resp=%+v)", resp.Action, resp)
+	}
+	if resp.Response == nil || resp.Response.Status != 200 {
+		t.Fatalf("expected original status=200, got %+v", resp.Response)
+	}
+	if got := resp.Response.Headers["X-Viewer-Edge"]; len(got) != 1 || got[0] != "mutated" {
+		t.Errorf("expected X-Viewer-Edge header, got %v", resp.Response.Headers)
+	}
+}
+
+func TestLambdaEdgeAlpha_ViewerResponse_LambdaError(t *testing.T) {
+	lambdaBody := `{
+		"errorMessage": "viewer response failed",
+		"errorType":    "ViewerResponseError"
+	}`
+	ep, distID := stageForEvent(t, types.EventTypeViewerResponse, lambdaBody)
+
+	resp := invokeEdgeProxy(t, ep, edgefunc.InvokeRequest{
+		DistributionID: distID,
+		EventType:      edgefunc.EventViewerResponse,
+		Request: edgefunc.InvokeRawRequest{
+			Method: "GET",
+			URI:    "/asset.html",
+		},
+		Response: &edgefunc.InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+		},
+	})
+
+	if resp.Action != edgefunc.ActionError {
+		t.Fatalf("expected error action, got %s", resp.Action)
 	}
 }

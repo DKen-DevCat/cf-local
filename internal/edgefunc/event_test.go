@@ -64,6 +64,175 @@ func TestBuildViewerRequestEvent_GoldenFile(t *testing.T) {
 	}
 }
 
+func TestBuildOriginRequestEvent_GoldenFile(t *testing.T) {
+	// Stub the request id source so the golden file is byte-stable.
+	prev := newCFRequestID
+	newCFRequestID = func() string { return "deadbeefdeadbeefdeadbeefdeadbeef" }
+	defer func() { newCFRequestID = prev }()
+
+	req := InvokeRequest{
+		DistributionID: "EDFDVBD6EXAMPLE",
+		EventType:      EventOriginRequest,
+		Request: InvokeRawRequest{
+			Method:      "GET",
+			URI:         "/picture.jpg",
+			QueryString: "size=large&color=red",
+			ClientIP:    "203.0.113.178",
+			Headers: map[string][]string{
+				"Host":       {"d111111abcdef8.cloudfront.local"},
+				"User-Agent": {"curl/8.0"},
+				"X-Cf-Test":  {"alpha", "beta"},
+			},
+		},
+	}
+	event, err := BuildOriginRequestEvent(req, EdgeFunction{})
+	if err != nil {
+		t.Fatalf("BuildOriginRequestEvent: %v", err)
+	}
+
+	// Use the same encoder settings as the on-wire path so `&` does not
+	// become `&` in the golden diff.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(event); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got := buf.Bytes()
+
+	goldenPath := filepath.Join("testdata", "origin-request.golden.json")
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("event JSON differs from golden\n\n--- got\n%s\n--- want\n%s",
+			string(got), string(want))
+	}
+}
+
+func TestBuildOriginResponseEvent_GoldenFile(t *testing.T) {
+	// Stub the request id source so the golden file is byte-stable.
+	prev := newCFRequestID
+	newCFRequestID = func() string { return "deadbeefdeadbeefdeadbeefdeadbeef" }
+	defer func() { newCFRequestID = prev }()
+
+	req := InvokeRequest{
+		DistributionID: "EDFDVBD6EXAMPLE",
+		EventType:      EventOriginResponse,
+		Request: InvokeRawRequest{
+			Method:      "GET",
+			URI:         "/picture.jpg",
+			QueryString: "size=large&color=red",
+			ClientIP:    "203.0.113.178",
+			Headers: map[string][]string{
+				"Host":       {"d111111abcdef8.cloudfront.local"},
+				"User-Agent": {"curl/8.0"},
+				"X-Cf-Test":  {"alpha", "beta"},
+			},
+		},
+		Response: &InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+			Headers: map[string][]string{
+				"Cache-Control": {"max-age=60"},
+				"Content-Type":  {"image/jpeg"},
+				"X-Origin-Test": {"gamma"},
+			},
+			Body:         "origin body is not exposed",
+			BodyEncoding: "text",
+		},
+	}
+	event, err := BuildOriginResponseEvent(req, EdgeFunction{})
+	if err != nil {
+		t.Fatalf("BuildOriginResponseEvent: %v", err)
+	}
+
+	// Use the same encoder settings as the on-wire path so `&` does not
+	// become `&` in the golden diff.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(event); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got := buf.Bytes()
+
+	goldenPath := filepath.Join("testdata", "origin-response.golden.json")
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("event JSON differs from golden\n\n--- got\n%s\n--- want\n%s",
+			string(got), string(want))
+	}
+}
+
+func TestBuildViewerResponseEvent_GoldenFile(t *testing.T) {
+	// Stub the request id source so the golden file is byte-stable.
+	prev := newCFRequestID
+	newCFRequestID = func() string { return "deadbeefdeadbeefdeadbeefdeadbeef" }
+	defer func() { newCFRequestID = prev }()
+
+	req := InvokeRequest{
+		DistributionID: "EDFDVBD6EXAMPLE",
+		EventType:      EventViewerResponse,
+		Request: InvokeRawRequest{
+			Method:      "GET",
+			URI:         "/picture.jpg",
+			QueryString: "size=large&color=red",
+			ClientIP:    "203.0.113.178",
+			Headers: map[string][]string{
+				"Host":       {"d111111abcdef8.cloudfront.local"},
+				"User-Agent": {"curl/8.0"},
+				"X-Cf-Test":  {"alpha", "beta"},
+			},
+		},
+		Response: &InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+			Headers: map[string][]string{
+				"Cache-Control": {"max-age=60"},
+				"Content-Type":  {"image/jpeg"},
+				"X-Viewer-Test": {"delta"},
+			},
+			Body:         "viewer body is not exposed",
+			BodyEncoding: "text",
+		},
+	}
+	event, err := BuildViewerResponseEvent(req, EdgeFunction{})
+	if err != nil {
+		t.Fatalf("BuildViewerResponseEvent: %v", err)
+	}
+
+	// Use the same encoder settings as the on-wire path so `&` does not
+	// become `&` in the golden diff.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(event); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got := buf.Bytes()
+
+	goldenPath := filepath.Join("testdata", "viewer-response.golden.json")
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("event JSON differs from golden\n\n--- got\n%s\n--- want\n%s",
+			string(got), string(want))
+	}
+}
+
 func TestBuildViewerRequestEvent_HeaderNormalisation(t *testing.T) {
 	prev := newCFRequestID
 	newCFRequestID = func() string { return "x" }
@@ -285,6 +454,209 @@ func TestTranslateViewerRequestResponse_EmptyStatusFallsToContinue(t *testing.T)
 	}
 	if resp.Request == nil || resp.Request.URI != "/keep" {
 		t.Errorf("URI lost: %+v", resp.Request)
+	}
+}
+
+func TestTranslateOriginRequestResponse_Continue_Modified(t *testing.T) {
+	original := InvokeRequest{
+		Request: InvokeRawRequest{
+			Method: "GET",
+			URI:    "/origin-old.html",
+			Headers: map[string][]string{
+				"Host": {"example.com"},
+			},
+		},
+	}
+	rieBody := []byte(`{
+		"method": "GET",
+		"uri":    "/origin-new.html",
+		"headers": {
+			"host": [{"key":"Host","value":"origin.example.com"}],
+			"x-origin": [{"key":"X-Origin","value":"yes"}]
+		}
+	}`)
+	resp, err := TranslateOriginRequestResponse(rieBody, original)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionContinue {
+		t.Fatalf("expected continue, got %s", resp.Action)
+	}
+	if resp.Request == nil {
+		t.Fatal("expected Request, got nil")
+	}
+	if resp.Request.URI != "/origin-new.html" {
+		t.Errorf("URI override lost: got %q", resp.Request.URI)
+	}
+	if resp.Request.Headers["Host"][0] != "origin.example.com" {
+		t.Errorf("Host override lost: %v", resp.Request.Headers)
+	}
+	if _, ok := resp.Request.Headers["X-Origin"]; !ok {
+		t.Errorf("X-Origin missing: %v", resp.Request.Headers)
+	}
+}
+
+func TestTranslateOriginRequestResponse_ShortCircuit(t *testing.T) {
+	rieBody := []byte(`{
+		"status": "302",
+		"statusDescription": "Found",
+		"headers": {
+			"location": [{"key":"Location","value":"https://example.com/origin-login"}]
+		},
+		"body": "redirecting"
+	}`)
+	resp, err := TranslateOriginRequestResponse(rieBody, InvokeRequest{})
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionShortCircuit {
+		t.Fatalf("expected action=%s, got %s", ActionShortCircuit, resp.Action)
+	}
+	if resp.Response == nil {
+		t.Fatal("expected Response, got nil")
+	}
+	if resp.Response.Status != 302 {
+		t.Errorf("expected status=302, got %d", resp.Response.Status)
+	}
+	if got := resp.Response.Headers["Location"]; len(got) != 1 || got[0] != "https://example.com/origin-login" {
+		t.Errorf("expected Location header, got %v", resp.Response.Headers)
+	}
+}
+
+func TestTranslateOriginRequestResponse_LambdaError(t *testing.T) {
+	rieBody := []byte(`{
+		"errorMessage": "RuntimeError: origin request failed",
+		"errorType":    "RuntimeError",
+		"stackTrace":   ["..."]
+	}`)
+	resp, err := TranslateOriginRequestResponse(rieBody, InvokeRequest{})
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionError {
+		t.Fatalf("expected error, got %s", resp.Action)
+	}
+	if resp.Error == "" {
+		t.Error("expected non-empty Error")
+	}
+}
+
+func TestTranslateOriginResponseResponse_Continue_ModifiedStatusHeaders(t *testing.T) {
+	rieBody := []byte(`{
+		"status": "503",
+		"statusDescription": "Service Unavailable",
+		"headers": {
+			"x-origin-response": [{"key":"X-Origin-Response","value":"mutated"}],
+			"content-type": [{"key":"Content-Type","value":"text/plain"}]
+		},
+		"body": "generated by lambda",
+		"bodyEncoding": "text"
+	}`)
+	resp, err := TranslateOriginResponseResponse(rieBody, InvokeRequest{})
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionContinue {
+		t.Fatalf("expected continue, got %s", resp.Action)
+	}
+	if resp.Response == nil {
+		t.Fatal("expected Response, got nil")
+	}
+	if resp.Response.Status != 503 {
+		t.Errorf("expected status=503, got %d", resp.Response.Status)
+	}
+	if resp.Response.StatusDesc != "Service Unavailable" {
+		t.Errorf("expected status_description=Service Unavailable, got %q", resp.Response.StatusDesc)
+	}
+	if got := resp.Response.Headers["X-Origin-Response"]; len(got) != 1 || got[0] != "mutated" {
+		t.Errorf("expected X-Origin-Response header, got %v", resp.Response.Headers)
+	}
+	if resp.Response.Body != "generated by lambda" {
+		t.Errorf("expected generated body, got %q", resp.Response.Body)
+	}
+}
+
+func TestTranslateOriginResponseResponse_LambdaError(t *testing.T) {
+	rieBody := []byte(`{
+		"errorMessage": "RuntimeError: origin response failed",
+		"errorType":    "RuntimeError",
+		"stackTrace":   ["..."]
+	}`)
+	resp, err := TranslateOriginResponseResponse(rieBody, InvokeRequest{})
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionError {
+		t.Fatalf("expected error, got %s", resp.Action)
+	}
+	if resp.Error == "" {
+		t.Error("expected non-empty Error")
+	}
+}
+
+func TestTranslateViewerResponseResponse_StatusBodyIgnoredHeadersApplied(t *testing.T) {
+	original := InvokeRequest{
+		Response: &InvokeRawResponse{
+			Status:     200,
+			StatusDesc: "OK",
+			Headers: map[string][]string{
+				"Cache-Control": {"max-age=60"},
+			},
+			Body:         "original body",
+			BodyEncoding: "text",
+		},
+	}
+	rieBody := []byte(`{
+		"status": "500",
+		"statusDescription": "Internal Server Error",
+		"headers": {
+			"x-viewer-response": [{"key":"X-Viewer-Response","value":"mutated"}]
+		},
+		"body": "lambda body must be ignored",
+		"bodyEncoding": "text"
+	}`)
+	resp, err := TranslateViewerResponseResponse(rieBody, original)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionContinue {
+		t.Fatalf("expected continue, got %s", resp.Action)
+	}
+	if resp.Response == nil {
+		t.Fatal("expected Response, got nil")
+	}
+	if resp.Response.Status != 200 {
+		t.Errorf("expected original status=200, got %d", resp.Response.Status)
+	}
+	if resp.Response.StatusDesc != "OK" {
+		t.Errorf("expected original status_description=OK, got %q", resp.Response.StatusDesc)
+	}
+	if got := resp.Response.Headers["X-Viewer-Response"]; len(got) != 1 || got[0] != "mutated" {
+		t.Errorf("expected X-Viewer-Response header, got %v", resp.Response.Headers)
+	}
+	if resp.Response.Body != "" {
+		t.Errorf("expected viewer-response body to be ignored, got %q", resp.Response.Body)
+	}
+	if resp.Response.BodyEncoding != "" {
+		t.Errorf("expected viewer-response body_encoding to be ignored, got %q", resp.Response.BodyEncoding)
+	}
+}
+
+func TestTranslateViewerResponseResponse_LambdaError(t *testing.T) {
+	rieBody := []byte(`{
+		"errorMessage": "RuntimeError: viewer response failed",
+		"errorType":    "RuntimeError",
+		"stackTrace":   ["..."]
+	}`)
+	resp, err := TranslateViewerResponseResponse(rieBody, InvokeRequest{})
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if resp.Action != ActionError {
+		t.Fatalf("expected error, got %s", resp.Action)
+	}
+	if resp.Error == "" {
+		t.Error("expected non-empty Error")
 	}
 }
 

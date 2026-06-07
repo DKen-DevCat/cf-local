@@ -61,7 +61,7 @@ func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConf
 
 	hasLambdaEdge := false
 	for _, b := range behaviors {
-		if b.LambdaEdgeViewerRequest {
+		if b.LambdaEdgeViewerRequest || b.LambdaEdgeOriginRequest {
 			hasLambdaEdge = true
 			break
 		}
@@ -96,6 +96,10 @@ type behaviorView struct {
 	// `js_content edge.viewerRequest;` のみを置き、cache + proxy_pass は
 	// `@cf_le_<sanpolicy>_forward` named location 側に出す。
 	LambdaEdgeViewerRequest bool
+	// LambdaEdgeOriginRequest は Phase 4-E task-8。origin-request EventType の
+	// LambdaFunctionAssociation を持つ behavior は true。cache hop の
+	// proxy_pass を inner-B 直通ではなく `/_cf_or_<san>` inner-A に向ける。
+	LambdaEdgeOriginRequest bool
 	// SanitizedPolicyID は LambdaEdgeViewerRequest が true のときに forward
 	// named location 名 (`@cf_le_<san>_forward`) を組み立てる用途で使う。
 	// 既存 InnerPrefix 末尾の sanitized id と同じ。
@@ -106,6 +110,11 @@ type innerView struct {
 	Location     string // "/_cf_inner_<sanitized-policy-id>/"
 	PolicyID     string // raw
 	UpstreamName string // origin_<sanitized-origin-id>
+	// LambdaEdgeOriginRequest は、この policy を参照する behavior のうち
+	// 1 つでも origin-request association を持つと true。inner-A location
+	// (`/_cf_or_<san>/`) を policy 単位で dedup して出すために使う。
+	LambdaEdgeOriginRequest bool
+	SanitizedPolicyID       string
 }
 
 func buildOriginViews(origins *types.Origins) ([]originView, error) {
@@ -159,7 +168,7 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 	var behaviors []behaviorView
 	inners := map[string]innerView{}
 
-	addInner := func(policyID, originID, sanPolicy string) error {
+	addInner := func(policyID, originID, sanPolicy string, originRequest bool) error {
 		upstream, err := originUpstreamName(originID)
 		if err != nil {
 			return err
@@ -175,12 +184,18 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 					policyID, existing.UpstreamName, upstream,
 				)
 			}
+			if originRequest {
+				existing.LambdaEdgeOriginRequest = true
+				inners[sanPolicy] = existing
+			}
 			return nil
 		}
 		inners[sanPolicy] = innerView{
-			Location:     "/_cf_inner_" + sanPolicy + "/",
-			PolicyID:     policyID,
-			UpstreamName: upstream,
+			Location:                "/_cf_inner_" + sanPolicy + "/",
+			PolicyID:                policyID,
+			UpstreamName:            upstream,
+			LambdaEdgeOriginRequest: originRequest,
+			SanitizedPolicyID:       sanPolicy,
 		}
 		return nil
 	}
@@ -207,16 +222,19 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 				comment += fmt.Sprintf(", ResponseHeadersPolicyId=%s", rhpID)
 			}
 			comment += ")."
+			viewerRequest := hasViewerRequestAssociation(b.LambdaFunctionAssociations)
+			originRequest := hasOriginRequestAssociation(b.LambdaFunctionAssociations)
 			behaviors = append(behaviors, behaviorView{
 				Comment:                 comment,
 				Location:                loc,
 				PolicyID:                policyID,
 				InnerPrefix:             "/_cf_inner_" + san,
 				HeaderDirectives:        lookupResponseHeaders(rhp, rhpID),
-				LambdaEdgeViewerRequest: hasViewerRequestAssociation(b.LambdaFunctionAssociations),
+				LambdaEdgeViewerRequest: viewerRequest,
+				LambdaEdgeOriginRequest: originRequest,
 				SanitizedPolicyID:       san,
 			})
-			if err := addInner(policyID, originID, san); err != nil {
+			if err := addInner(policyID, originID, san, originRequest); err != nil {
 				return nil, nil, fmt.Errorf("CacheBehaviors[%d]: %w", i, err)
 			}
 		}
@@ -235,16 +253,19 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 		defaultComment += fmt.Sprintf(", ResponseHeadersPolicyId=%s", defaultRHPID)
 	}
 	defaultComment += ")."
+	defaultViewerRequest := hasViewerRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
+	defaultOriginRequest := hasOriginRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
 	behaviors = append(behaviors, behaviorView{
 		Comment:                 defaultComment,
 		Location:                "/",
 		PolicyID:                defaultPolicyID,
 		InnerPrefix:             "/_cf_inner_" + defaultSan,
 		HeaderDirectives:        lookupResponseHeaders(rhp, defaultRHPID),
-		LambdaEdgeViewerRequest: hasViewerRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations),
+		LambdaEdgeViewerRequest: defaultViewerRequest,
+		LambdaEdgeOriginRequest: defaultOriginRequest,
 		SanitizedPolicyID:       defaultSan,
 	})
-	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan); err != nil {
+	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan, defaultOriginRequest); err != nil {
 		return nil, nil, err
 	}
 
@@ -318,6 +339,21 @@ func hasViewerRequestAssociation(lfa *types.LambdaFunctionAssociations) bool {
 	return false
 }
 
+// hasOriginRequestAssociation は Phase 4-E task-8。指定の
+// LambdaFunctionAssociations に EventType=origin-request が含まれていれば
+// true。
+func hasOriginRequestAssociation(lfa *types.LambdaFunctionAssociations) bool {
+	if lfa == nil {
+		return false
+	}
+	for _, item := range lfa.Items {
+		if item.EventType == types.EventTypeOriginRequest {
+			return true
+		}
+	}
+	return false
+}
+
 func writeConfHeader(b *bytes.Buffer, hasLambdaEdge bool, resolver string) {
 	b.WriteString(`# Generated by cf-local — do not edit by hand.
 
@@ -327,10 +363,10 @@ js_import ttl from ttl.js;
 js_set $cf_cache_key ck.forNginx;
 `)
 	if hasLambdaEdge {
-		// Phase 4-D 4d-7: edge.js は viewer-request 経路でのみ import。
+		// Phase 4-D/4-E: edge.js は Lambda@Edge request hook 経路で import。
 		// edge.js は nginx 変数を読むだけ (write 無し) なので js_var の
 		// 事前宣言は要らない。$cf_distribution_id / $cf_edge_proxy /
-		// $cf_le_forward は location 内 set directive で渡る。
+		// $cf_le_forward などは location 内 set directive で渡る。
 		b.WriteString("js_import edge from edge.js;\n")
 		// REV-11 (Phase 4-D 実機検証): njs `ngx.fetch` は host を name で
 		// 解決するときに nginx の `resolver` directive を必要とする。
@@ -395,11 +431,20 @@ func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerV
 	b.WriteString("}\n\n")
 
 	fmt.Fprintf(b, "server {\n    listen unix:%s;\n\n", innerSocketPath)
-	for i, inner := range inners {
-		if i > 0 {
+	firstInnerLocation := true
+	for _, inner := range inners {
+		if inner.LambdaEdgeOriginRequest {
+			if !firstInnerLocation {
+				b.WriteByte('\n')
+			}
+			writeOriginRequestLocation(b, inner, distributionID, edgeProxyURL)
+			firstInnerLocation = false
+		}
+		if !firstInnerLocation {
 			b.WriteByte('\n')
 		}
 		writeInnerLocation(b, inner)
+		firstInnerLocation = false
 	}
 	b.WriteString("}\n")
 }
@@ -480,6 +525,10 @@ func forwardLocationName(sanitizedPolicyID string) string {
 	return "@cf_le_" + sanitizedPolicyID + "_forward"
 }
 
+func originRequestPrefix(sanitizedPolicyID string) string {
+	return "/_cf_or_" + sanitizedPolicyID
+}
+
 // writeOuterLocationBody は cache + proxy_pass の中身を出す。
 // writeOuterLocation と writeForwardLocation の両方から呼ばれる。
 // 出力はインデント `        ` (8 space) で揃え、closing brace は呼び出し側が打つ。
@@ -510,12 +559,27 @@ func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView, useUpdatedURI boo
 	if useUpdatedURI {
 		uriExpr = "$uri$is_args$args"
 	}
-	fmt.Fprintf(b, "        proxy_pass http://self%s%s;\n", beh.InnerPrefix, uriExpr)
+	targetPrefix := beh.InnerPrefix
+	if beh.LambdaEdgeOriginRequest {
+		targetPrefix = originRequestPrefix(beh.SanitizedPolicyID)
+	}
+	fmt.Fprintf(b, "        proxy_pass http://self%s%s;\n", targetPrefix, uriExpr)
 	b.WriteString(`        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 `)
+}
+
+func writeOriginRequestLocation(b *bytes.Buffer, inner innerView, distributionID, edgeProxyURL string) {
+	prefix := originRequestPrefix(inner.SanitizedPolicyID)
+	fmt.Fprintf(b, "    location %s/ {\n", prefix)
+	fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", sanitizeNginxSetValue(distributionID))
+	fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", sanitizeNginxSetValue(edgeProxyURL))
+	fmt.Fprintf(b, "        set $cf_le_origin_inner_prefix %q;\n", "/_cf_inner_"+inner.SanitizedPolicyID)
+	fmt.Fprintf(b, "        set $cf_le_or_prefix %q;\n", prefix)
+	b.WriteString("        js_content edge.runOriginRequest;\n")
+	b.WriteString("    }\n")
 }
 
 func writeInnerLocation(b *bytes.Buffer, inner innerView) {
