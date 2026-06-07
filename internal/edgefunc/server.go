@@ -43,6 +43,34 @@ type RIEInvoker interface {
 	Invoke(ctx context.Context, endpoint string, payload []byte) ([]byte, error)
 }
 
+type eventBuilder func(InvokeRequest, EdgeFunction) (*CloudFrontEvent, error)
+
+type responseTranslator func([]byte, InvokeRequest) (*InvokeResponse, error)
+
+type eventHandler struct {
+	builder    eventBuilder
+	translator responseTranslator
+}
+
+var eventHandlers = map[string]eventHandler{
+	EventViewerRequest: {
+		builder:    BuildViewerRequestEvent,
+		translator: TranslateViewerRequestResponse,
+	},
+	EventOriginRequest: {
+		builder:    BuildOriginRequestEvent,
+		translator: TranslateOriginRequestResponse,
+	},
+	EventOriginResponse: {
+		builder:    BuildOriginResponseEvent,
+		translator: TranslateOriginResponseResponse,
+	},
+	EventViewerResponse: {
+		builder:    BuildViewerResponseEvent,
+		translator: TranslateViewerResponseResponse,
+	},
+}
+
 // ServerConfig groups the wiring parameters for NewServer.
 type ServerConfig struct {
 	Lookup    Lookup
@@ -146,6 +174,11 @@ func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 // translate response. Any error short-circuits to Action=error so njs can
 // fail-open and serve the request without Lambda involvement.
 func (s *Server) invoke(ctx context.Context, req InvokeRequest) *InvokeResponse {
+	handler, ok := eventHandlers[req.EventType]
+	if !ok {
+		return &InvokeResponse{Action: ActionError, Error: "unsupported event_type: " + req.EventType}
+	}
+
 	fn, ok := s.resolveFunction(ctx, req.DistributionID, req.EventType)
 	if !ok {
 		// No binding configured for this event_type: pass through.
@@ -160,7 +193,7 @@ func (s *Server) invoke(ctx context.Context, req InvokeRequest) *InvokeResponse 
 		return &InvokeResponse{Action: ActionError, Error: "no RIE endpoint mapped for function ARN"}
 	}
 
-	event, err := BuildViewerRequestEvent(req, fn)
+	event, err := handler.builder(req, fn)
 	if err != nil {
 		s.logger.Error("edge_proxy_build_event_failed",
 			slog.String("distribution_id", req.DistributionID),
@@ -184,7 +217,7 @@ func (s *Server) invoke(ctx context.Context, req InvokeRequest) *InvokeResponse 
 		return &InvokeResponse{Action: ActionError, Error: "invoke RIE: " + err.Error()}
 	}
 
-	resp, err := TranslateViewerRequestResponse(out, req)
+	resp, err := handler.translator(out, req)
 	if err != nil {
 		s.logger.Error("edge_proxy_translate_response_failed", slog.String("error", err.Error()))
 		return &InvokeResponse{Action: ActionError, Error: "translate response: " + err.Error()}

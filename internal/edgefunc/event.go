@@ -352,22 +352,25 @@ func distributionDomainName(id string) string {
 // "errorType": "...", "stackTrace": [...]}) when the function panics. We
 // surface that as Action=error.
 func TranslateViewerRequestResponse(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
+	return translateRequestHook(rieBody, original)
+}
+
+// TranslateOriginRequestResponse decodes an origin-request Lambda result.
+// origin-request is also a request hook, so it follows the same continue /
+// short-circuit / error rules as viewer-request.
+func TranslateOriginRequestResponse(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
+	return translateRequestHook(rieBody, original)
+}
+
+func translateRequestHook(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
 	if len(rieBody) == 0 {
 		return nil, errors.New("RIE response body is empty")
 	}
 
 	// Detect Lambda error envelope first. The RIE forwards function
 	// runtime errors with errorMessage/errorType keys.
-	var maybeErr struct {
-		ErrorMessage string `json:"errorMessage"`
-		ErrorType    string `json:"errorType"`
-	}
-	if err := json.Unmarshal(rieBody, &maybeErr); err == nil && maybeErr.ErrorMessage != "" {
-		msg := maybeErr.ErrorMessage
-		if maybeErr.ErrorType != "" {
-			msg = maybeErr.ErrorType + ": " + msg
-		}
-		return &InvokeResponse{Action: ActionError, Error: msg}, nil
+	if resp, ok := lambdaErrorResponse(rieBody); ok {
+		return resp, nil
 	}
 
 	// Success path: the function's return value, which CloudFront treats
@@ -405,6 +408,72 @@ func TranslateViewerRequestResponse(rieBody []byte, original InvokeRequest) (*In
 	}
 	merged := mergeRequest(original.Request, modified)
 	return &InvokeResponse{Action: ActionContinue, Request: &merged}, nil
+}
+
+// TranslateOriginResponseResponse decodes an origin-response Lambda result.
+// Lambda error envelopes map to Action=error. Successful results are flattened
+// as response mutations; njs での適用（cache 前格納）の最終形は phase-4f で確定.
+func TranslateOriginResponseResponse(rieBody []byte, _ InvokeRequest) (*InvokeResponse, error) {
+	if len(rieBody) == 0 {
+		return nil, errors.New("RIE response body is empty")
+	}
+	if resp, ok := lambdaErrorResponse(rieBody); ok {
+		return resp, nil
+	}
+
+	var modified CloudFrontResponse
+	if err := json.Unmarshal(rieBody, &modified); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	flat, err := flattenResponse(modified)
+	if err != nil {
+		return nil, err
+	}
+	return &InvokeResponse{Action: ActionContinue, Response: flat}, nil
+}
+
+// TranslateViewerResponseResponse decodes a viewer-response Lambda result.
+// Lambda error envelopes map to Action=error. viewer-response は status/body
+// 不変（AWS 制約）、transient 適用は phase-4f で確定.
+func TranslateViewerResponseResponse(rieBody []byte, original InvokeRequest) (*InvokeResponse, error) {
+	if len(rieBody) == 0 {
+		return nil, errors.New("RIE response body is empty")
+	}
+	if resp, ok := lambdaErrorResponse(rieBody); ok {
+		return resp, nil
+	}
+	if original.Response == nil {
+		return nil, errors.New("original response snapshot is required for viewer-response")
+	}
+
+	var modified CloudFrontResponse
+	if err := json.Unmarshal(rieBody, &modified); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	flat := &InvokeRawResponse{
+		Status:     original.Response.Status,
+		StatusDesc: original.Response.StatusDesc,
+	}
+	if len(modified.Headers) > 0 {
+		flat.Headers = flattenHeaders(modified.Headers)
+	}
+	return &InvokeResponse{Action: ActionContinue, Response: flat}, nil
+}
+
+func lambdaErrorResponse(rieBody []byte) (*InvokeResponse, bool) {
+	var maybeErr struct {
+		ErrorMessage string `json:"errorMessage"`
+		ErrorType    string `json:"errorType"`
+	}
+	if err := json.Unmarshal(rieBody, &maybeErr); err == nil && maybeErr.ErrorMessage != "" {
+		msg := maybeErr.ErrorMessage
+		if maybeErr.ErrorType != "" {
+			msg = maybeErr.ErrorType + ": " + msg
+		}
+		return &InvokeResponse{Action: ActionError, Error: msg}, true
+	}
+	return nil, false
 }
 
 // flattenResponse converts the CloudFront response shape (status as
