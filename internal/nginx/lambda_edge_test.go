@@ -27,6 +27,11 @@ import (
 //   - cache hop proxy_pass goes to `/_cf_or_<san>` instead of inner-B
 //   - inner server carries `/_cf_or_<san>/` with `js_content edge.runOriginRequest`
 //   - inner-B `/_cf_inner_<san>/` remains the origin proxy location
+//
+// Phase 4-F task-2 adds origin-response topology generation:
+//   - cache hop proxy_pass goes to `/_cf_oresp_<san>` when origin-response is attached
+//   - inner-C carries `/_cf_oresp_<san>/` with `js_content edge.runOriginResponse`
+//   - inner-C fetches inner-A when origin-request is also attached, otherwise inner-B
 
 func newBaseLoadResult() *config.LoadResult {
 	return &config.LoadResult{
@@ -62,6 +67,19 @@ func newBaseLoadResult() *config.LoadResult {
 		DistributionID: "EDFDVBD6EXAMPLE",
 		EdgeProxyURL:   "http://edge-proxy:4569",
 	}
+}
+
+func nginxLocationBlock(t *testing.T, conf, marker string) string {
+	t.Helper()
+	start := strings.Index(conf, marker)
+	if start < 0 {
+		t.Fatalf("missing location marker %q:\n%s", marker, conf)
+	}
+	end := strings.Index(conf[start:], "\n    }\n")
+	if end < 0 {
+		t.Fatalf("could not find end of location marker %q", marker)
+	}
+	return conf[start : start+end]
 }
 
 func TestRender_LambdaEdge_DefaultCacheBehavior(t *testing.T) {
@@ -283,6 +301,107 @@ func TestRender_LambdaEdge_OriginRequest_DefaultCacheBehavior(t *testing.T) {
 		"js_header_filter ttl.computeAndInject;",
 	}
 	for _, want := range wantSubs {
+		if !strings.Contains(conf, want) {
+			t.Errorf("rendered conf missing %q\n%s", want, conf)
+		}
+	}
+}
+
+func TestRender_LambdaEdge_OriginResponse_DefaultCacheBehavior(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeOriginResponse,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:mutate-origin-response:1"),
+			},
+		},
+	}
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+	if !strings.Contains(conf, "js_import edge from edge.js;") {
+		t.Errorf("expected edge.js import for origin-response:\n%s", conf)
+	}
+	if !strings.Contains(conf, "resolver 127.0.0.11 valid=30s ipv6=off;") {
+		t.Errorf("expected resolver directive for origin-response:\n%s", conf)
+	}
+
+	outerBlock := nginxLocationBlock(t, conf, "    location / {\n")
+	if !strings.Contains(outerBlock, "proxy_pass http://self/_cf_oresp_E_CP1$request_uri;") {
+		t.Errorf("origin-response cache hop must proxy to inner-C:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "proxy_pass http://self/_cf_inner_E_CP1$request_uri;") {
+		t.Errorf("origin-response cache hop must not bypass inner-C:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "proxy_pass http://self/_cf_or_E_CP1$request_uri;") {
+		t.Errorf("origin-response-only cache hop must not proxy to inner-A:\n%s", outerBlock)
+	}
+
+	originResponseBlock := nginxLocationBlock(t, conf, "    location /_cf_oresp_E_CP1/ {\n")
+	wantSubs := []string{
+		`set $cf_distribution_id "EDFDVBD6EXAMPLE";`,
+		`set $cf_edge_proxy "http://edge-proxy:4569";`,
+		`set $cf_le_inner_socket "/run/cf-local-inner.sock";`,
+		`set $cf_le_oresp_prefix "/_cf_oresp_E_CP1";`,
+		`set $cf_le_oresp_fetch_prefix "/_cf_inner_E_CP1";`,
+		"js_content edge.runOriginResponse;",
+	}
+	for _, want := range wantSubs {
+		if !strings.Contains(originResponseBlock, want) {
+			t.Errorf("origin-response location missing %q\n%s", want, originResponseBlock)
+		}
+	}
+	if !strings.Contains(conf, "location /_cf_inner_E_CP1/ {") {
+		t.Errorf("missing inner-B location for origin-response fetch target:\n%s", conf)
+	}
+	if strings.Contains(conf, "location /_cf_or_E_CP1/ {") {
+		t.Errorf("origin-response-only behavior must not emit inner-A:\n%s", conf)
+	}
+}
+
+func TestRender_LambdaEdge_OriginRequestAndOriginResponse_DefaultCacheBehavior(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeOriginRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:rewrite:1"),
+			},
+			{
+				EventType:         types.EventTypeOriginResponse,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:mutate-origin-response:1"),
+			},
+		},
+	}
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	outerBlock := nginxLocationBlock(t, conf, "    location / {\n")
+	if !strings.Contains(outerBlock, "proxy_pass http://self/_cf_oresp_E_CP1$request_uri;") {
+		t.Errorf("origin-response must be the outermost cache hop:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "proxy_pass http://self/_cf_or_E_CP1$request_uri;") {
+		t.Errorf("outer cache hop must not stop at origin-request when origin-response exists:\n%s", outerBlock)
+	}
+
+	originResponseBlock := nginxLocationBlock(t, conf, "    location /_cf_oresp_E_CP1/ {\n")
+	if !strings.Contains(originResponseBlock, `set $cf_le_oresp_fetch_prefix "/_cf_or_E_CP1";`) {
+		t.Errorf("origin-response inner-C must fetch through inner-A when origin-request exists:\n%s", originResponseBlock)
+	}
+	for _, want := range []string{
+		"location /_cf_or_E_CP1/ {",
+		"js_content edge.runOriginRequest;",
+		"location /_cf_inner_E_CP1/ {",
+		"js_header_filter ttl.computeAndInject;",
+		"location /_cf_oresp_E_CP1/ {",
+		"js_content edge.runOriginResponse;",
+	} {
 		if !strings.Contains(conf, want) {
 			t.Errorf("rendered conf missing %q\n%s", want, conf)
 		}
