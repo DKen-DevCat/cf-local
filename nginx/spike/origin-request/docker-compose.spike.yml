@@ -1,0 +1,24 @@
+# phase-4e task-1 spike stack. Run from this directory:
+#   docker compose -f docker-compose.spike.yml up -d
+# Uses the already-built cf-local-nginx image (has njs), overriding its
+# entrypoint to run nginx directly with the spike config.
+services:
+  spike-nginx:
+    image: cf-local-nginx:latest
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    ports:
+      - "8088:8080"
+    volumes:
+      - ./spike.nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./spike.js:/etc/nginx/njs/spike.js:ro
+    depends_on:
+      - mock-origin
+      - mock-edge-proxy
+
+  mock-origin:
+    image: hashicorp/http-echo
+    command: ["-text=ORIGIN-BODY-v1", "-listen=:5000"]
+
+  mock-edge-proxy:
+    image: hashicorp/http-echo
+    command: ['-text={"action":"continue"}', "-listen=:5000"]
