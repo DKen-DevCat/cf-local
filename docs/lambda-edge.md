@@ -281,13 +281,46 @@ header name は lowercase key、値は `{ key, value }` の配列にする。
 `response.status` / `response.statusDescription` も同じ response object 上で
 改変できる。cf-local Phase 4-F では `body` / `bodyEncoding` の改変は反映しない。
 
+## viewer-response
+
+viewer-response は viewer に応答を返す**直前**に、cache HIT / MISS の両方で
+発火する。改変は **transient**（cache には書き込まれない）で、origin-response と
+違い同じ cache key の 2 回目以降 (HIT) でも毎回フックが走る。
+
+cf-local では viewer-response が **最外段 transient hop** になる。outer location は
+`js_content edge.runViewerResponse;` のみを持ち（`proxy_cache` を持たない）、cache +
+viewer-request + origin chain は inner unix socket server の `/_cf_vr_fwd_<san>/` に
+隠す。`runViewerResponse` はそれを `ngx.fetch` で取得し、viewer-response Lambda で
+**headers のみ** 改変してから `r.return()` する。outer に `proxy_cache` が無いので
+改変は cache に乗らない。
+
+AWS 仕様により viewer-response は **status / body を変更できない**（cf-local は
+`TranslateViewerResponseResponse` で original status を強制し、headers だけ採用する）。
+
+viewer-response 改変例:
+
+```js
+exports.handler = (event, context, callback) => {
+    const response = event.Records[0].cf.response;
+
+    response.headers['x-viewer-processed'] = [
+        { key: 'X-Viewer-Processed', value: 'cf-local' },
+    ];
+    response.headers['timing-allow-origin'] = [
+        { key: 'Timing-Allow-Origin', value: '*' },
+    ];
+
+    callback(null, response);
+};
+```
+
 ## 制約
 
 Phase 4-F で確定している主な制約:
 
 | 項目 | 制限 | 対応積みタスク |
 |---|---|---|
-| 4 フック | viewer-request + origin-request + origin-response まで。viewer-response は後続タスク | `BL-LE1` 部分解消 |
+| 4 フック | viewer-request + origin-request + origin-response + viewer-response の 4 フック完全対応 (M4 達成) | `BL-LE1` 解消 |
 | `include_body: true` | 未対応 (request body は Lambda に渡らない) | `BL-LE2` |
 | request header 改変 | viewer-request / origin-request とも origin に反映されない | `BL-LE5` |
 | request method 改変 | 反映されない | `BL-LE6` |
@@ -307,14 +340,14 @@ B1-B3 由来の制約:
 - `docker logs <edge-proxy container>` を確認。`edge_proxy_lookup_failed` が出ていれば cf-local control plane に到達できていない。
 - `edge_proxy_missing_rie_endpoint` が出ていれば `CF_LOCAL_LAMBDA_FUNCTIONS` の name 部と Lambda 関数 ARN の name セグメントが一致していない可能性。
 - file-based loader で登録した distribution では Lambda@Edge bridge は有効化されない。Terraform / aws CLI で API 登録すること。
-- origin-request / origin-response は cache MISS 時のみ発火する。同じ cache key の 2 回目以降は HIT なら呼ばれない。
+- origin-request / origin-response は cache MISS 時のみ発火する。同じ cache key の 2 回目以降は HIT なら呼ばれない。viewer-request / viewer-response は HIT / MISS の両方で発火する。
 
 ### Lambda コードを更新したのに反映されない
 
 Lambda 関数のコードは volume mount している (`/var/task:ro`)。コード自体の更新は live reflected されるが、Node.js の require cache が効くハンドラだと再起動が必要なケースがある:
 
 ```bash
-docker compose -f examples/lambda-edge-full/docker-compose.yml restart lambda-auth lambda-origin-rewrite lambda-origin-response
+docker compose -f examples/lambda-edge-full/docker-compose.yml restart lambda-auth lambda-origin-rewrite lambda-origin-response lambda-viewer-response
 ```
 
 ## 参考資料
