@@ -89,6 +89,12 @@ resource "aws_cloudfront_distribution" "lambda_edge_full" {
       lambda_arn   = "arn:aws:lambda:us-east-1:000000000000:function:origin-response:1"
       include_body = false
     }
+
+    lambda_function_association {
+      event_type   = "viewer-response"
+      lambda_arn   = "arn:aws:lambda:us-east-1:000000000000:function:viewer-response:1"
+      include_body = false
+    }
   }
 
   viewer_certificate {
