@@ -534,7 +534,7 @@ func writeOuterLocation(b *bytes.Buffer, beh behaviorView) {
 	// `# %s\n` で出力する直前にも改行を空白へ置換する。
 	fmt.Fprintf(b, "    # %s\n", sanitizeCommentText(beh.Comment))
 	fmt.Fprintf(b, "    location %s {\n", beh.Location)
-	writeOuterLocationBody(b, beh, false)
+	writeOuterLocationBody(b, beh, false, "")
 	b.WriteString("    }\n")
 }
 
@@ -609,7 +609,7 @@ func sanitizeNginxSetValue(s string) string {
 func writeForwardLocation(b *bytes.Buffer, beh behaviorView) {
 	fmt.Fprintf(b, "    location %s {\n", forwardLocationName(beh.SanitizedPolicyID))
 	b.WriteString("        internal;\n")
-	writeOuterLocationBody(b, beh, true)
+	writeOuterLocationBody(b, beh, true, "")
 	b.WriteString("    }\n")
 }
 
@@ -620,16 +620,23 @@ func writeForwardLocation(b *bytes.Buffer, beh behaviorView) {
 func writeViewerResponseInnerForward(b *bytes.Buffer, beh behaviorView, distributionID, edgeProxyURL string) {
 	prefix := viewerResponseFwdPrefix(beh.SanitizedPolicyID)
 	fmt.Fprintf(b, "    location %s/ {\n", prefix)
+	// runViewerResponse が ngx.fetch で前置した `/_cf_vr_fwd_<san>` prefix を strip
+	// して downstream (viewer-request / cache_key / origin-request / origin) が元
+	// クライアント URI を見るようにする。`rewrite ... break` は後続の
+	// rewrite-module directive (set 等) を停止させるので、必要な set はすべて
+	// rewrite より前に出す。SanitizedPolicyID は英数字 + `_` のみで正規表現メタ
+	// 文字は混入しない。
 	if beh.LambdaEdgeViewerRequest {
 		fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", sanitizeNginxSetValue(distributionID))
 		fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", sanitizeNginxSetValue(edgeProxyURL))
 		fmt.Fprintf(b, "        set $cf_le_forward %q;\n", forwardLocationName(beh.SanitizedPolicyID))
+		fmt.Fprintf(b, "        rewrite ^%s(/.*)$ $1 break;\n", prefix)
 		b.WriteString("        js_content edge.viewerRequest;\n")
 		b.WriteString("    }\n\n")
 		writeForwardLocation(b, beh)
 		return
 	}
-	writeOuterLocationBody(b, beh, true)
+	writeOuterLocationBody(b, beh, true, prefix)
 	b.WriteString("    }\n")
 }
 
@@ -655,9 +662,16 @@ func originResponsePrefix(sanitizedPolicyID string) string {
 //
 // useUpdatedURI=true のとき proxy_pass は `$uri$is_args$args` で書く (REV-12)。
 // false なら `$request_uri` (元クライアント値、URL encode 保持)。
-func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView, useUpdatedURI bool) {
-	fmt.Fprintf(b, "        set $cf_policy_id %q;\n\n", beh.PolicyID)
-	b.WriteString(`        proxy_cache cf_cache;
+func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView, useUpdatedURI bool, stripPrefix string) {
+	fmt.Fprintf(b, "        set $cf_policy_id %q;\n", beh.PolicyID)
+	if stripPrefix != "" {
+		// viewer-response forward prefix を strip して downstream に元 URI を見せる。
+		// set の後に置く: `rewrite ... break` は後続の rewrite-module directive を
+		// 止めるため、set より前に出すと変数が未設定になる。
+		fmt.Fprintf(b, "        rewrite ^%s(/.*)$ $1 break;\n", stripPrefix)
+	}
+	b.WriteString(`
+        proxy_cache cf_cache;
         proxy_cache_key $cf_cache_key;
         proxy_cache_valid 200 86400s;
         proxy_cache_valid 404 10s;
