@@ -383,8 +383,13 @@ async function runOriginResponse(r) {
         r.return(status, originBody);
     };
 
+    // runOriginRequest と対称: 内部 prefix (/_cf_oresp_<san>/) を Lambda payload に
+    // 漏らさないよう、stripped path (tail) を request.uri として渡す。
+    const request = snapshotRequest(r);
+    request.uri = tail;
+
     await runEdgeFunction(r, 'origin-response', {
-        payloadExtra: { response: snapshot },
+        payloadExtra: { request: request, response: snapshot },
         failOpen: function() {
             returnOriginResponse(originStatus);
         },
