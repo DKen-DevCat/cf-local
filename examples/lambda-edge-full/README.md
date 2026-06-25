@@ -89,8 +89,15 @@ curl -i -H 'Authorization: Bearer x' http://localhost:8080/origin-response-demo
 
 # Repeat the same cache key. X-Cache-Status should move MISS -> HIT, and
 # X-Origin-Processed: cf-local should appear in both responses.
+# Also check X-CF-OResp-Seen-URI: it must be the clean path (/origin-response-demo).
 curl -i -H 'Authorization: Bearer x' http://localhost:8080/origin-response-demo
 ```
+
+The origin-response response also carries `X-CF-OResp-Seen-URI`, the
+`cf.request.uri` the origin-response Lambda received. Confirm its value is the
+clean request path (e.g. `/origin-response-demo`) and does NOT contain a
+`/_cf_oresp_` prefix; this verifies the origin-response Lambda receives the
+normalized URI (review finding G1).
 
 The echo origin response should show the URI/query received by the origin. For
 `/origin-old`, the origin-request Lambda changes the request to `/origin-new`
@@ -121,6 +128,8 @@ the repeated request should show `X-Cache-Status: HIT` while keeping
 
 - receives `event.Records[0].cf.response`
 - adds `X-Origin-Processed: cf-local` in CloudFront header format
+- echoes `X-CF-OResp-Seen-URI` = the `cf.request.uri` it received, used by the
+  walkthrough to confirm URI normalization
 - calls `callback(null, response)` so modified status/headers are cached
 - leaves body untouched because origin-response does not receive origin body
 

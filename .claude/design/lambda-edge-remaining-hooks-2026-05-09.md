@@ -210,3 +210,26 @@ F1=A により、phase-4e は **viewer-request + origin-request の request hook
 - §4.2 付近に「origin-request は inner-hop `js_content` topology。outer `proxy_cache` の MISS 時のみ発火し、continue は `internalRedirect` で origin へ進む」を追記する。
 - Lambda@Edge の制限一覧に「phase-4e は viewer-request + origin-request まで。origin-response / viewer-response は phase-4f」「origin-request の `request.origin` object 省略 = dynamic origin selection 非対応」「request header 改変は request hooks 共通で未反映」を追記する。
 - cache-write 設計に「origin-response の Lambda 改変結果を cache に入れる場合、inner hop で改変済み response を作って outer `proxy_cache` に見せる。詳細は `BL-LE-Cache1` / phase-4f」を追記する。
+
+## 品質レビュー追補 (2026-06-25): origin-response URI 正規化の回帰防止と被覆限界
+
+`nginx/njs/edge.js` の `runOriginResponse` に対するレビューで見つかった regression と、その回帰防止策・被覆の限界を記録する。
+
+- **G1 (修正済)**: `runOriginResponse` が Lambda payload の `request.uri` に内部 prefix (`/_cf_oresp_<san>/`) を漏らしていた regression を修正した。`snapshotRequest(r)` を tail で上書きして、`runOriginRequest` と対称化することで、origin-response Lambda が受け取る `cf.request.uri` を prefix 無しの正規 path に揃えた。
+
+### 被覆限界 (silent cap を避けるため明記)
+
+この njs ランタイム経路 (`runOriginResponse` → `payload.request.uri`) には **自動 CI 被覆が無い**。理由は以下のとおり。
+
+- nginx/njs の `.test.js` (`cache_key` / `ttl` / `cache_control`) は `tests/*.sh` が HTTP 駆動する nginx `js_content` エンドポイント経由で動くもので、Node 単体実行できる `edge.js` の unit test の前例は無い。
+- CI (`.github/workflows`) に njs 機能テストは存在しない。
+- alpha 統合テストは URI を Go の edge-proxy へ直接渡しており、njs を経由しない。
+
+### 棄却した案
+
+- Go 層の "capture test" (fake RIE が受信 body を読み `cf.request.uri` を assert する案) は採らない。テスト自身が組んだ `InvokeRequest` を Go 層へ直接 POST するだけで **njs を一切経由しない tautological テスト** になり、本バグ (njs 側の prefix 漏れ) を検出できないため。
+
+### 回帰防止 (採用)
+
+- `examples/lambda-edge-full` の origin-response Lambda が、受信した `cf.request.uri` を `X-CF-OResp-Seen-URI` に echo する。R-6 walkthrough で、その値が prefix を含まない正規 path であることを確認する。これは手動だが、njs を実際に通す唯一の検証経路である。
+- 完全自動化には nginx + njs を回す統合テスト基盤が必要で、3 行修正に対しては過大なので本フェーズでは採らない。
