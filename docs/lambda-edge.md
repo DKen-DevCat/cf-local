@@ -1,12 +1,12 @@
 # Lambda@Edge in cf-local
 
-cf-local は CloudFront 配下で動く Lambda@Edge ハンドラを **AWS 公式 Lambda Runtime Interface Emulator (RIE)** 経由でローカル実行する仕組みを持つ。Phase 4-F 時点の working set は **viewer-request + origin-request + origin-response**。`viewer-response` は Phase 4-F の後続タスクで扱う。
+cf-local は CloudFront 配下で動く Lambda@Edge ハンドラを **AWS 公式 Lambda Runtime Interface Emulator (RIE)** 経由でローカル実行する仕組みを持つ。Phase 4-F 時点の working set は **viewer-request + origin-request + origin-response + viewer-response** の 4 フック完全対応。
 
 このドキュメントは:
 
 - 全体構成図と各コンポーネントの責務
 - 設定方法 (Terraform / docker-compose)
-- viewer-request / origin-request / origin-response の return 仕様
+- viewer-request / origin-request / origin-response / viewer-response の return 仕様
 - 制限と既知の差分
 
 を扱う。制限詳細は [`docs/limitations.md`](./limitations.md#lambdaedge--cloudfront-functions) も参照。
@@ -16,13 +16,15 @@ cf-local は CloudFront 配下で動く Lambda@Edge ハンドラを **AWS 公式
 ```mermaid
 flowchart TD
   B[Browser] --> N[nginx :8080]
-  N --> VR[viewer-request js_content]
+  N --> VRES[viewer-response js_content<br/>outermost transient hop, no cache]
+  VRES -->|fetch inner forward over unix socket| FWD["/_cf_vr_fwd_ inner forward"]
+  FWD --> VR[viewer-request js_content]
   VR --> EP[edge-proxy :4569]
   EP --> CP[cf-local :4566<br/>LambdaFunctionAssociations lookup]
   EP --> RIE[Lambda RIE]
   VR -->|continue| CACHE[outer proxy_cache]
-  VR -->|short-circuit| B
-  CACHE -->|HIT| B
+  VR -->|short-circuit| VRES
+  CACHE -->|HIT| VRES
   CACHE -->|MISS| OR[inner origin-request js_content]
   OR --> EP
   OR -->|continue| ORES[inner-C origin-response js_content]
@@ -31,6 +33,7 @@ flowchart TD
   ORIGIN --> ORES
   ORES --> EP
   ORES -->|r.return modified response| CACHE
+  VRES -->|viewer-response Lambda modifies headers, status preserved, NOT cached| B
 ```
 
 各コンポーネントの責務:
@@ -130,7 +133,7 @@ resource "aws_cloudfront_distribution" "main" {
 
 `terraform apply` 後、cf-local の renderer が:
 
-- viewer-request association を持つ behavior の outer location を `js_content edge.runViewerRequest;` にする
+- viewer-request association を持つ behavior の outer location を `js_content edge.viewerRequest;` にする
 - origin-request association を持つ behavior の cache MISS 経路を inner-hop `js_content edge.runOriginRequest;` にする
 - origin-response association を持つ behavior の cache MISS 経路を inner-C `js_content edge.runOriginResponse;` にし、origin fetch 後・outer `proxy_cache` 格納前に Lambda を呼ぶ
 - continue 時は `internalRedirect` で forward/origin location に進める

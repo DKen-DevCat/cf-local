@@ -13,5 +13,12 @@ exports.handler = (event, context, callback) => {
         { key: 'X-Origin-Processed', value: 'cf-local' },
     ];
 
+    // Echo the request URI this origin-response trigger received so the
+    // walkthrough can confirm it is the clean path (no internal /_cf_oresp_
+    // prefix). Guards review finding G1 (origin-response URI normalization).
+    response.headers['x-cf-oresp-seen-uri'] = [
+        { key: 'X-CF-OResp-Seen-URI', value: event.Records[0].cf.request.uri },
+    ];
+
     callback(null, response);
 };
