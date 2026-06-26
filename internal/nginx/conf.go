@@ -61,7 +61,7 @@ func renderConf(d *types.DistributionConfig, _ map[string]*types.CachePolicyConf
 
 	hasLambdaEdge := false
 	for _, b := range behaviors {
-		if b.LambdaEdgeViewerRequest || b.LambdaEdgeOriginRequest {
+		if b.LambdaEdgeViewerRequest || b.LambdaEdgeOriginRequest || b.LambdaEdgeOriginResponse {
 			hasLambdaEdge = true
 			break
 		}
@@ -100,6 +100,10 @@ type behaviorView struct {
 	// LambdaFunctionAssociation を持つ behavior は true。cache hop の
 	// proxy_pass を inner-B 直通ではなく `/_cf_or_<san>` inner-A に向ける。
 	LambdaEdgeOriginRequest bool
+	// LambdaEdgeOriginResponse は Phase 4-F task-2。origin-response EventType の
+	// LambdaFunctionAssociation を持つ behavior は true。cache hop の
+	// proxy_pass を `/_cf_oresp_<san>` inner-C に向ける。
+	LambdaEdgeOriginResponse bool
 	// SanitizedPolicyID は LambdaEdgeViewerRequest が true のときに forward
 	// named location 名 (`@cf_le_<san>_forward`) を組み立てる用途で使う。
 	// 既存 InnerPrefix 末尾の sanitized id と同じ。
@@ -114,7 +118,11 @@ type innerView struct {
 	// 1 つでも origin-request association を持つと true。inner-A location
 	// (`/_cf_or_<san>/`) を policy 単位で dedup して出すために使う。
 	LambdaEdgeOriginRequest bool
-	SanitizedPolicyID       string
+	// LambdaEdgeOriginResponse は Phase 4-F task-2。同 policy を参照する
+	// behavior のうち 1 つでも origin-response association を持つと true。
+	// inner-C location (`/_cf_oresp_<san>/`) を policy 単位で dedup する。
+	LambdaEdgeOriginResponse bool
+	SanitizedPolicyID        string
 }
 
 func buildOriginViews(origins *types.Origins) ([]originView, error) {
@@ -168,7 +176,7 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 	var behaviors []behaviorView
 	inners := map[string]innerView{}
 
-	addInner := func(policyID, originID, sanPolicy string, originRequest bool) error {
+	addInner := func(policyID, originID, sanPolicy string, originRequest, originResponse bool) error {
 		upstream, err := originUpstreamName(originID)
 		if err != nil {
 			return err
@@ -186,16 +194,22 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 			}
 			if originRequest {
 				existing.LambdaEdgeOriginRequest = true
+			}
+			if originResponse {
+				existing.LambdaEdgeOriginResponse = true
+			}
+			if originRequest || originResponse {
 				inners[sanPolicy] = existing
 			}
 			return nil
 		}
 		inners[sanPolicy] = innerView{
-			Location:                "/_cf_inner_" + sanPolicy + "/",
-			PolicyID:                policyID,
-			UpstreamName:            upstream,
-			LambdaEdgeOriginRequest: originRequest,
-			SanitizedPolicyID:       sanPolicy,
+			Location:                 "/_cf_inner_" + sanPolicy + "/",
+			PolicyID:                 policyID,
+			UpstreamName:             upstream,
+			LambdaEdgeOriginRequest:  originRequest,
+			LambdaEdgeOriginResponse: originResponse,
+			SanitizedPolicyID:        sanPolicy,
 		}
 		return nil
 	}
@@ -224,17 +238,19 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 			comment += ")."
 			viewerRequest := hasViewerRequestAssociation(b.LambdaFunctionAssociations)
 			originRequest := hasOriginRequestAssociation(b.LambdaFunctionAssociations)
+			originResponse := hasOriginResponseAssociation(b.LambdaFunctionAssociations)
 			behaviors = append(behaviors, behaviorView{
-				Comment:                 comment,
-				Location:                loc,
-				PolicyID:                policyID,
-				InnerPrefix:             "/_cf_inner_" + san,
-				HeaderDirectives:        lookupResponseHeaders(rhp, rhpID),
-				LambdaEdgeViewerRequest: viewerRequest,
-				LambdaEdgeOriginRequest: originRequest,
-				SanitizedPolicyID:       san,
+				Comment:                  comment,
+				Location:                 loc,
+				PolicyID:                 policyID,
+				InnerPrefix:              "/_cf_inner_" + san,
+				HeaderDirectives:         lookupResponseHeaders(rhp, rhpID),
+				LambdaEdgeViewerRequest:  viewerRequest,
+				LambdaEdgeOriginRequest:  originRequest,
+				LambdaEdgeOriginResponse: originResponse,
+				SanitizedPolicyID:        san,
 			})
-			if err := addInner(policyID, originID, san, originRequest); err != nil {
+			if err := addInner(policyID, originID, san, originRequest, originResponse); err != nil {
 				return nil, nil, fmt.Errorf("CacheBehaviors[%d]: %w", i, err)
 			}
 		}
@@ -255,17 +271,19 @@ func buildBehaviorViews(d *types.DistributionConfig, rhp map[string]*types.Respo
 	defaultComment += ")."
 	defaultViewerRequest := hasViewerRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
 	defaultOriginRequest := hasOriginRequestAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
+	defaultOriginResponse := hasOriginResponseAssociation(d.DefaultCacheBehavior.LambdaFunctionAssociations)
 	behaviors = append(behaviors, behaviorView{
-		Comment:                 defaultComment,
-		Location:                "/",
-		PolicyID:                defaultPolicyID,
-		InnerPrefix:             "/_cf_inner_" + defaultSan,
-		HeaderDirectives:        lookupResponseHeaders(rhp, defaultRHPID),
-		LambdaEdgeViewerRequest: defaultViewerRequest,
-		LambdaEdgeOriginRequest: defaultOriginRequest,
-		SanitizedPolicyID:       defaultSan,
+		Comment:                  defaultComment,
+		Location:                 "/",
+		PolicyID:                 defaultPolicyID,
+		InnerPrefix:              "/_cf_inner_" + defaultSan,
+		HeaderDirectives:         lookupResponseHeaders(rhp, defaultRHPID),
+		LambdaEdgeViewerRequest:  defaultViewerRequest,
+		LambdaEdgeOriginRequest:  defaultOriginRequest,
+		LambdaEdgeOriginResponse: defaultOriginResponse,
+		SanitizedPolicyID:        defaultSan,
 	})
-	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan, defaultOriginRequest); err != nil {
+	if err := addInner(defaultPolicyID, defaultOriginID, defaultSan, defaultOriginRequest, defaultOriginResponse); err != nil {
 		return nil, nil, err
 	}
 
@@ -348,6 +366,21 @@ func hasOriginRequestAssociation(lfa *types.LambdaFunctionAssociations) bool {
 	}
 	for _, item := range lfa.Items {
 		if item.EventType == types.EventTypeOriginRequest {
+			return true
+		}
+	}
+	return false
+}
+
+// hasOriginResponseAssociation は Phase 4-F task-2。指定の
+// LambdaFunctionAssociations に EventType=origin-response が含まれていれば
+// true。
+func hasOriginResponseAssociation(lfa *types.LambdaFunctionAssociations) bool {
+	if lfa == nil {
+		return false
+	}
+	for _, item := range lfa.Items {
+		if item.EventType == types.EventTypeOriginResponse {
 			return true
 		}
 	}
@@ -445,6 +478,10 @@ func writeServerBlock(b *bytes.Buffer, behaviors []behaviorView, inners []innerV
 		}
 		writeInnerLocation(b, inner)
 		firstInnerLocation = false
+		if inner.LambdaEdgeOriginResponse {
+			b.WriteByte('\n')
+			writeOriginResponseLocation(b, inner, distributionID, edgeProxyURL)
+		}
 	}
 	b.WriteString("}\n")
 }
@@ -529,6 +566,10 @@ func originRequestPrefix(sanitizedPolicyID string) string {
 	return "/_cf_or_" + sanitizedPolicyID
 }
 
+func originResponsePrefix(sanitizedPolicyID string) string {
+	return "/_cf_oresp_" + sanitizedPolicyID
+}
+
 // writeOuterLocationBody は cache + proxy_pass の中身を出す。
 // writeOuterLocation と writeForwardLocation の両方から呼ばれる。
 // 出力はインデント `        ` (8 space) で揃え、closing brace は呼び出し側が打つ。
@@ -563,6 +604,9 @@ func writeOuterLocationBody(b *bytes.Buffer, beh behaviorView, useUpdatedURI boo
 	if beh.LambdaEdgeOriginRequest {
 		targetPrefix = originRequestPrefix(beh.SanitizedPolicyID)
 	}
+	if beh.LambdaEdgeOriginResponse {
+		targetPrefix = originResponsePrefix(beh.SanitizedPolicyID)
+	}
 	fmt.Fprintf(b, "        proxy_pass http://self%s%s;\n", targetPrefix, uriExpr)
 	b.WriteString(`        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -579,6 +623,22 @@ func writeOriginRequestLocation(b *bytes.Buffer, inner innerView, distributionID
 	fmt.Fprintf(b, "        set $cf_le_origin_inner_prefix %q;\n", "/_cf_inner_"+inner.SanitizedPolicyID)
 	fmt.Fprintf(b, "        set $cf_le_or_prefix %q;\n", prefix)
 	b.WriteString("        js_content edge.runOriginRequest;\n")
+	b.WriteString("    }\n")
+}
+
+func writeOriginResponseLocation(b *bytes.Buffer, inner innerView, distributionID, edgeProxyURL string) {
+	prefix := originResponsePrefix(inner.SanitizedPolicyID)
+	fetchPrefix := "/_cf_inner_" + inner.SanitizedPolicyID
+	if inner.LambdaEdgeOriginRequest {
+		fetchPrefix = originRequestPrefix(inner.SanitizedPolicyID)
+	}
+	fmt.Fprintf(b, "    location %s/ {\n", prefix)
+	fmt.Fprintf(b, "        set $cf_distribution_id %q;\n", sanitizeNginxSetValue(distributionID))
+	fmt.Fprintf(b, "        set $cf_edge_proxy %q;\n", sanitizeNginxSetValue(edgeProxyURL))
+	fmt.Fprintf(b, "        set $cf_le_inner_socket %q;\n", innerSocketPath)
+	fmt.Fprintf(b, "        set $cf_le_oresp_prefix %q;\n", prefix)
+	fmt.Fprintf(b, "        set $cf_le_oresp_fetch_prefix %q;\n", fetchPrefix)
+	b.WriteString("        js_content edge.runOriginResponse;\n")
 	b.WriteString("    }\n")
 }
 

@@ -47,3 +47,12 @@ docker-compose.override.yml
 
 # Claude Code skill ランタイム生成物 (clone 毎に再生成される)
 .claude/scheduled_tasks.lock
+
+# /goal:exec が codex の各タスク出力を書き出す作業用ディレクトリ
+.codex-out/
+
+# Terraform runtime artifacts (examples の walkthrough で生成される)。
+# .terraform.lock.hcl は provider 固定用に各 example で必要なら個別に commit する。
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*

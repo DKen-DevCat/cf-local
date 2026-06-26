@@ -82,20 +82,32 @@ function edgeProxyURL(r) {
     return defaultEdgeProxyURL;
 }
 
+function setHeaderOut(r, name, values) {
+    if (!values || !values.length) return;
+    // njs r.headersOut は配列代入で multi-value も扱える。
+    r.headersOut[name] = values.length === 1 ? values[0] : values;
+}
+
+function shouldSkipResponseHeader(name, skip) {
+    if (!skip || !skip.length) return false;
+    return skip.indexOf(name.toLowerCase()) >= 0;
+}
+
+function applyResponseHeaders(r, headers, skip) {
+    if (!headers) return;
+    for (const name in headers) {
+        if (shouldSkipResponseHeader(name, skip)) continue;
+        setHeaderOut(r, name, headers[name]);
+    }
+}
+
 // applyResponse は short_circuit 結果を nginx の response に書き出す。
 function applyResponse(r, resp) {
     if (!resp) {
         r.return(502, 'edge-proxy returned empty response\n');
         return;
     }
-    if (resp.headers) {
-        for (const name in resp.headers) {
-            const values = resp.headers[name];
-            if (!values || !values.length) continue;
-            // njs r.headersOut は配列代入で multi-value も扱える。
-            r.headersOut[name] = values.length === 1 ? values[0] : values;
-        }
-    }
+    applyResponseHeaders(r, resp.headers);
     const status = resp.status || 200;
     const body = resp.body || '';
     if (resp.body_encoding === 'base64' && body.length) {
@@ -119,6 +131,133 @@ function applyResponse(r, resp) {
         }
     }
     r.return(status, body);
+}
+
+function appendSnapshotHeader(out, name, value) {
+    if (!name) return;
+    const lower = name.toLowerCase();
+    if (hopByHopHeaders.indexOf(lower) >= 0) return;
+    if (!out[name]) out[name] = [];
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+            out[name].push(String(value[i]));
+        }
+        return;
+    }
+    if (value !== undefined && value !== null) out[name].push(String(value));
+}
+
+function snapshotResponse(upstreamResp) {
+    // Origin-response Lambda には origin body を渡さない (B3)。status と
+    // headers だけを snapshot する。
+    const headers = {};
+    const respHeaders = upstreamResp.headers;
+    if (respHeaders) {
+        if (typeof respHeaders.forEach === 'function') {
+            // njs の Headers.forEach は WHATWG の (value, name) ではなく
+            // (name, value) 順でコールバックを呼ぶ。逆順だと header の
+            // name/value が入れ替わって "invalid header" になる (walkthrough で確認)。
+            respHeaders.forEach(function(name, value) {
+                appendSnapshotHeader(headers, name, value);
+            });
+        } else if (typeof respHeaders.entries === 'function') {
+            const entries = respHeaders.entries();
+            for (let next = entries.next(); !next.done; next = entries.next()) {
+                appendSnapshotHeader(headers, next.value[0], next.value[1]);
+            }
+        } else {
+            for (const name in respHeaders) {
+                appendSnapshotHeader(headers, name, respHeaders[name]);
+            }
+        }
+    }
+    return {
+        status: upstreamResp.status,
+        headers: headers,
+    };
+}
+
+function copyOriginHeadersToOut(r, headers, skip) {
+    applyResponseHeaders(r, headers, skip);
+}
+
+function edgeProxyMissingDistributionLog(eventType) {
+    if (eventType === 'viewer-request') {
+        return 'edge: cf_distribution_id is empty, bypassing edge-proxy';
+    }
+    return 'edge: cf_distribution_id is empty, bypassing ' + eventType + ' edge-proxy';
+}
+
+function edgeProxyInvokeFailedLog(eventType, err) {
+    if (eventType === 'viewer-request') {
+        return 'edge: edge-proxy invoke failed: ' + err + ' — failing open';
+    }
+    return 'edge: ' + eventType + ' edge-proxy invoke failed: ' + err + ' — failing open';
+}
+
+function edgeProxyMalformedLog(eventType) {
+    if (eventType === 'viewer-request') {
+        return 'edge: malformed edge-proxy response, failing open';
+    }
+    return 'edge: malformed ' + eventType + ' edge-proxy response, failing open';
+}
+
+function edgeProxyActionErrorLog(eventType, resp) {
+    if (eventType === 'viewer-request') {
+        return 'edge: edge-proxy returned action=error: ' + (resp.error || '');
+    }
+    return 'edge: ' + eventType + ' edge-proxy returned action=error: ' + (resp.error || '');
+}
+
+async function runEdgeFunction(r, eventType, opts) {
+    opts = opts || {};
+    const failOpen = opts.failOpen || function() {};
+    const distId = r.variables.cf_distribution_id || '';
+    if (!distId) {
+        r.warn(edgeProxyMissingDistributionLog(eventType));
+        await failOpen();
+        return;
+    }
+
+    const payload = {
+        distribution_id: distId,
+        event_type: eventType,
+        request: snapshotRequest(r),
+    };
+    if (opts.payloadExtra) Object.assign(payload, opts.payloadExtra);
+
+    let resp;
+    try {
+        const fetchResp = await ngx.fetch(edgeProxyURL(r) + '/invoke', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const text = await fetchResp.text();
+        resp = JSON.parse(text);
+    } catch (e) {
+        r.error(edgeProxyInvokeFailedLog(eventType, e));
+        await failOpen();
+        return;
+    }
+
+    if (!resp || !resp.action) {
+        r.warn(edgeProxyMalformedLog(eventType));
+        await failOpen();
+        return;
+    }
+
+    if (resp.action === 'short_circuit') {
+        applyResponse(r, resp.response);
+        return;
+    }
+    if (resp.action === 'error') {
+        r.warn(edgeProxyActionErrorLog(eventType, resp));
+        await failOpen();
+        return;
+    }
+
+    await opts.onContinue(resp);
 }
 
 // computeOverrideTarget は Lambda が返した修正済み request から
@@ -160,66 +299,28 @@ function originRequestRedirectTarget(innerPrefix, tail, qs) {
 }
 
 async function viewerRequest(r) {
-    const distId = r.variables.cf_distribution_id || '';
     const forward = r.variables.cf_le_forward || '@cf_le_forward';
-    if (!distId) {
-        // distribution id が未設定なら Lambda 経路に乗せず素通り。
-        r.warn('edge: cf_distribution_id is empty, bypassing edge-proxy');
-        r.internalRedirect(forward);
-        return;
-    }
-
-    const payload = {
-        distribution_id: distId,
-        event_type: 'viewer-request',
-        request: snapshotRequest(r),
-    };
-
-    let resp;
-    try {
-        const fetchResp = await ngx.fetch(edgeProxyURL(r) + '/invoke', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            headers: { 'Content-Type': 'application/json' },
-        });
-        const text = await fetchResp.text();
-        resp = JSON.parse(text);
-    } catch (e) {
-        r.error('edge: edge-proxy invoke failed: ' + e + ' — failing open');
-        r.internalRedirect(forward);
-        return;
-    }
-
-    if (!resp || !resp.action) {
-        r.warn('edge: malformed edge-proxy response, failing open');
-        r.internalRedirect(forward);
-        return;
-    }
-
-    if (resp.action === 'short_circuit') {
-        applyResponse(r, resp.response);
-        return;
-    }
-    if (resp.action === 'error') {
-        r.warn('edge: edge-proxy returned action=error: ' + (resp.error || ''));
-        r.internalRedirect(forward);
-        return;
-    }
-    // continue (default)
-    const target = computeOverrideTarget(r, resp.request);
-    if (target) {
-        // URI / querystring 書換あり: 新 URI で internal-redirect。
-        // 結果として nginx は URI から location を再評価するので、
-        // 別の cache behavior にヒットする可能性がある (CloudFront 仕様
-        // と整合)。
-        r.internalRedirect(target);
-        return;
-    }
-    r.internalRedirect(forward);
+    await runEdgeFunction(r, 'viewer-request', {
+        failOpen: function() {
+            r.internalRedirect(forward);
+        },
+        onContinue: function(resp) {
+            // continue (default)
+            const target = computeOverrideTarget(r, resp.request);
+            if (target) {
+                // URI / querystring 書換あり: 新 URI で internal-redirect。
+                // 結果として nginx は URI から location を再評価するので、
+                // 別の cache behavior にヒットする可能性がある (CloudFront 仕様
+                // と整合)。
+                r.internalRedirect(target);
+                return;
+            }
+            r.internalRedirect(forward);
+        },
+    });
 }
 
 async function runOriginRequest(r) {
-    const distId = r.variables.cf_distribution_id || '';
     const innerPrefix = r.variables.cf_le_origin_inner_prefix || '';
     const orPrefix = r.variables.cf_le_or_prefix || '';
     const tail = originRequestTail(r, orPrefix);
@@ -227,55 +328,72 @@ async function runOriginRequest(r) {
     const originalPath = tail;
     const failOpenTarget = originRequestRedirectTarget(innerPrefix, tail, args);
 
-    if (!distId) {
-        r.warn('edge: cf_distribution_id is empty, bypassing origin-request edge-proxy');
-        r.internalRedirect(failOpenTarget);
-        return;
-    }
-
     const request = snapshotRequest(r);
     request.uri = originalPath;
-    const payload = {
-        distribution_id: distId,
-        event_type: 'origin-request',
-        request: request,
-    };
 
-    let resp;
-    try {
-        const fetchResp = await ngx.fetch(edgeProxyURL(r) + '/invoke', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            headers: { 'Content-Type': 'application/json' },
-        });
-        const text = await fetchResp.text();
-        resp = JSON.parse(text);
-    } catch (e) {
-        r.error('edge: origin-request edge-proxy invoke failed: ' + e + ' — failing open');
-        r.internalRedirect(failOpenTarget);
-        return;
-    }
-
-    if (!resp || !resp.action) {
-        r.warn('edge: malformed origin-request edge-proxy response, failing open');
-        r.internalRedirect(failOpenTarget);
-        return;
-    }
-
-    if (resp.action === 'short_circuit') {
-        applyResponse(r, resp.response);
-        return;
-    }
-    if (resp.action === 'error') {
-        r.warn('edge: origin-request edge-proxy returned action=error: ' + (resp.error || ''));
-        r.internalRedirect(failOpenTarget);
-        return;
-    }
-
-    const override = resp.request || {};
-    const finalTail = (override.uri && override.uri !== originalPath) ? override.uri : tail;
-    const qs = (override.querystring !== undefined) ? override.querystring : args;
-    r.internalRedirect(originRequestRedirectTarget(innerPrefix, finalTail, qs));
+    await runEdgeFunction(r, 'origin-request', {
+        payloadExtra: { request: request },
+        failOpen: function() {
+            r.internalRedirect(failOpenTarget);
+        },
+        onContinue: function(resp) {
+            const override = resp.request || {};
+            const finalTail = (override.uri && override.uri !== originalPath) ? override.uri : tail;
+            const qs = (override.querystring !== undefined) ? override.querystring : args;
+            r.internalRedirect(originRequestRedirectTarget(innerPrefix, finalTail, qs));
+        },
+    });
 }
 
-export default { viewerRequest, runOriginRequest };
+async function runOriginResponse(r) {
+    const innerSocket = r.variables.cf_le_inner_socket || '';
+    const orespPrefix = r.variables.cf_le_oresp_prefix || '';
+    const fetchPrefix = r.variables.cf_le_oresp_fetch_prefix || '';
+    const args = r.variables.args || '';
+    const tail = originRequestTail(r, orespPrefix);
+    const fetchPath = fetchPrefix + ensureLeadingSlash(tail) + (args ? '?' + args : '');
+    const fetchURL = 'http://unix:' + innerSocket + ':' + fetchPath;
+
+    let originStatus = 502;
+    let originBody = '';
+    let upstream;
+    try {
+        upstream = await ngx.fetch(fetchURL, {
+            method: r.method,
+            headers: {
+                'Host': r.headersIn['Host'] || r.headersIn['host'] || r.variables.host || 'localhost',
+            },
+        });
+        originBody = await upstream.text();
+        originStatus = upstream.status;
+    } catch (e) {
+        r.error('edge: origin-response origin fetch failed: ' + e + ' — failing open');
+        r.return(502, 'origin-response origin fetch failed\n');
+        return;
+    }
+
+    const snapshot = snapshotResponse(upstream);
+    // Date / Server は r.return() で nginx が再生成するため、origin のものを
+    // 重ねて出すと outer proxy が "invalid header" で弾く (walkthrough で確認)。
+    const originResponseHeaderSkip = ['content-length', 'date', 'server'].concat(hopByHopHeaders);
+    const returnOriginResponse = function(status, headers) {
+        // X-Accel-Expires / Cache-Control を outer proxy_cache に見せる。
+        copyOriginHeadersToOut(r, snapshot.headers, originResponseHeaderSkip);
+        if (headers) applyResponseHeaders(r, headers, originResponseHeaderSkip);
+        r.return(status, originBody);
+    };
+
+    await runEdgeFunction(r, 'origin-response', {
+        payloadExtra: { response: snapshot },
+        failOpen: function() {
+            returnOriginResponse(originStatus);
+        },
+        onContinue: function(resp) {
+            const status = (resp.response && resp.response.status) ? resp.response.status : originStatus;
+            const headers = resp.response ? resp.response.headers : null;
+            returnOriginResponse(status, headers);
+        },
+    });
+}
+
+export default { viewerRequest, runOriginRequest, runOriginResponse };

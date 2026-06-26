@@ -1,10 +1,11 @@
-# Lambda@Edge full example (phase-4e)
+# Lambda@Edge full example (phase-4f)
 
-cf-local の Phase 4-E working set、つまり **viewer-request + origin-request**
-の request hooks をローカルで動かす自己完結サンプル。
+cf-local の Phase 4-F working set、つまり
+**viewer-request + origin-request + origin-response** の Lambda@Edge hooks
+をローカルで動かす自己完結サンプル。
 
-origin-response / viewer-response は Phase 4-F で追加する。この example には
-response hooks 用の Lambda や association は含めない。
+viewer-response は Phase 4-F の後続タスクで追加する。この example には
+viewer-response 用の Lambda や association は含めない。
 
 ## 構成
 
@@ -19,9 +20,13 @@ flowchart LR
   CACHE -->|MISS only| OR[inner origin-request js_content]
   OR --> EP
   EP --> LO[lambda-origin-rewrite RIE<br/>origin-request]
-  OR --> O[origin echo container<br/>Docker network only]
+  OR --> ORES[inner origin-response js_content]
+  ORES -->|fetch origin| O[origin echo container<br/>Docker network only]
+  O -->|origin response| ORES
+  ORES --> EP
+  EP --> LR[lambda-origin-response RIE<br/>origin-response]
+  ORES --> CACHE
   CACHE -->|HIT| C
-  O --> CACHE
 ```
 
 Services are defined in [`docker-compose.yml`](./docker-compose.yml):
@@ -33,6 +38,7 @@ Services are defined in [`docker-compose.yml`](./docker-compose.yml):
 | `edge-proxy` | Lambda@Edge sidecar invoked by njs | `:4569` |
 | `lambda-auth` | AWS Lambda RIE for viewer-request | internal `:8080` |
 | `lambda-origin-rewrite` | AWS Lambda RIE for origin-request | internal `:8080` |
+| `lambda-origin-response` | AWS Lambda RIE for origin-response | internal `:8080` |
 | `origin` | echo origin used only inside Docker | none |
 
 The origin is intentionally a Docker service, not `host.docker.internal:3000`.
@@ -75,11 +81,23 @@ curl -i -H 'Authorization: Bearer x' http://localhost:8080/origin-old
 # origin-request fires only on MISS. A repeated request for the same cache key
 # should be served from cache without invoking lambda-origin-rewrite again.
 curl -i -H 'Authorization: Bearer x' http://localhost:8080/origin-old
+
+# origin-response: first MISS stores modified origin status/headers in cache.
+curl -i -H 'Authorization: Bearer x' http://localhost:8080/origin-response-demo
+
+# Repeat the same cache key. X-Cache-Status should move MISS -> HIT, and
+# X-Origin-Processed: cf-local should appear in both responses.
+curl -i -H 'Authorization: Bearer x' http://localhost:8080/origin-response-demo
 ```
 
 The echo origin response should show the URI/query received by the origin. For
 `/origin-old`, the origin-request Lambda changes the request to `/origin-new`
 and adds `origin_rewrite=1` to the query string before continuing.
+
+The origin-response Lambda adds `X-Origin-Processed: cf-local` to the origin
+response. The first request for a cache key should show `X-Cache-Status: MISS`;
+the repeated request should show `X-Cache-Status: HIT` while keeping
+`X-Origin-Processed`, because the modified headers are stored in cache.
 
 ## Lambda handlers
 
@@ -97,14 +115,23 @@ and adds `origin_rewrite=1` to the query string before continuing.
 - adds `origin_rewrite=1` to `request.querystring`
 - calls `callback(null, request)` so the request continues to origin
 
+`lambdas/origin-response/index.js` is the origin-response handler:
+
+- receives `event.Records[0].cf.response`
+- adds `X-Origin-Processed: cf-local` in CloudFront header format
+- calls `callback(null, response)` so modified status/headers are cached
+- leaves body untouched because origin-response does not receive origin body
+
 ## Known limitations
 
-Phase 4-E covers request hooks only:
+Phase 4-F covers viewer-request, origin-request, and origin-response:
 
 - `viewer-request` fires before cache lookup.
 - `origin-request` fires only on cache MISS, in the inner-hop `js_content`
   topology validated by `nginx/spike/origin-request/README.md`.
-- `origin-response` and `viewer-response` are Phase 4-F work.
+- `origin-response` fires only on cache MISS, after origin fetch and before
+  cache storage. Modified status/headers are cached.
+- `viewer-response` is Phase 4-F follow-up work and is not included here.
 
 Origin-request currently follows F3=B from the phase plan: cf-local omits the
 CloudFront `request.origin` object, so dynamic origin selection is not
