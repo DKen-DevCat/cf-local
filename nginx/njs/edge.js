@@ -396,4 +396,67 @@ async function runOriginResponse(r) {
     });
 }
 
-export default { viewerRequest, runOriginRequest, runOriginResponse };
+// runViewerResponse は最外段 transient hop (conf.go writeViewerResponseOuter)。
+// inner forward (/_cf_vr_fwd_<san>/ = cache + viewer-request + origin chain) を
+// unix socket 経由で取得し、viewer-response Lambda で **headers のみ** 改変して
+// 返す。viewer-response は AWS 制約で status を変更できないので常に upstream の
+// status を返す。outer location は proxy_cache を持たない (conf.go) ので改変は
+// cache に書き込まれない (transient)。
+async function runViewerResponse(r) {
+    const innerSocket = r.variables.cf_le_inner_socket || '';
+    const vrFwdPrefix = r.variables.cf_le_vr_fwd_prefix || '';
+    const args = r.variables.args || '';
+    // outer の viewer-response location は behavior location (例 "/") にあるので
+    // r.uri は元クライアント URI。vrFwdPrefix を前置して inner forward を叩く。
+    const fetchPath = vrFwdPrefix + ensureLeadingSlash(r.uri || '/') + (args ? '?' + args : '');
+    const fetchURL = 'http://unix:' + innerSocket + ':' + fetchPath;
+
+    // 元クライアントの request header を inner forward に転送する。viewer-response
+    // が viewer-request を wrap する構成では、ここで転送しないと wrap された
+    // viewer-request が Authorization 等を見られず誤判定する (walkthrough で確認)。
+    // unix-socket self-fetch は Host 明示も必須 (spike-A 発見)。
+    const fwdHeaders = {};
+    for (const name in r.headersIn) {
+        if (hopByHopHeaders.indexOf(name.toLowerCase()) >= 0) continue;
+        fwdHeaders[name] = r.headersIn[name];
+    }
+    fwdHeaders['Host'] = r.headersIn['Host'] || r.headersIn['host'] || r.variables.host || 'localhost';
+
+    let upstreamStatus = 502;
+    let upstreamBody = '';
+    let upstream;
+    try {
+        upstream = await ngx.fetch(fetchURL, {
+            method: r.method,
+            headers: fwdHeaders,
+        });
+        upstreamBody = await upstream.text();
+        upstreamStatus = upstream.status;
+    } catch (e) {
+        r.error('edge: viewer-response forward fetch failed: ' + e + ' — failing open');
+        r.return(502, 'viewer-response forward fetch failed\n');
+        return;
+    }
+
+    const snapshot = snapshotResponse(upstream);
+    const viewerResponseHeaderSkip = ['content-length', 'date', 'server'].concat(hopByHopHeaders);
+    // viewer-response は status 変更不可 (AWS 制約 / Go の TranslateViewerResponseResponse が
+    // original status を強制)。常に upstream status を返す。TDZ 回避で const 式。
+    const returnViewerResponse = function(headers) {
+        copyOriginHeadersToOut(r, snapshot.headers, viewerResponseHeaderSkip);
+        if (headers) applyResponseHeaders(r, headers, viewerResponseHeaderSkip);
+        r.return(upstreamStatus, upstreamBody);
+    };
+
+    await runEdgeFunction(r, 'viewer-response', {
+        payloadExtra: { response: snapshot },
+        failOpen: function() {
+            returnViewerResponse(null);
+        },
+        onContinue: function(resp) {
+            returnViewerResponse(resp.response ? resp.response.headers : null);
+        },
+    });
+}
+
+export default { viewerRequest, runOriginRequest, runOriginResponse, runViewerResponse };

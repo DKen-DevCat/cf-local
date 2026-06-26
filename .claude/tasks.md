@@ -2,19 +2,22 @@
 
 進行中フェーズの作業タスクを記録する。フェーズ完了後は `.claude/plan.md` のステータスを更新し、対応セクションを「完了」に移す（または削除）。
 
-(直近完了: Phase chore-3 (2026-05-05) — `.claude/plan.md` の chore-3 セクションを参照。タスク履歴: `.claude/tasks-archive/chore-3-2026-05-05.md`。前回 Phase 5: `.claude/tasks-archive/phase-5-2026-05-05.md`、Phase 4d: `.claude/tasks-archive/phase-4d-2026-05-03.md`、Phase 4c: `.claude/tasks-archive/phase-4c-2026-05-03.md`、Phase chore-2: `.claude/tasks-archive/chore-2-2026-05-03.md`、Phase 4b: `.claude/tasks-archive/phase-4b-2026-05-03.md`、Phase 4a: `.claude/tasks-archive/phase-4a-2026-05-02.md`、Phase chore-1: `.claude/tasks-archive/chore-1-2026-05-01.md`、Phase 3: `.claude/tasks-archive/phase-3-2026-04-30.md`)
+(直近完了: phase-4e (2026-06-07, PR #23 merge — origin-request 縦スライス + 4 フック分 Go 層)。前回 Phase chore-3 (2026-05-05)。Phase 5: `.claude/tasks-archive/phase-5-2026-05-05.md`、Phase 4d: `.claude/tasks-archive/phase-4d-2026-05-03.md` 他は `.claude/tasks-archive/` 参照)
 
 ---
 
-## Phase 4-E: Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) — 進行中
+## Phase 4-F: Lambda@Edge response 系 2 フック (origin-response / viewer-response) — 実装完了 (PR 作成待ち)
 
-ブランチ: `chore/phase-4e-spec-2026-05-09`（develop @ `24bdd1b` 起点、spec 登録 + kickoff を同一ブランチにバンドル）
+**実装計画の唯一の真実**: `docs/plans/phase-4f-lambda-edge-response-hooks.md`。stacked PR: PR-1 origin-response → PR-2 viewer-response。
 
-設計: [`.claude/design/lambda-edge-remaining-hooks-2026-05-09.md`](design/lambda-edge-remaining-hooks-2026-05-09.md)
+**到達状態**: 4 フック (viewer-request + origin-request + origin-response + viewer-response) 完全対応で M4 達成・BL-LE1 解消。`examples/lambda-edge-full/` を 4 フック自己完結 compose に拡張。R-6 walkthrough 実機検証 GREEN。
 
-**本フェーズの範囲**: M4 (Lambda@Edge含めた完全構成) の完成。phase-4d viewer-request MVP の続編で 3 フック (origin-request / origin-response / viewer-response) 対応 + BL-LE1 解消 + `examples/lambda-edge-full/` 新設。スコープ外 (BL-LE2/4/5/6/7, BL-CFF1) は v0.2 内別フェーズ。
+- [x] task-1 spike-A (origin-response cache-write topology) / task-5 spike-B (viewer-response transient hop)
+- [x] task-2 conf.go origin-response topology / task-6 conf.go viewer-response topology
+- [x] task-3 edge.js runOriginResponse / task-7 edge.js runViewerResponse + runEdgeFunction helper
+- [x] task-4 / task-8 examples + docs + walkthrough + BL-LE1 解消
 
-**実装計画の唯一の真実**: `docs/plans/phase-4e-lambda-edge-remaining-hooks.md`。F1=A により phase-4e は **spike + origin-request 縦スライス**、response 系 (`origin-response` / `viewer-response`) は phase-4f に分割。
+ブランチ: `feat/phase-4f-origin-response` (PR-1) → `feat/phase-4f-viewer-response` (PR-2, stacked)。Go 層 (event/server/types/α テスト) は phase-4e (PR #23) で完備済・本フェーズ無変更。
 
 ### 着手前確定事項 (kickoff 2026-05-09 で確定)
 

@@ -1,11 +1,12 @@
 # Lambda@Edge full example (phase-4f)
 
 cf-local の Phase 4-F working set、つまり
-**viewer-request + origin-request + origin-response** の Lambda@Edge hooks
-をローカルで動かす自己完結サンプル。
+**viewer-request + origin-request + origin-response + viewer-response** の
+Lambda@Edge 4 フックすべてをローカルで動かす自己完結サンプル (M4 達成)。
 
-viewer-response は Phase 4-F の後続タスクで追加する。この example には
-viewer-response 用の Lambda や association は含めない。
+default cache behavior に 4 フックすべてを attach してあるので、1 リクエストで
+viewer-request → cache → origin-request → origin → origin-response → viewer-response
+の全経路を通る。
 
 ## 構成
 
@@ -39,6 +40,7 @@ Services are defined in [`docker-compose.yml`](./docker-compose.yml):
 | `lambda-auth` | AWS Lambda RIE for viewer-request | internal `:8080` |
 | `lambda-origin-rewrite` | AWS Lambda RIE for origin-request | internal `:8080` |
 | `lambda-origin-response` | AWS Lambda RIE for origin-response | internal `:8080` |
+| `lambda-viewer-response` | AWS Lambda RIE for viewer-response | internal `:8080` |
 | `origin` | echo origin used only inside Docker | none |
 
 The origin is intentionally a Docker service, not `host.docker.internal:3000`.
@@ -122,16 +124,27 @@ the repeated request should show `X-Cache-Status: HIT` while keeping
 - calls `callback(null, response)` so modified status/headers are cached
 - leaves body untouched because origin-response does not receive origin body
 
+`lambdas/viewer-response/index.js` is the viewer-response handler:
+
+- receives `event.Records[0].cf.response`
+- adds `X-Viewer-Processed: cf-local` and `Timing-Allow-Origin: *`
+- calls `callback(null, response)`; the change is transient (NOT cached) and
+  fires on both cache HIT and MISS
+- can only mutate headers (status/body changes are rejected by the AWS spec)
+
 ## Known limitations
 
-Phase 4-F covers viewer-request, origin-request, and origin-response:
+Phase 4-F covers all four hooks (viewer-request, origin-request, origin-response,
+viewer-response — M4 achieved):
 
-- `viewer-request` fires before cache lookup.
+- `viewer-request` fires before cache lookup, on HIT and MISS.
 - `origin-request` fires only on cache MISS, in the inner-hop `js_content`
   topology validated by `nginx/spike/origin-request/README.md`.
 - `origin-response` fires only on cache MISS, after origin fetch and before
   cache storage. Modified status/headers are cached.
-- `viewer-response` is Phase 4-F follow-up work and is not included here.
+- `viewer-response` fires just before returning to the viewer, on HIT and MISS,
+  as the outermost transient hop (`nginx/spike/viewer-response/README.md`).
+  The modification is NOT written to cache.
 
 Origin-request currently follows F3=B from the phase plan: cf-local omits the
 CloudFront `request.origin` object, so dynamic origin selection is not

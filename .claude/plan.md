@@ -34,7 +34,8 @@ cf-local の段階的開発フェーズ一覧。各フェーズの状態と完�
 | `chore-1` | 完了 (2026-05-01) | Claude 開発フロー強化 (review infra) |
 | `chore-2` | 完了 (2026-05-03) | check.md D-2 セクションの手順誤記修正 (docs-only) |
 | `chore-3` | 完了 (2026-05-05) | Phase 5 後処理 (記録更新 + README v0.1.0 release prep + backlog grooming) (PR #19 merge 済) |
-| `phase-4e` | 計画済 (2026-05-09) | Lambda@Edge 残り 3 フック対応 (origin-request / origin-response / viewer-response) — BL-LE1 解消 / M4 完全化 |
+| `phase-4e` | 完了 (2026-06-07, PR #23 merge) | Lambda@Edge origin-request 縦スライス + 4 フック分の Go/edge-proxy 層 (F1=A 分割) |
+| `phase-4f` | 実装完了 (2026-06-07, PR 作成待ち) | Lambda@Edge response 系 2 フック (origin-response / viewer-response) のデータプレーン結線 — BL-LE1 解消 / M4 達成。stacked PR: PR-1 origin-response → PR-2 viewer-response |
 
 ---
 

@@ -32,6 +32,12 @@ import (
 //   - cache hop proxy_pass goes to `/_cf_oresp_<san>` when origin-response is attached
 //   - inner-C carries `/_cf_oresp_<san>/` with `js_content edge.runOriginResponse`
 //   - inner-C fetches inner-A when origin-request is also attached, otherwise inner-B
+//
+// Phase 4-F task-6 adds viewer-response topology generation:
+//   - outer location becomes transient `js_content edge.runViewerResponse`
+//   - cache + origin chain moves to inner `/_cf_vr_fwd_<san>/`
+//   - viewer-request, when combined, runs inside that inner prefix and forwards
+//     to the same-server `@cf_le_<san>_forward` named location
 
 func newBaseLoadResult() *config.LoadResult {
 	return &config.LoadResult{
@@ -80,6 +86,40 @@ func nginxLocationBlock(t *testing.T, conf, marker string) string {
 		t.Fatalf("could not find end of location marker %q", marker)
 	}
 	return conf[start : start+end]
+}
+
+func nginxOuterServerBlock(t *testing.T, conf string) string {
+	t.Helper()
+	start := strings.Index(conf, "server {\n    listen 8080;")
+	if start < 0 {
+		t.Fatalf("missing outer server block:\n%s", conf)
+	}
+	end := strings.Index(conf[start:], "\n\nserver {\n    listen unix:")
+	if end < 0 {
+		t.Fatalf("missing inner server block after outer:\n%s", conf)
+	}
+	return conf[start : start+end]
+}
+
+func nginxInnerServerBlock(t *testing.T, conf string) string {
+	t.Helper()
+	start := strings.Index(conf, "server {\n    listen unix:")
+	if start < 0 {
+		t.Fatalf("missing inner server block:\n%s", conf)
+	}
+	return conf[start:]
+}
+
+func assertInOrder(t *testing.T, s string, wants ...string) {
+	t.Helper()
+	offset := 0
+	for _, want := range wants {
+		idx := strings.Index(s[offset:], want)
+		if idx < 0 {
+			t.Fatalf("missing %q after offset %d:\n%s", want, offset, s)
+		}
+		offset += idx + len(want)
+	}
 }
 
 func TestRender_LambdaEdge_DefaultCacheBehavior(t *testing.T) {
@@ -450,6 +490,208 @@ func TestRender_LambdaEdge_ViewerAndOriginRequest_ForwardTargetsOriginRequestHop
 	if !strings.Contains(conf, "location /_cf_or_E_CP1/ {") {
 		t.Errorf("missing origin-request inner-A location:\n%s", conf)
 	}
+}
+
+func TestRender_LambdaEdge_ViewerResponse_DefaultCacheBehavior(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeViewerResponse,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:mutate-viewer-response:1"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	if !strings.Contains(conf, "js_import edge from edge.js;") {
+		t.Errorf("expected edge.js import for viewer-response:\n%s", conf)
+	}
+	if !strings.Contains(conf, "resolver 127.0.0.11 valid=30s ipv6=off;") {
+		t.Errorf("expected resolver directive for viewer-response:\n%s", conf)
+	}
+
+	outerBlock := nginxLocationBlock(t, conf, "    location / {\n")
+	for _, want := range []string{
+		`set $cf_distribution_id "EDFDVBD6EXAMPLE";`,
+		`set $cf_edge_proxy "http://edge-proxy:4569";`,
+		`set $cf_le_inner_socket "/run/cf-local-inner.sock";`,
+		`set $cf_le_vr_fwd_prefix "/_cf_vr_fwd_E_CP1";`,
+		"js_content edge.runViewerResponse;",
+	} {
+		if !strings.Contains(outerBlock, want) {
+			t.Errorf("viewer-response outer missing %q\n%s", want, outerBlock)
+		}
+	}
+	if strings.Contains(outerBlock, "proxy_cache cf_cache;") {
+		t.Errorf("viewer-response outer must be transient, without proxy_cache:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "js_content edge.viewerRequest;") {
+		t.Errorf("viewer-response-only outer must not run viewer-request:\n%s", outerBlock)
+	}
+
+	innerForwardBlock := nginxLocationBlock(t, conf, "    location /_cf_vr_fwd_E_CP1/ {\n")
+	for _, want := range []string{
+		`set $cf_policy_id "E_CP1";`,
+		"proxy_cache cf_cache;",
+		"proxy_pass http://self/_cf_inner_E_CP1$uri$is_args$args;",
+	} {
+		if !strings.Contains(innerForwardBlock, want) {
+			t.Errorf("viewer-response inner forward missing %q\n%s", want, innerForwardBlock)
+		}
+	}
+	if strings.Contains(conf, "location @cf_le_E_CP1_forward {") {
+		t.Errorf("viewer-response without viewer-request must not emit named forward:\n%s", conf)
+	}
+}
+
+func TestRender_LambdaEdge_ViewerRequestAndViewerResponse_DefaultCacheBehavior(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeViewerRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1"),
+			},
+			{
+				EventType:         types.EventTypeViewerResponse,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:mutate-viewer-response:1"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	outerBlock := nginxLocationBlock(t, conf, "    location / {\n")
+	if !strings.Contains(outerBlock, "js_content edge.runViewerResponse;") {
+		t.Errorf("outer must run viewer-response as the outermost hook:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "js_content edge.viewerRequest;") {
+		t.Errorf("viewer-request must move inside viewer-response forward prefix:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "proxy_cache cf_cache;") {
+		t.Errorf("viewer-response outer must not contain proxy_cache:\n%s", outerBlock)
+	}
+
+	outerServer := nginxOuterServerBlock(t, conf)
+	if strings.Contains(outerServer, "location @cf_le_E_CP1_forward {") {
+		t.Errorf("viewer-response must move viewer-request forward location to inner server:\n%s", outerServer)
+	}
+
+	innerForwardEntry := nginxLocationBlock(t, conf, "    location /_cf_vr_fwd_E_CP1/ {\n")
+	for _, want := range []string{
+		`set $cf_distribution_id "EDFDVBD6EXAMPLE";`,
+		`set $cf_edge_proxy "http://edge-proxy:4569";`,
+		`set $cf_le_forward "@cf_le_E_CP1_forward";`,
+		"js_content edge.viewerRequest;",
+	} {
+		if !strings.Contains(innerForwardEntry, want) {
+			t.Errorf("viewer-response inner entry missing %q\n%s", want, innerForwardEntry)
+		}
+	}
+	if strings.Contains(innerForwardEntry, "proxy_cache cf_cache;") {
+		t.Errorf("viewer-request entry must not inline cache before the named forward:\n%s", innerForwardEntry)
+	}
+
+	innerServer := nginxInnerServerBlock(t, conf)
+	if !strings.Contains(innerServer, "location @cf_le_E_CP1_forward {") {
+		t.Fatalf("missing inner named forward:\n%s", innerServer)
+	}
+	forwardBlock := nginxLocationBlock(t, conf, "    location @cf_le_E_CP1_forward {\n")
+	for _, want := range []string{
+		"internal;",
+		"proxy_cache cf_cache;",
+		"proxy_pass http://self/_cf_inner_E_CP1$uri$is_args$args;",
+	} {
+		if !strings.Contains(forwardBlock, want) {
+			t.Errorf("inner named forward missing %q\n%s", want, forwardBlock)
+		}
+	}
+}
+
+func TestRender_LambdaEdge_AllHooks_DefaultCacheBehavior(t *testing.T) {
+	res := newBaseLoadResult()
+	res.Distribution.DefaultCacheBehavior.LambdaFunctionAssociations = &types.LambdaFunctionAssociations{
+		Items: []types.LambdaFunctionAssociation{
+			{
+				EventType:         types.EventTypeViewerRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:auth:1"),
+			},
+			{
+				EventType:         types.EventTypeOriginRequest,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:rewrite:1"),
+			},
+			{
+				EventType:         types.EventTypeOriginResponse,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:mutate-origin-response:1"),
+			},
+			{
+				EventType:         types.EventTypeViewerResponse,
+				LambdaFunctionARN: aws.String("arn:aws:lambda:us-east-1:0:function:mutate-viewer-response:1"),
+			},
+		},
+	}
+
+	out, err := Render(res)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	conf := string(out.Conf)
+
+	outerBlock := nginxLocationBlock(t, conf, "    location / {\n")
+	if !strings.Contains(outerBlock, "js_content edge.runViewerResponse;") {
+		t.Errorf("all-hooks outer must run viewer-response:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "proxy_cache cf_cache;") {
+		t.Errorf("all-hooks outer must be transient:\n%s", outerBlock)
+	}
+	if strings.Contains(outerBlock, "js_content edge.viewerRequest;") {
+		t.Errorf("all-hooks outer must not run viewer-request directly:\n%s", outerBlock)
+	}
+
+	innerForwardEntry := nginxLocationBlock(t, conf, "    location /_cf_vr_fwd_E_CP1/ {\n")
+	if !strings.Contains(innerForwardEntry, "js_content edge.viewerRequest;") {
+		t.Errorf("viewer-request must run inside viewer-response forward prefix:\n%s", innerForwardEntry)
+	}
+
+	forwardBlock := nginxLocationBlock(t, conf, "    location @cf_le_E_CP1_forward {\n")
+	if !strings.Contains(forwardBlock, "proxy_cache cf_cache;") {
+		t.Errorf("viewer-request forward must contain cache logic:\n%s", forwardBlock)
+	}
+	if !strings.Contains(forwardBlock, "proxy_pass http://self/_cf_oresp_E_CP1$uri$is_args$args;") {
+		t.Errorf("origin-response must be the cache-hop target under all-hooks:\n%s", forwardBlock)
+	}
+	if strings.Contains(forwardBlock, "proxy_pass http://self/_cf_or_E_CP1$uri$is_args$args;") {
+		t.Errorf("cache hop must not stop at origin-request when origin-response exists:\n%s", forwardBlock)
+	}
+
+	originResponseBlock := nginxLocationBlock(t, conf, "    location /_cf_oresp_E_CP1/ {\n")
+	if !strings.Contains(originResponseBlock, `set $cf_le_oresp_fetch_prefix "/_cf_or_E_CP1";`) {
+		t.Errorf("origin-response must fetch through origin-request when both are present:\n%s", originResponseBlock)
+	}
+
+	innerServer := nginxInnerServerBlock(t, conf)
+	assertInOrder(t, innerServer,
+		"location /_cf_vr_fwd_E_CP1/ {",
+		"js_content edge.viewerRequest;",
+		"location @cf_le_E_CP1_forward {",
+		"proxy_pass http://self/_cf_oresp_E_CP1$uri$is_args$args;",
+		"location /_cf_or_E_CP1/ {",
+		"js_content edge.runOriginRequest;",
+		"location /_cf_inner_E_CP1/ {",
+		"js_header_filter ttl.computeAndInject;",
+		"location /_cf_oresp_E_CP1/ {",
+		"js_content edge.runOriginResponse;",
+	)
 }
 
 // TestRender_LambdaEdge_SanitizeSetValue (REV-8) — distributionID /
